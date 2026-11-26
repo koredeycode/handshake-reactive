@@ -103,9 +103,9 @@ export default function LatencyPanel() {
                         {run.t1ReactiveMs ? `+${deltaMs(run.t0SecondLockMs, run.t1ReactiveMs)}` : '—'}
                       </td>
                       <td className="px-2 py-2.5 font-mono text-ink-500">
-                        {run.t2PaymentCallbackMs ? `Base +${deltaMs(run.t1ReactiveMs, run.t2PaymentCallbackMs)}` : '—'}
+                        {run.t2PaymentCallbackMs ? `Base Sepolia +${deltaMs(run.t1ReactiveMs, run.t2PaymentCallbackMs)}` : '—'}
                         <br />
-                        {run.t3AssetCallbackMs ? `Uni +${deltaMs(run.t1ReactiveMs, run.t3AssetCallbackMs)}` : '—'}
+                        {run.t3AssetCallbackMs ? `Unichain Sepolia +${deltaMs(run.t1ReactiveMs, run.t3AssetCallbackMs)}` : '—'}
                       </td>
                       <td className="px-2 py-2.5 font-mono font-medium text-ink-900">
                         {run.totalMs ? `${run.totalMs} ms` : '—'}
@@ -127,7 +127,7 @@ export default function LatencyPanel() {
       <div className="grid gap-6 lg:grid-cols-2">
         <Panel title="Methodology and caveats">
           <div className="space-y-3 text-xs leading-relaxed text-ink-500">
-            <p><span className="font-medium text-ink-900">Wall-clock via WebSocket.</span> The observer subscribes to all three chains and timestamps the second lock, the Lasna reactive transaction and each destination callback as its log arrives. This measures the full observed loop, including network propagation and observer delay.</p>
+            <p><span className="font-medium text-ink-900">Wall-clock via WebSocket.</span> The observer subscribes to all three chains and timestamps the second lock, the reactive transaction on Reactive Lasna and each destination callback as its log arrives. This measures the full observed loop, including network propagation and observer delay.</p>
             <p><span className="font-medium text-ink-900">On-chain timestamp bound.</span> Block timestamps have ~1-second granularity, so sub-second deltas cannot be proven from chain data alone. Explorer links let anyone cross-check the ordering.</p>
             <p><span className="font-medium text-ink-900">Observer delay.</span> A slow WS connection inflates measured latency; the numbers are an upper bound, not a guaranteed SLA. Failed callbacks are excluded from successful-loop totals and documented separately.</p>
             <p><span className="font-medium text-ink-900">Legacy baseline.</span> The ~{(baseline / 1000).toFixed(0)}s reference is the typical legacy block interval, not a benchmark of a competing product.</p>

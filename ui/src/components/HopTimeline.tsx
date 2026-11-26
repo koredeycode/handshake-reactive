@@ -1,5 +1,5 @@
 import { buildHops } from '../lib/proofs'
-import { ChainPill, ConvergenceMark, Panel, TxLink } from './ui'
+import { ChainMark, ChainPill, ConvergenceMark, Panel, TxLink } from './ui'
 import type { Order, ProofData } from '../lib/types'
 
 function pendingText(key: string): string {
@@ -8,28 +8,66 @@ function pendingText(key: string): string {
   return 'Settlement in progress'
 }
 
-function ConvergenceDiagram() {
+/** One row in the flow: chain logo, plain-language label, and a real tx link when observed. */
+function FlowRow({
+  chain,
+  label,
+  event,
+}: {
+  chain: 'base' | 'unichain'
+  label: string
+  event?: { txHash: string }
+}) {
   return (
-    <div className="mb-6 rounded-2xl border border-line bg-paper-50 px-5 py-3">
-      <svg viewBox="0 0 480 64" className="h-16 w-full text-ink-400" fill="none" aria-hidden="true">
-        <g stroke="currentColor" strokeOpacity="0.5" strokeWidth="1.5" strokeLinecap="round">
-          <path d="M10 16 C 150 16, 170 32, 240 32" />
-          <path d="M10 48 C 150 48, 170 32, 240 32" />
-          <path d="M240 32 C 310 32, 330 16, 470 16" />
-          <path d="M240 32 C 310 32, 330 48, 470 48" />
-        </g>
-        <g className="font-mono text-[10px]" fill="currentColor" fillOpacity="0.8">
-          <text x="10" y="9">Payment</text>
-          <text x="10" y="61">Asset</text>
-          <text x="470" y="9" textAnchor="end">Payment out</text>
-          <text x="470" y="61" textAnchor="end">Asset out</text>
-        </g>
-        <circle cx="240" cy="32" r="11" className="fill-paper-0 stroke-accent" strokeWidth="1.5" />
-      </svg>
-      <div className="-mt-11 flex justify-center">
-        <span className="flex h-6 w-6 items-center justify-center text-accent">
-          <ConvergenceMark className="h-4 w-4" />
+    <div className="flex min-w-0 items-center justify-between gap-3 rounded-xl border border-line bg-paper-0 px-3 py-2">
+      <span className="flex min-w-0 items-center gap-2">
+        <ChainMark chain={chain} className="h-4 w-4" />
+        <span className="truncate text-[12px] text-ink-700">{label}</span>
+      </span>
+      {event ? (
+        <TxLink chain={chain} hash={event.txHash} />
+      ) : (
+        <span className="shrink-0 font-sans text-[11px] text-ink-400">Pending</span>
+      )}
+    </div>
+  )
+}
+
+/** Three columns: locked on two chains → one decision → delivered on two chains. */
+function ConvergenceDiagram({ proof }: { proof?: ProofData | null }) {
+  const refundMode = !!proof?.paymentRefunded || !!proof?.assetRefunded
+  return (
+    <div className="mb-6 grid grid-cols-1 gap-3 rounded-2xl border border-line bg-paper-50 p-4 md:grid-cols-[1fr_auto_1fr] md:items-center md:gap-4">
+      <div className="space-y-2">
+        <p className="px-1 text-[11px] font-medium text-ink-500">Locked on origin chains</p>
+        <FlowRow chain="base" label="Payment · Base Sepolia" event={proof?.paymentLocked} />
+        <FlowRow chain="unichain" label="Asset · Unichain Sepolia" event={proof?.assetLocked} />
+      </div>
+
+      <div className="flex items-center justify-center gap-3 md:flex-col md:gap-2">
+        <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-accent/25 bg-accent-soft text-accent">
+          <ConvergenceMark className="h-5 w-5" />
         </span>
+        <span className="text-[11px] font-medium text-ink-700">One decision</span>
+        <ChainMark chain="lasna" className="h-4 w-4" />
+        <span className="text-[10px] text-ink-400">Reactive Lasna</span>
+        {proof?.reactive ? <TxLink chain="lasna" hash={proof.reactive.txHash} /> : null}
+      </div>
+
+      <div className="space-y-2">
+        <p className="px-1 text-[11px] font-medium text-ink-500">
+          {refundMode ? 'Refunded to depositors' : 'Delivered by callback'}
+        </p>
+        <FlowRow
+          chain="base"
+          label={refundMode ? 'Payment back to buyer · Base Sepolia' : 'Payment to seller · Base Sepolia'}
+          event={refundMode ? proof?.paymentRefunded : proof?.paymentReleased}
+        />
+        <FlowRow
+          chain="unichain"
+          label={refundMode ? 'Asset back to seller · Unichain Sepolia' : 'Asset to buyer · Unichain Sepolia'}
+          event={refundMode ? proof?.assetRefunded : proof?.assetReleased}
+        />
       </div>
     </div>
   )
@@ -55,7 +93,7 @@ export default function HopTimeline({
         </span>
       }
     >
-      <ConvergenceDiagram />
+      <ConvergenceDiagram proof={proof} />
       <ol className="relative">
         {hops.map((hop, i) => {
           const event = hop.event

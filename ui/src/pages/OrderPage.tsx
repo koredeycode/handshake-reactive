@@ -28,7 +28,7 @@ export default function OrderPage() {
       </Button>
       {tx && (
         <div className="rounded-lg border border-line bg-paper-0 px-4 py-3 text-[11px] text-ink-500">
-          Trade created on Lasna: <TxLink chain="lasna" hash={tx} />
+          Trade created on Reactive Lasna: <TxLink chain="lasna" hash={tx} />
         </div>
       )}
       <OrderDetail orderId={orderId} />

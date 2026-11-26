@@ -1,6 +1,6 @@
 import type { ButtonHTMLAttributes, ReactNode } from 'react'
 import { ArrowRight, ArrowUpRight, Copy, Inbox } from 'lucide-react'
-import { CHAIN_LABELS, CHAIN_LOGO, CHAIN_SHORT, txUrl } from '../lib/chains'
+import { CHAIN_LABELS, CHAIN_LOGO, txUrl } from '../lib/chains'
 import { copyText, truncate } from '../lib/format'
 import { useCopyFeedback } from '../lib/proofs'
 import { STATUS_DOT, STATUS_LABEL, STATUS_STYLES } from '../lib/status'
@@ -221,7 +221,7 @@ function tokenLetters(symbol?: string | null): string {
   return clean.slice(0, 2).toUpperCase() || '??'
 }
 
-/** Chain chip. The accent is reserved for the active chain state. */
+/** Chain chip with the full chain name. The accent is reserved for the active chain state. */
 export function ChainPill({
   chain,
   active = false,
@@ -238,7 +238,7 @@ export function ChainPill({
       } ${className}`}
     >
       <ChainMark chain={chain} />
-      {CHAIN_SHORT[chain]}
+      {CHAIN_LABELS[chain]}
     </span>
   )
 }

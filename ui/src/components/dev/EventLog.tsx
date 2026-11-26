@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
 import { usePublicClient } from 'wagmi'
-import { CHAIN_IDS } from '../../lib/chains'
+import { CHAIN_IDS, CHAIN_LABELS } from '../../lib/chains'
 import { useConfig } from '../../lib/config'
 import { formatTimestamp, normalizeOrderId, truncate } from '../../lib/format'
 import { fetchEventFeed, logClient, type ProofClients } from '../../lib/logs'
@@ -53,7 +53,7 @@ export default function EventLog() {
   return (
     <Panel
       title="Raw event log"
-      subtitle="Decoded logs from Lasna, Base Sepolia and Unichain Sepolia · last ~2,000 blocks per chain"
+      subtitle={`Decoded logs from ${CHAIN_LABELS.lasna}, ${CHAIN_LABELS.base} and ${CHAIN_LABELS.unichain} · last ~2,000 blocks per chain`}
       action={
         <div className="flex flex-wrap items-center gap-2">
           {feed.isFetching && <Spinner />}

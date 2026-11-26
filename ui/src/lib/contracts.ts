@@ -349,6 +349,23 @@ export const assetRefundedEvent = {
   ],
 } as const
 
+/**
+ * CallbackRequest.configuration is `abi.encode(CallbackConfiguration_V_1_0)`:
+ * a bytes blob containing an offset to a struct tuple, so it must be decoded
+ * as a tuple, never as four flat parameters.
+ */
+export const callbackConfigTuple = [
+  {
+    type: 'tuple',
+    components: [
+      { name: 'chainId', type: 'uint256' },
+      { name: 'recipient', type: 'address' },
+      { name: 'gasLimit', type: 'uint64' },
+      { name: 'payload', type: 'bytes' },
+    ],
+  },
+] as const
+
 /** Emitted by the Reactive system contract (0x8888…8888) on Lasna. */
 export const callbackRequestEvent = {
   type: 'event',
@@ -379,6 +396,35 @@ export const callbackPayloadAbi = [
       { name: 'orderId_', type: 'bytes32' },
       { name: 'recipient_', type: 'address' },
       { name: 'amount_', type: 'uint256' },
+      { name: 'nonce_', type: 'uint64' },
+    ],
+    outputs: [],
+  },
+  {
+    // AssetEscrow.release carries seller AND recipient; the first arg is still
+    // the proxy-injected reactive sender slot.
+    type: 'function',
+    name: 'release',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'reactive_', type: 'address' },
+      { name: 'orderId_', type: 'bytes32' },
+      { name: 'seller_', type: 'address' },
+      { name: 'recipient_', type: 'address' },
+      { name: 'amount_', type: 'uint256' },
+      { name: 'nonce_', type: 'uint64' },
+    ],
+    outputs: [],
+  },
+  {
+    // AssetEscrow.refund is keyed by seller as well.
+    type: 'function',
+    name: 'refund',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'reactive_', type: 'address' },
+      { name: 'orderId_', type: 'bytes32' },
+      { name: 'seller_', type: 'address' },
       { name: 'nonce_', type: 'uint64' },
     ],
     outputs: [],

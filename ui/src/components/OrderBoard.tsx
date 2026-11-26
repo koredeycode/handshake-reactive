@@ -8,7 +8,7 @@ import { useTokenDisplay } from '../lib/tokenDisplay'
 import { useNow } from '../lib/useNow'
 import { Button, ChainMark, ChainPill, EmptyState, Panel, Spinner, StatusPill, TokenMark, icon } from './ui'
 
-export default function OrderBoard() {
+export default function OrderBoard({ scrollable = false }: { scrollable?: boolean }) {
   const navigate = useNavigate()
   const { data: orders, isLoading, isError, error, refetch, isFetching } = useOrders()
   const config = useConfig()
@@ -35,7 +35,8 @@ export default function OrderBoard() {
           </Button>
         </div>
       }
-      bodyClass=""
+      bodyClass={scrollable ? 'min-h-0 flex-1 overflow-y-auto' : ''}
+      className={scrollable ? 'flex h-full min-h-0 flex-col overflow-hidden' : ''}
     >
       {!configured ? (
         <div className="p-6">
@@ -93,7 +94,7 @@ export default function OrderBoard() {
                     <div className="flex flex-wrap items-end gap-x-6 gap-y-2">
                       <div>
                         <div className="flex items-center gap-1 text-[11px] text-ink-400">
-                          <ChainMark chain="base" /> You pay · Base
+                          <ChainMark chain="base" /> You pay · Base Sepolia
                         </div>
                         <div className="tnum font-mono text-[15px] font-medium text-ink-900">
                           {formatAmount(order.paymentAmount, paymentDecimals, paymentSymbol)}
@@ -102,7 +103,7 @@ export default function OrderBoard() {
                       <ArrowRight {...icon} className="mb-1 text-ink-400" />
                       <div>
                         <div className="flex items-center gap-1 text-[11px] text-ink-400">
-                          <ChainMark chain="unichain" /> You receive · Unichain
+                          <ChainMark chain="unichain" /> You receive · Unichain Sepolia
                         </div>
                         <div className="tnum font-mono text-[15px] font-medium text-ink-900">
                           {formatAmount(order.assetAmount, assetDecimals, assetSymbol)}

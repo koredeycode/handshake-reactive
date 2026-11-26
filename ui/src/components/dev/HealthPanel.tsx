@@ -100,7 +100,7 @@ export default function HealthPanel() {
   return (
     <Panel
       title="Debt, reserves and health"
-      subtitle={`Polls ${CHAIN_LABELS.lasna}, Base Sepolia and Unichain Sepolia every 5s. Debt is read from the system contract / callback proxy.`}
+      subtitle={`Polls ${CHAIN_LABELS.lasna}, ${CHAIN_LABELS.base} and ${CHAIN_LABELS.unichain} every 5s. Debt is read from the system contract / callback proxy.`}
       action={
         <span className="flex items-center gap-2 text-[11px] text-ink-400">
           {health.isFetching && <Spinner />}
@@ -148,7 +148,7 @@ export default function HealthPanel() {
             the Reactive node tooling; this UI will not guess a count.
           </p>
           <div className="mt-3 space-y-1 font-mono text-[10px] text-ink-400">
-            <div>Lasna · {CHAIN_LABELS.lasna}</div>
+            <div>{CHAIN_LABELS.lasna}</div>
             <ExternalLink href={`https://lasna.reactscan.net/address/${config.reactive.reactiveContract}`}>
               {config.reactive.reactiveContract ? truncate(config.reactive.reactiveContract, 10, 8) : '— RC not configured'}
             </ExternalLink>

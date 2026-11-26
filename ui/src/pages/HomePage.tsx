@@ -97,7 +97,7 @@ export default function HomePage() {
           Two legs. One decision. Both legs settle.
         </h1>
         <p className="mt-4 max-w-xl text-sm leading-relaxed text-ink-500">
-          Lock payment on Base and the asset on Unichain. Reactive Lasna decides once, then releases both legs — no intermediary holding funds.
+          Lock payment on Base Sepolia and the asset on Unichain Sepolia. Reactive Lasna decides once, then releases both legs — no intermediary holding funds.
         </p>
         <RouteStrip className="mt-8" />
         <div className="mt-8 flex flex-wrap gap-3">

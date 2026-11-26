@@ -24,7 +24,7 @@ function Logo() {
   return (
     <Link to="/" className="flex h-[72px] items-center gap-3 border-b border-line px-5">
       <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-ink-900 text-white">
-        <ConvergenceMark />
+        <ConvergenceMark className="h-5 w-5 text-accent" />
       </span>
       <span>
         <span className="block text-[15px] font-semibold text-ink-900">Handshake</span>

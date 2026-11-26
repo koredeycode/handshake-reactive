@@ -42,8 +42,8 @@ export default function OrdersPage() {
         <RouteStrip />
       </div>
 
-      <div className="grid items-start gap-6 xl:grid-cols-[minmax(360px,420px)_minmax(0,1fr)]">
-        <section>
+      <div className="grid items-start gap-6 xl:h-[calc(100vh-190px)] xl:grid-cols-[minmax(360px,420px)_minmax(0,1fr)]">
+        <section className="xl:sticky xl:top-6">
           <div className="mb-3 flex items-center justify-between gap-3">
             <h2 className="text-sm font-medium text-ink-900">Trade ticket</h2>
             <span className="flex items-center gap-2 text-[11px] text-ink-400">
@@ -89,7 +89,9 @@ export default function OrdersPage() {
           />
         </section>
 
-        <OrderBoard />
+        <div className="min-h-0 xl:h-full">
+          <OrderBoard scrollable />
+        </div>
       </div>
     </div>
   )
