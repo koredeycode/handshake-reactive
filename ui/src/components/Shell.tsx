@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, NavLink, useLocation } from 'react-router-dom'
 import { useAccount, useConnect, useDisconnect } from 'wagmi'
-import { ChevronDown, ClipboardList, Droplets, LogOut, Plus, Search, Wallet } from 'lucide-react'
+import { ChevronDown, ClipboardList, Droplets, House, LogOut, Plus, Search, Wallet } from 'lucide-react'
 import { useWalletBalances } from '../lib/balances'
 import { CHAIN_LABELS } from '../lib/chains'
 import { copyText, truncate } from '../lib/format'
@@ -10,9 +10,11 @@ import { Button, ChainMark, ConvergenceMark, icon } from './ui'
 import type { ChainKey } from '../lib/chains'
 
 const NAV = [
-  { to: '/orders', label: 'Trade', Icon: ClipboardList },
-  { to: '/new', label: 'New trade', Icon: Plus },
-  { to: '/verify', label: 'Track an order', Icon: Search },
+  { to: '/', label: 'Home', Icon: House, end: true },
+  { to: '/orders', label: 'Trade', Icon: ClipboardList, end: false },
+  { to: '/my-orders', label: 'My orders', Icon: Wallet, end: false },
+  { to: '/new', label: 'New trade', Icon: Plus, end: false },
+  { to: '/verify', label: 'Track an order', Icon: Search, end: false },
 ]
 
 /** Quiet utility destination — testnet setup, not part of the trading flow. */
@@ -20,7 +22,7 @@ const UTILITY_NAV = [{ to: '/faucet', label: 'Faucet', Icon: Droplets }]
 
 function Logo() {
   return (
-    <Link to="/orders" className="flex h-[72px] items-center gap-3 border-b border-line px-5">
+    <Link to="/" className="flex h-[72px] items-center gap-3 border-b border-line px-5">
       <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-ink-900 text-white">
         <ConvergenceMark />
       </span>
@@ -166,9 +168,13 @@ export default function Shell({ children }: { children: ReactNode }) {
       ? 'New trade'
       : publicView
         ? 'Track an order'
-        : pathname.startsWith('/orders/')
-          ? 'Order detail'
-          : 'Trade'
+        : pathname.startsWith('/my-orders')
+          ? 'My orders'
+          : pathname.startsWith('/orders/')
+            ? 'Order detail'
+            : pathname === '/'
+              ? 'Home'
+              : 'Trade'
 
   return (
     <div className="min-h-screen bg-paper-50 text-ink-900">
@@ -177,10 +183,11 @@ export default function Shell({ children }: { children: ReactNode }) {
         <nav className="flex-1 px-3 py-6">
           <p className="mb-3 px-2 text-[11px] text-ink-400">Trade</p>
           <div className="space-y-1">
-            {NAV.map(({ to, label: itemLabel, Icon }) => (
+            {NAV.map(({ to, label: itemLabel, Icon, end }) => (
               <NavLink
                 key={to}
                 to={to}
+                end={end}
                 className={({ isActive }) =>
                   `flex h-10 items-center gap-3 rounded-xl px-3 text-[13px] transition-colors ${
                     isActive
@@ -242,10 +249,11 @@ export default function Shell({ children }: { children: ReactNode }) {
         </header>
 
         <nav className="flex gap-1 overflow-x-auto border-b border-line bg-paper-0 px-4 py-2 lg:hidden">
-          {NAV.map(({ to, label: itemLabel, Icon }) => (
+          {NAV.map(({ to, label: itemLabel, Icon, end }) => (
             <NavLink
               key={to}
               to={to}
+              end={end}
               className={({ isActive }) =>
                 `inline-flex shrink-0 items-center gap-2 rounded-xl px-3 py-2 text-[11px] transition-colors ${
                   isActive ? 'bg-accent-soft font-medium text-accent-ink' : 'text-ink-500'
