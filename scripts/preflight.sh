@@ -10,7 +10,7 @@ SYSTEM="0x8888888888888888888888888888888888888888"
 BASE_PROXY="0x476F44b11F5C942c58f4c8E3d0300E5710743585"
 UNICHAIN_PROXY="0x775c9B990ADe401060B78D0e98684eEf8d2466C1"
 # Role-based overrides. Defaults are the live forward market, so existing runs are unchanged.
-# For a reverse market set PAYMENT_* to Unichain and ASSET_* to Base (see MARKETS.md).
+# For a reverse market set PAYMENT_* to Unichain and ASSET_* to Base (see docs/MARKETS.md).
 PAYMENT_PROXY="${PAYMENT_PROXY:-$BASE_PROXY}"
 ASSET_PROXY="${ASSET_PROXY:-$UNICHAIN_PROXY}"
 PAYMENT_CHAIN_ID="${PAYMENT_CHAIN_ID:-84532}"

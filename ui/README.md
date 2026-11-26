@@ -1,6 +1,6 @@
 # Handshake UI
 
-React + Vite + TypeScript static console for Handshake — trust-minimized cross-chain OTC settlement on Reactive Omni (Reactive Lasna ↔ Base Sepolia ↔ Unichain Sepolia). No backend: the browser reads public RPCs directly and links to canonical explorers.
+React + Vite + TypeScript static console for Handshake — trust-minimized cross-chain OTC settlement on Reactive Omni (Reactive Lasna ↔ Base Sepolia ↔ Unichain Sepolia). No backend: the browser reads public RPCs directly and links to canonical explorers. Deployment proof, flows, tooling and operator notes are indexed in [`docs/`](../docs/README.md).
 
 ## Run
 

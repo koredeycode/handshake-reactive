@@ -105,5 +105,5 @@ overrides: `{"1301": "0x775c…", "84532": "0x476F…"}` for the reverse market 
 with `chainIds` and the `Deployed` events likewise reflecting the swapped IDs. The
 manifest contains no RPC URLs, so its byte-for-byte default output is unchanged.
 
-Existing deployment hashes in `DEPLOYMENT.md` are historical records and are
+Existing deployment hashes in [DEPLOYMENT.md](./DEPLOYMENT.md) are historical records and are
 intentionally left untouched.

@@ -19,7 +19,7 @@ Old auto-generated URL still resolves: https://ui-nine-gold.vercel.app
   - build: `npm run build --prefix ui` (`tsc -b && vite build`)
   - output: `ui/dist`
   - SPA rewrite to `/index.html` (same rule that used to live only in `ui/vercel.json`)
-- Without that config, Git-triggered builds ran `vite build` at the repo root, where `vite` is not a dependency, and failed with `BUILD_UTILS_SPAWN_127` / `vite: command not found`. See `CI-REPORT.md` for the failing deployment logs.
+- Without that config, Git-triggered builds ran `vite build` at the repo root, where `vite` is not a dependency, and failed with `BUILD_UTILS_SPAWN_127` / `vite: command not found`. See [CI-REPORT.md](./CI-REPORT.md) for the failing deployment logs.
 - CLI deploys are now an **escape hatch only**, not the normal path. If you must use one, run it from the repo root (so the root `vercel.json` applies) or from `ui/`; do not run both the Git path and a `--prod` CLI deploy for the same change, or the production alias will point to whichever finished last.
 - The canonical subdomain was added as a project domain (`vercel domains add handshake-reactive.vercel.app ui`) and follows future production deployments.
 
