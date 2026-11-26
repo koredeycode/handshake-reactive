@@ -147,6 +147,7 @@ contract HandshakeReactive is AbstractReactive, Ownable {
         external
         onlyOwner
     {
+        if (venuesSet) revert InvalidVenue(); // duplicate subscriptions waste lREACT reserves
         if (!_isTestnet(paymentChainId_) || !_isTestnet(assetChainId_)) revert InvalidVenue();
         if (paymentEscrow_ == address(0) || assetEscrow_ == address(0)) revert InvalidVenue();
 
