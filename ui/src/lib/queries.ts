@@ -14,7 +14,6 @@ import type { Leg, Order, Venues } from './types'
  */
 export interface LooseClient {
   readContract: (args: Record<string, unknown>) => Promise<unknown>
-  multicall: (args: Record<string, unknown>) => Promise<Array<{ result?: unknown }>>
   getBalance: (args: Record<string, unknown>) => Promise<bigint>
 }
 
@@ -45,26 +44,29 @@ export function useOrders() {
       })) as bigint
       const n = Number(count)
       if (n <= 0) return []
-      const idResults = await c.multicall({
-        contracts: Array.from({ length: n }, (_, i) => ({
-          address: rc,
-          abi: reactiveAbi,
-          functionName: 'orderIds',
-          args: [BigInt(i)],
-        })),
-        allowFailure: false,
-      })
-      const ids = idResults.map((r) => r.result as Hex)
-      const orderResults = await c.multicall({
-        contracts: ids.map((id) => ({
-          address: rc,
-          abi: reactiveAbi,
-          functionName: 'getOrder',
-          args: [id],
-        })),
-        allowFailure: false,
-      })
-      return ids.map((id, i) => ({ id, order: orderResults[i].result as unknown as Order }))
+      // Lasna has no Multicall3 deployment. Plain reads keep the board honest:
+      // one eth_call per order, with no dependency on a canonical multicall address.
+      const ids = await Promise.all(
+        Array.from({ length: n }, (_, i) =>
+          c.readContract({
+            address: rc,
+            abi: reactiveAbi,
+            functionName: 'orderIds',
+            args: [BigInt(i)],
+          }) as Promise<Hex>,
+        ),
+      )
+      const orders = await Promise.all(
+        ids.map((id) =>
+          c.readContract({
+            address: rc,
+            abi: reactiveAbi,
+            functionName: 'getOrder',
+            args: [id],
+          }) as Promise<Order>,
+        ),
+      )
+      return ids.map((id, i) => ({ id, order: orders[i] as Order }))
     },
   })
 }

@@ -14,6 +14,8 @@ interface ImportMetaEnv {
   readonly VITE_BASE_FROM_BLOCK?: string
   readonly VITE_UNICHAIN_FROM_BLOCK?: string
   readonly VITE_LOOKBACK_BLOCKS?: string
+  /** Enables the hidden /dev diagnostics route in production builds. */
+  readonly VITE_DEV_TOOLS?: string
 }
 
 interface ImportMeta {

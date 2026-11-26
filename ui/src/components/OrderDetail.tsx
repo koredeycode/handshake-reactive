@@ -9,13 +9,26 @@ import { reactiveAbi } from '../lib/contracts'
 import { countdown, formatAmount, formatDeadline, truncate } from '../lib/format'
 import { logClient } from '../lib/logs'
 import { useProof } from '../lib/proofs'
-import { useLeg, useOrder, useTokenMeta } from '../lib/queries'
+import { useLeg, useOrder } from '../lib/queries'
 import { deriveStatus } from '../lib/status'
+import { useTokenDisplay } from '../lib/tokenDisplay'
 import { useNow } from '../lib/useNow'
 import HopTimeline from './HopTimeline'
 import LegCard from './LegCard'
+import TradeTicket from './TradeTicket'
 import WriteButton, { type TxNotice } from './WriteButton'
-import { Button, CopyButton, EmptyState, ExternalLink, Metric, Panel, Spinner, StatusPill, TxLink, icon } from './ui'
+import {
+  Button,
+  CopyButton,
+  EmptyState,
+  ExternalLink,
+  Metric,
+  Panel,
+  Spinner,
+  StatusPill,
+  TxLink,
+  icon,
+} from './ui'
 
 export default function OrderDetail({ orderId }: { orderId: Hex }) {
   const navigate = useNavigate()
@@ -24,8 +37,8 @@ export default function OrderDetail({ orderId }: { orderId: Hex }) {
   const { data: proof, refetch: refetchProof } = useProof(orderId)
   const paymentLeg = useLeg('payment', orderId)
   const assetLeg = useLeg('asset', orderId, order?.seller)
-  const paymentMeta = useTokenMeta('payment')
-  const assetMeta = useTokenMeta('asset')
+  const paymentToken = useTokenDisplay('payment')
+  const assetToken = useTokenDisplay('asset')
   const now = useNow()
   const [notice, setNotice] = useState<TxNotice | null>(null)
   const { writeContractAsync, isPending } = useWriteContract()
@@ -81,6 +94,10 @@ export default function OrderDetail({ orderId }: { orderId: Hex }) {
 
   const status = deriveStatus(order, now)
   const canRetry = (order.paymentSeen || order.assetSeen) && !(order.paymentClosed && order.assetClosed)
+  const paymentSymbol = paymentToken.symbol
+  const assetSymbol = assetToken.symbol
+  const paymentDecimals = paymentToken.decimals
+  const assetDecimals = assetToken.decimals
 
   return (
     <div className="space-y-6">
@@ -90,28 +107,39 @@ export default function OrderDetail({ orderId }: { orderId: Hex }) {
         action={
           <div className="flex flex-wrap items-center gap-2">
             <StatusPill status={status} />
-            <Button
-              size="sm"
-              icon={<RefreshCw {...icon} />}
-              onClick={refresh}
-            >
+            <Button size="sm" icon={<RefreshCw {...icon} />} onClick={refresh}>
               Refresh
             </Button>
-            <CopyButton
-              text={`${window.location.origin}/verify/${orderId}`}
-              label="Copy link"
-            />
-            <Button
-              size="sm"
-              icon={<ArrowUpRight {...icon} />}
-              onClick={() => navigate(`/verify/${orderId}`)}
-            >
+            <CopyButton text={`${window.location.origin}/verify/${orderId}`} label="Copy link" />
+            <Button size="sm" icon={<ArrowUpRight {...icon} />} onClick={() => navigate(`/verify/${orderId}`)}>
               Track order
             </Button>
           </div>
         }
+        bodyClass="p-6"
       >
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <TradeTicket
+          pay={{
+            symbol: paymentSymbol,
+            chain: 'base',
+            kind: 'payment',
+            mark: paymentToken.mark,
+            color: paymentToken.color,
+            amount: formatAmount(order.paymentAmount, paymentDecimals),
+            hint: `${paymentToken.name} · payment leg on Base Sepolia`,
+          }}
+          receive={{
+            symbol: assetSymbol,
+            chain: 'unichain',
+            kind: 'asset',
+            mark: assetToken.mark,
+            color: assetToken.color,
+            amount: formatAmount(order.assetAmount, assetDecimals),
+            hint: `${assetToken.name} · asset leg on Unichain Sepolia`,
+          }}
+        />
+
+        <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <Metric
             label="Buyer"
             value={truncate(order.buyer, 8, 6)}
@@ -122,18 +150,11 @@ export default function OrderDetail({ orderId }: { orderId: Hex }) {
             value={truncate(order.seller, 8, 6)}
             hint={<ExternalLink href={addressUrl('unichain', order.seller)} className="text-[11px]">Uniscan</ExternalLink>}
           />
-          <Metric
-            label="Payment"
-            value={formatAmount(order.paymentAmount, paymentMeta.data?.decimals ?? 6, paymentMeta.data?.symbol)}
-            hint="Base Sepolia"
-          />
-          <Metric
-            label="Asset"
-            value={formatAmount(order.assetAmount, assetMeta.data?.decimals ?? 18, assetMeta.data?.symbol)}
-            hint="Unichain Sepolia"
-          />
           <Metric label="Deadline" value={formatDeadline(order.deadline)} />
-          <Metric label="Time remaining" value={countdown(order.deadline, now)} />
+          <Metric
+            label="Time remaining"
+            value={<span className={status === 'READY' || status === 'SETTLING' ? 'text-accent' : ''}>{countdown(order.deadline, now)}</span>}
+          />
         </div>
 
         {notice && (

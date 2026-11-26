@@ -1,26 +1,29 @@
 import type { ReactNode } from 'react'
 import { Link, NavLink, useLocation } from 'react-router-dom'
 import { useAccount, useConnect, useDisconnect } from 'wagmi'
-import { ClipboardList, LogOut, Plus, Search, Wallet } from 'lucide-react'
+import { ClipboardList, Droplets, LogOut, Plus, Search, Wallet } from 'lucide-react'
 import { copyText, truncate } from '../lib/format'
 import { useCopyFeedback } from '../lib/proofs'
 import { Button, ConvergenceMark, icon } from './ui'
 
 const NAV = [
-  { to: '/orders', label: 'Orders', Icon: ClipboardList },
+  { to: '/orders', label: 'Trade', Icon: ClipboardList },
   { to: '/new', label: 'New trade', Icon: Plus },
   { to: '/verify', label: 'Track an order', Icon: Search },
 ]
 
+/** Quiet utility destination — testnet setup, not part of the trading flow. */
+const UTILITY_NAV = [{ to: '/faucet', label: 'Faucet', Icon: Droplets }]
+
 function Logo() {
   return (
     <Link to="/orders" className="flex h-[72px] items-center gap-3 border-b border-line px-5">
-      <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent-soft text-accent">
+      <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-ink-900 text-white">
         <ConvergenceMark />
       </span>
       <span>
-        <span className="block text-[15px] font-medium text-ink-900">Handshake</span>
-        <span className="block text-[11px] text-ink-400">Settlement desk</span>
+        <span className="block text-[15px] font-semibold text-ink-900">Handshake</span>
+        <span className="block text-[11px] text-ink-400">Cross-chain OTC</span>
       </span>
     </Link>
   )
@@ -48,7 +51,7 @@ function WalletControl() {
   }
 
   return (
-    <div className="flex items-center gap-2 rounded-lg border border-line bg-paper-0 px-2 py-1">
+    <div className="flex items-center gap-2 rounded-xl border border-line bg-paper-0 px-2.5 py-1.5">
       <span className="h-1.5 w-1.5 rounded-full bg-accent" />
       <button
         type="button"
@@ -76,29 +79,34 @@ function WalletControl() {
 export default function Shell({ children }: { children: ReactNode }) {
   const { pathname } = useLocation()
   const publicView = pathname.startsWith('/verify')
-  const label = pathname.startsWith('/new')
-    ? 'New trade'
-    : publicView
-      ? 'Track an order'
-      : pathname.startsWith('/orders/')
-        ? 'Order detail'
-        : 'Orders'
+  const internal = pathname.startsWith('/dev')
+  const label = internal
+    ? 'Internal diagnostics'
+    : pathname.startsWith('/faucet')
+      ? 'Faucet'
+      : pathname.startsWith('/new')
+      ? 'New trade'
+      : publicView
+        ? 'Track an order'
+        : pathname.startsWith('/orders/')
+          ? 'Order detail'
+          : 'Trade'
 
   return (
     <div className="min-h-screen bg-paper-50 text-ink-900">
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-[256px] flex-col border-r border-line bg-paper-0 lg:flex">
         <Logo />
         <nav className="flex-1 px-3 py-6">
-          <p className="mb-3 px-2 text-[11px] font-medium text-ink-400">Trade</p>
+          <p className="mb-3 px-2 text-[11px] text-ink-400">Trade</p>
           <div className="space-y-1">
             {NAV.map(({ to, label: itemLabel, Icon }) => (
               <NavLink
                 key={to}
                 to={to}
                 className={({ isActive }) =>
-                  `flex h-9 items-center gap-3 rounded-lg px-3 text-[13px] transition-colors ${
+                  `flex h-10 items-center gap-3 rounded-xl px-3 text-[13px] transition-colors ${
                     isActive
-                      ? 'bg-paper-100 font-medium text-accent'
+                      ? 'bg-accent-soft font-medium text-accent-ink'
                       : 'text-ink-500 hover:bg-paper-100 hover:text-ink-900'
                   }`
                 }
@@ -108,8 +116,29 @@ export default function Shell({ children }: { children: ReactNode }) {
               </NavLink>
             ))}
           </div>
+          <div className="mt-6 border-t border-line pt-5">
+            <p className="mb-3 px-2 text-[11px] text-ink-400">Testnet</p>
+            <div className="space-y-1">
+              {UTILITY_NAV.map(({ to, label: itemLabel, Icon }) => (
+                <NavLink
+                  key={to}
+                  to={to}
+                  className={({ isActive }) =>
+                    `flex h-10 items-center gap-3 rounded-xl px-3 text-[13px] transition-colors ${
+                      isActive ? 'bg-paper-100 font-medium text-ink-900' : 'text-ink-500 hover:bg-paper-100'
+                    }`
+                  }
+                >
+                  <Icon {...icon} />
+                  {itemLabel}
+                </NavLink>
+              ))}
+            </div>
+          </div>
         </nav>
-        <div className="border-t border-line px-5 py-4 text-[11px] text-ink-400">Cross-chain OTC settlement</div>
+        <div className="border-t border-line px-5 py-4 text-[11px] text-ink-400">
+          Two chains in, one decision, two out
+        </div>
       </aside>
 
       <div className="lg:pl-[256px]">
@@ -121,7 +150,13 @@ export default function Shell({ children }: { children: ReactNode }) {
           </div>
           <div className="flex items-center gap-3">
             {publicView ? (
-              <span className="text-[11px] text-ink-400">Public view</span>
+              <span className="rounded-full border border-line bg-paper-0 px-2.5 py-1 text-[11px] text-ink-500">
+                Public view
+              </span>
+            ) : internal ? (
+              <span className="rounded-full border border-bad/25 bg-bad-soft px-2.5 py-1 text-[11px] text-bad">
+                Internal
+              </span>
             ) : (
               <WalletControl />
             )}
@@ -134,8 +169,22 @@ export default function Shell({ children }: { children: ReactNode }) {
               key={to}
               to={to}
               className={({ isActive }) =>
-                `inline-flex shrink-0 items-center gap-2 rounded-lg px-3 py-2 text-[11px] transition-colors ${
-                  isActive ? 'bg-paper-100 font-medium text-accent' : 'text-ink-500'
+                `inline-flex shrink-0 items-center gap-2 rounded-xl px-3 py-2 text-[11px] transition-colors ${
+                  isActive ? 'bg-accent-soft font-medium text-accent-ink' : 'text-ink-500'
+                }`
+              }
+            >
+              <Icon {...icon} />
+              {itemLabel}
+            </NavLink>
+          ))}
+          {UTILITY_NAV.map(({ to, label: itemLabel, Icon }) => (
+            <NavLink
+              key={to}
+              to={to}
+              className={({ isActive }) =>
+                `inline-flex shrink-0 items-center gap-2 rounded-xl px-3 py-2 text-[11px] transition-colors ${
+                  isActive ? 'bg-paper-100 font-medium text-ink-900' : 'text-ink-500'
                 }`
               }
             >

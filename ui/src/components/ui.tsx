@@ -46,8 +46,9 @@ export function Button({
   type = 'button',
   ...rest
 }: ButtonProps) {
-  const shape = 'inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50'
-  const sizing = size === 'sm' ? 'h-8 px-3 text-[11px]' : 'h-10 px-4 text-[13px]'
+  const shape =
+    'inline-flex items-center justify-center gap-2 rounded-xl font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50'
+  const sizing = size === 'sm' ? 'h-9 px-3.5 text-[12px]' : 'h-11 px-5 text-[13px]'
   const tone =
     variant === 'primary'
       ? 'bg-accent text-white hover:bg-accent-ink'
@@ -68,15 +69,17 @@ export function Panel({
   action,
   children,
   className = '',
+  bodyClass = 'p-6',
 }: {
   title?: string
   subtitle?: string
   action?: ReactNode
   children: ReactNode
   className?: string
+  bodyClass?: string
 }) {
   return (
-    <section className={`rounded-[14px] border border-line bg-paper-0 ${className}`}>
+    <section className={`rounded-2xl border border-line bg-paper-0 ${className}`}>
       {(title || subtitle || action) && (
         <header className="flex flex-wrap items-start justify-between gap-4 border-b border-line px-6 py-5">
           <div>
@@ -86,7 +89,7 @@ export function Panel({
           {action}
         </header>
       )}
-      <div className="p-6">{children}</div>
+      <div className={bodyClass}>{children}</div>
     </section>
   )
 }
@@ -103,23 +106,101 @@ export function Metric({
   tone?: 'default' | 'good' | 'warn' | 'bad'
 }) {
   const toneClass =
-    tone === 'good' ? 'text-good' : tone === 'warn' ? 'text-warn' : tone === 'bad' ? 'text-bad' : 'text-ink-900'
+    tone === 'good'
+      ? 'text-good'
+      : tone === 'warn'
+        ? 'text-warn'
+        : tone === 'bad'
+          ? 'text-bad'
+          : 'text-ink-900'
   return (
-    <div className="rounded-lg border border-line bg-paper-50 px-4 py-3">
+    <div className="rounded-xl border border-line bg-paper-50 px-4 py-3">
       <div className="text-[11px] text-ink-400">{label}</div>
-      <div className={`tnum mt-1 font-mono text-[15px] ${toneClass}`}>{value ?? '—'}</div>
+      <div className={`tnum mt-1 font-mono text-sm ${toneClass}`}>{value ?? '—'}</div>
       {hint && <div className="mt-1 text-[11px] text-ink-400">{hint}</div>}
     </div>
   )
 }
 
-export function ChainBadge({ chain }: { chain: ChainKey }) {
+/** Inline SVG circle mark with one or two letters. No external images, no gradients. */
+export function TokenMark({
+  symbol,
+  kind = 'neutral',
+  size = 'md',
+  mark,
+  color,
+}: {
+  symbol?: string | null
+  kind?: 'payment' | 'asset' | 'neutral'
+  size?: 'sm' | 'md' | 'lg'
+  mark?: string | null
+  color?: string | null
+}) {
+  const letters = (mark || tokenLetters(symbol)).slice(0, 2).toUpperCase()
+  const fill =
+    color ??
+    (kind === 'payment'
+      ? '#18181b'
+      : kind === 'asset'
+        ? '#5c5c66'
+        : '#e6e6ea')
+  const foreground = color ? '#ffffff' : kind === 'neutral' ? '#35353b' : '#ffffff'
+  const dimensions = size === 'lg' ? 'h-10 w-10' : size === 'sm' ? 'h-6 w-6' : 'h-8 w-8'
   return (
-    <span className="inline-flex items-center rounded-md border border-line bg-paper-50 px-2 py-0.5 font-mono text-[10px] text-ink-500">
+    <svg
+      viewBox="0 0 32 32"
+      className={`${dimensions} shrink-0`}
+      role="img"
+      aria-label={`${symbol ?? 'token'} mark`}
+    >
+      <circle cx="16" cy="16" r="16" fill={fill} />
+      <text
+        x="16"
+        y="16"
+        textAnchor="middle"
+        dominantBaseline="central"
+        fill={foreground}
+        fontFamily="SFMono-Regular, Menlo, monospace"
+        fontSize="13"
+        fontWeight="600"
+      >
+        {letters}
+      </text>
+    </svg>
+  )
+}
+
+function tokenLetters(symbol?: string | null): string {
+  const value = (symbol ?? '').trim()
+  if (/^testusd$/i.test(value)) return 'US'
+  if (/^test$/i.test(value)) return 'TS'
+  const clean = value.replace(/[^a-zA-Z0-9]/g, '')
+  return clean.slice(0, 2).toUpperCase() || '??'
+}
+
+/** Chain chip. The accent is reserved for the active chain state. */
+export function ChainPill({
+  chain,
+  active = false,
+  className = '',
+}: {
+  chain: ChainKey
+  active?: boolean
+  className?: string
+}) {
+  return (
+    <span
+      className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] ${
+        active ? 'border-accent/25 bg-accent-soft text-accent-ink' : 'border-line bg-paper-50 text-ink-500'
+      } ${className}`}
+    >
+      <span className={`h-1.5 w-1.5 rounded-full ${active ? 'bg-accent' : 'bg-ink-400'}`} />
       {CHAIN_SHORT[chain]}
     </span>
   )
 }
+
+export const ChainBadge = ChainPill
 
 export function ExternalLink({
   href,
@@ -182,7 +263,7 @@ export function CopyButton({
 export function StatusPill({ status }: { status: OrderStatus }) {
   return (
     <span
-      className={`inline-flex items-center gap-2 rounded-lg border px-2.5 py-1 text-[11px] font-medium ${STATUS_STYLES[status]}`}
+      className={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-[11px] font-medium ${STATUS_STYLES[status]}`}
     >
       <span className={`h-1.5 w-1.5 rounded-full ${STATUS_DOT[status]}`} />
       {STATUS_LABEL[status]}
@@ -192,8 +273,8 @@ export function StatusPill({ status }: { status: OrderStatus }) {
 
 export function EmptyState({ title, message, action }: { title: string; message?: string; action?: ReactNode }) {
   return (
-    <div className="flex flex-col items-center justify-center rounded-xl border border-line bg-paper-50 px-6 py-14 text-center">
-      <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-lg border border-line bg-paper-0 text-ink-400">
+    <div className="flex flex-col items-center justify-center rounded-2xl border border-line bg-paper-50 px-6 py-14 text-center">
+      <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-xl border border-line bg-paper-0 text-ink-400">
         <Inbox {...icon} />
       </div>
       <p className="text-sm font-medium text-ink-900">{title}</p>
@@ -234,4 +315,4 @@ export function Field({
 }
 
 export const inputClass =
-  'w-full rounded-lg border border-line bg-paper-0 px-3 py-2.5 font-mono text-xs text-ink-900 outline-none transition-colors placeholder:text-ink-400 focus:border-accent focus:ring-2 focus:ring-accent/15 disabled:opacity-50'
+  'w-full rounded-xl border border-line bg-paper-0 px-3 py-2.5 font-mono text-xs text-ink-900 outline-none transition-colors placeholder:text-ink-400 focus:border-accent focus:ring-2 focus:ring-accent/10 disabled:opacity-50'

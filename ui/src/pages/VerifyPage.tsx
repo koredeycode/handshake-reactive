@@ -2,8 +2,10 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { Search } from 'lucide-react'
 import HopTimeline from '../components/HopTimeline'
+import TradeTicket from '../components/TradeTicket'
 import {
   Button,
+  ChainPill,
   EmptyState,
   ExternalLink,
   Metric,
@@ -17,8 +19,9 @@ import { EXPLORER_NAMES, txUrl, CHAIN_LABELS } from '../lib/chains'
 import { useConfig } from '../lib/config'
 import { countdown, formatAmount, formatDeadline, normalizeOrderId, truncate } from '../lib/format'
 import { useProof } from '../lib/proofs'
-import { useOrder, useTokenMeta } from '../lib/queries'
+import { useOrder } from '../lib/queries'
 import { deriveStatus } from '../lib/status'
+import { useTokenDisplay } from '../lib/tokenDisplay'
 import { useNow } from '../lib/useNow'
 import type { ChainKey } from '../lib/chains'
 import type { ProofEvent } from '../lib/types'
@@ -33,10 +36,10 @@ function ExplorerCard({
   description: string
 }) {
   return (
-    <div className="rounded-xl border border-line bg-paper-50 p-5">
+    <div className="rounded-2xl border border-line bg-paper-50 p-5">
       <div className="flex items-baseline justify-between gap-2">
         <h3 className="text-[13px] font-medium text-ink-900">{EXPLORER_NAMES[chain]}</h3>
-        <span className="text-[11px] text-ink-400">{CHAIN_LABELS[chain]}</span>
+        <ChainPill chain={chain} />
       </div>
       <div className="mt-4 font-mono text-[11px]">
         {event ? (
@@ -57,8 +60,8 @@ export default function VerifyPage() {
   const [localError, setLocalError] = useState<string | null>(null)
   const config = useConfig()
   const now = useNow()
-  const paymentMeta = useTokenMeta('payment')
-  const assetMeta = useTokenMeta('asset')
+  const paymentToken = useTokenDisplay('payment')
+  const assetToken = useTokenDisplay('asset')
 
   useEffect(() => {
     setInput(param ?? '')
@@ -86,6 +89,10 @@ export default function VerifyPage() {
   const configured = !!config.reactive.reactiveContract
   const notFound = param && !orderQuery.isLoading && !order
   const malformed = !!param && !orderId
+  const paymentSymbol = paymentToken.symbol
+  const assetSymbol = assetToken.symbol
+  const paymentDecimals = paymentToken.decimals
+  const assetDecimals = assetToken.decimals
 
   return (
     <div className="space-y-6">
@@ -114,7 +121,7 @@ export default function VerifyPage() {
       </Panel>
 
       {!param ? (
-        <EmptyState title="Enter an order ID" message="Paste an ID above to see the settlement timeline." />
+        <EmptyState title="Enter an order ID" message="Paste an ID above to see the settlement trail." />
       ) : !orderId ? null : orderQuery.isLoading ? (
         <Panel>
           <div className="flex items-center justify-center gap-2 py-12 text-xs text-ink-500">
@@ -130,19 +137,29 @@ export default function VerifyPage() {
             subtitle="Terms read from the reactive contract"
             action={status && <StatusPill status={status} />}
           >
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <TradeTicket
+              pay={{
+                symbol: paymentSymbol,
+                chain: 'base',
+                kind: 'payment',
+                mark: paymentToken.mark,
+                color: paymentToken.color,
+                amount: formatAmount(order?.paymentAmount, paymentDecimals),
+                hint: `You pay · ${CHAIN_LABELS.base}`,
+              }}
+              receive={{
+                symbol: assetSymbol,
+                chain: 'unichain',
+                kind: 'asset',
+                mark: assetToken.mark,
+                color: assetToken.color,
+                amount: formatAmount(order?.assetAmount, assetDecimals),
+                hint: `You receive · ${CHAIN_LABELS.unichain}`,
+              }}
+            />
+            <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <Metric label="Buyer" value={truncate(order?.buyer, 8, 6)} />
               <Metric label="Seller" value={truncate(order?.seller, 8, 6)} />
-              <Metric
-                label="Payment"
-                value={formatAmount(order?.paymentAmount, paymentMeta.data?.decimals ?? 6, paymentMeta.data?.symbol)}
-                hint="Base Sepolia"
-              />
-              <Metric
-                label="Asset"
-                value={formatAmount(order?.assetAmount, assetMeta.data?.decimals ?? 18, assetMeta.data?.symbol)}
-                hint="Unichain Sepolia"
-              />
               <Metric label="Deadline" value={formatDeadline(order?.deadline ?? null)} />
               <Metric label="Time remaining" value={countdown(order?.deadline ?? null, now)} />
             </div>

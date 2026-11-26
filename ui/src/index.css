@@ -18,18 +18,18 @@ body,
 
 body {
   margin: 0;
-  background: #f8f7f4;
-  color: #161a1f;
+  background: #f7f7f8;
+  color: #18181b;
 }
 
 ::selection {
-  background: #dfe8f2;
-  color: #173454;
+  background: #fdf0f5;
+  color: #b81450;
 }
 
 * {
   scrollbar-width: thin;
-  scrollbar-color: #d4d0c7 transparent;
+  scrollbar-color: #d4d4da transparent;
 }
 
 *::-webkit-scrollbar {
@@ -42,7 +42,7 @@ body {
 }
 
 *::-webkit-scrollbar-thumb {
-  background: #d4d0c7;
+  background: #d4d4da;
   border: 2px solid transparent;
   border-radius: 999px;
   background-clip: content-box;
@@ -52,7 +52,7 @@ a:focus-visible,
 button:focus-visible,
 input:focus-visible,
 select:focus-visible {
-  outline: 2px solid #1f4570;
+  outline: 2px solid #e11d62;
   outline-offset: 2px;
 }
 
@@ -64,7 +64,7 @@ select:focus-visible {
 
 /* One entrance, on page load only. */
 .page-enter {
-  animation: page-in 180ms ease-out both;
+  animation: page-in 160ms ease-out both;
 }
 
 @keyframes page-in {

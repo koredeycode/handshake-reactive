@@ -4,35 +4,38 @@ export default {
   theme: {
     extend: {
       colors: {
+        // One tinted neutral ramp. Surfaces step by 4px and by one tone.
         paper: {
           0: '#ffffff',
-          50: '#f8f7f4',
-          100: '#f2f0eb',
-          200: '#e9e6df',
+          50: '#f7f7f8',
+          100: '#f0f0f2',
+          200: '#e6e6ea',
         },
         ink: {
-          900: '#161a1f',
-          700: '#2f363f',
-          500: '#4d545e',
-          400: '#6c747e',
+          900: '#18181b',
+          700: '#35353b',
+          500: '#5c5c66',
+          400: '#8a8a94',
         },
-        line: 'rgba(22, 26, 31, 0.12)',
+        line: 'rgba(24, 24, 27, 0.10)',
+        // One accent, used only on the primary action, active state and one figure.
         accent: {
-          DEFAULT: '#1f4570',
-          soft: '#edf2f8',
-          ink: '#173454',
+          DEFAULT: '#e11d62',
+          soft: '#fdf0f5',
+          ink: '#b81450',
         },
+        // Functional status tones: quiet, never decorative.
         good: {
-          DEFAULT: '#2f6b4f',
-          soft: '#edf5f0',
+          DEFAULT: '#3f6b57',
+          soft: '#eff5f1',
         },
         warn: {
-          DEFAULT: '#8a5a12',
-          soft: '#faf3e6',
+          DEFAULT: '#7d601f',
+          soft: '#faf4e7',
         },
         bad: {
-          DEFAULT: '#9b3a3a',
-          soft: '#f9eded',
+          DEFAULT: '#8f4149',
+          soft: '#f9eff0',
         },
       },
       fontFamily: {
