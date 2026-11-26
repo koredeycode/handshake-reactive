@@ -1,0 +1,21 @@
+/// <reference types="vite/client" />
+
+interface ImportMetaEnv {
+  readonly VITE_RC_ADDRESS?: string
+  readonly VITE_SYSTEM_ADDRESS?: string
+  readonly VITE_LEGACY_SYSTEM_ADDRESS?: string
+  readonly VITE_PAYMENT_ESCROW?: string
+  readonly VITE_PAYMENT_TOKEN?: string
+  readonly VITE_BASE_PROXY?: string
+  readonly VITE_ASSET_ESCROW?: string
+  readonly VITE_ASSET_TOKEN?: string
+  readonly VITE_UNICHAIN_PROXY?: string
+  readonly VITE_LASNA_FROM_BLOCK?: string
+  readonly VITE_BASE_FROM_BLOCK?: string
+  readonly VITE_UNICHAIN_FROM_BLOCK?: string
+  readonly VITE_LOOKBACK_BLOCKS?: string
+}
+
+interface ImportMeta {
+  readonly env: ImportMetaEnv
+}
