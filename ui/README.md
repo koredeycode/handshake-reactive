@@ -54,7 +54,7 @@ Official colored chain marks are bundled in `public/chains/` and served locally 
 
 - `base.svg` — the official Base Square in Base Blue, from Web3 Icons (MIT), network "branded" SVG: https://github.com/0xa3k5/web3icons (https://web3icons.io). Base and Web3 Icons own their respective marks.
 - `unichain.svg` — the Unichain brand mark in brand pink, also from Web3 Icons (MIT): https://github.com/0xa3k5/web3icons (https://web3icons.io).
-- `lasna.svg` — the Reactscan brand mark (gradient ring `#62D0FF → #3C2EFF → #CBB5FF` and white bolt) rebuilt as a clean local SVG from the inline header logo at https://lasna.reactscan.net (`<a aria-label="Home">`, viewBox `0 0 64 64`). Reactscan / Reactive Network own that mark; see their brand guidelines for usage.
+- `lasna.svg` — the official Reactive Network header mark from https://reactive.network (gradient ring `#62D0FF → #3C2EFF → #CBB5FF`, white bolt), rebuilt as a clean local SVG in a `0 0 64 64` viewBox. The ring's centre is filled with a near-black disc (`#0b0b10`) behind the bolt so the mark reads correctly on our light surfaces; Reactscan / Reactive Network own the mark; see their brand guidelines for usage.
 
 These are third-party brand assets used purely to identify the chains; no logo is generated at runtime.
 

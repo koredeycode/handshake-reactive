@@ -1,8 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="none">
-  <!-- Reactscan / Reactive Lasna brand mark, rebuilt from the inline SVG in the
-       header of https://lasna.reactscan.net (ring drawn as an 8-unit band in
-       this 64-unit viewBox, i.e. 4px at the 32px size used in the UI). -->
+  <!-- Reactive Lasna: the official Reactive Network header mark from
+       https://reactive.network, rebuilt in this 64-unit viewBox (the gradient
+       ring is an 8-unit band). The near-black disc fills the ring's centre so
+       the white bolt reads correctly on light surfaces. -->
   <title>Reactive Lasna</title>
+  <circle cx="32" cy="32" r="24.5" fill="#0b0b10"/>
   <path fill-rule="evenodd" clip-rule="evenodd" d="M32 0C49.6731 0 64 14.3269 64 32C64 49.6731 49.6731 64 32 64C14.3269 64 0 49.6731 0 32C0 14.3269 14.3269 0 32 0ZM32 8C18.7452 8 8 18.7452 8 32C8 45.2548 18.7452 56 32 56C45.2548 56 56 45.2548 56 32C56 18.7452 45.2548 8 32 8Z" fill="url(#lasnaGradient)"/>
   <path d="M14 34L34 14V30H50L30 50V34H14Z" fill="#fff"/>
   <defs>
