@@ -5,13 +5,18 @@ import OrderBoard from '../components/OrderBoard'
 import TradeTicket from '../components/TradeTicket'
 import { Button, ConvergenceMark, RouteStrip, icon } from '../components/ui'
 import { useAccount } from 'wagmi'
+import { CHAIN_LABELS } from '../lib/chains'
 import { toUnitString } from '../lib/format'
+import { useMarket } from '../lib/markets'
 import { useTokenBalance } from '../lib/queries'
 import { useTokenDisplay } from '../lib/tokenDisplay'
 
 export default function OrdersPage() {
   const navigate = useNavigate()
   const { address } = useAccount()
+  const { chainKeyFor, market } = useMarket()
+  const paymentChain = chainKeyFor('payment')
+  const assetChain = chainKeyFor('asset')
   const paymentToken = useTokenDisplay('payment')
   const assetToken = useTokenDisplay('asset')
   const paymentBalance = useTokenBalance('payment', address)
@@ -26,6 +31,7 @@ export default function OrdersPage() {
 
   function startTrade() {
     const params = new URLSearchParams()
+    if (market) params.set('market', market.id)
     if (pay.trim()) params.set('pay', pay.trim())
     if (receive.trim()) params.set('get', receive.trim())
     const query = params.toString()
@@ -54,7 +60,7 @@ export default function OrdersPage() {
           <TradeTicket
             pay={{
               symbol: paymentSymbol,
-              chain: 'base',
+              chain: paymentChain,
               amount: pay,
               onAmountChange: setPay,
               kind: 'payment',
@@ -62,11 +68,11 @@ export default function OrdersPage() {
               color: paymentToken.color,
               hint: paymentBalance.data !== undefined && paymentBalance.data !== null
                 ? `${paymentToken.name} · balance ${toUnitString(paymentBalance.data, paymentDecimals)} ${paymentSymbol}`
-                : `${paymentToken.name} · Base Sepolia testnet`,
+                : `${paymentToken.name} · ${CHAIN_LABELS[paymentChain]} testnet`,
             }}
             receive={{
               symbol: assetSymbol,
-              chain: 'unichain',
+              chain: assetChain,
               amount: receive,
               onAmountChange: setReceive,
               kind: 'asset',
@@ -74,7 +80,7 @@ export default function OrdersPage() {
               color: assetToken.color,
               hint: assetBalance.data !== undefined && assetBalance.data !== null
                 ? `${assetToken.name} · balance ${toUnitString(assetBalance.data, assetDecimals)} ${assetSymbol}`
-                : `${assetToken.name} · Unichain Sepolia testnet`,
+                : `${assetToken.name} · ${CHAIN_LABELS[assetChain]} testnet`,
             }}
             footer={
               <>

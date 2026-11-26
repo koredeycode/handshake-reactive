@@ -16,8 +16,9 @@ import {
   icon,
 } from '../components/ui'
 import { EXPLORER_NAMES, txUrl, CHAIN_LABELS } from '../lib/chains'
-import { useConfig } from '../lib/config'
+
 import { countdown, formatAmount, formatDeadline, normalizeOrderId, truncate } from '../lib/format'
+import { useMarket, useMarketConfig } from '../lib/markets'
 import { useProof } from '../lib/proofs'
 import { useOrder } from '../lib/queries'
 import { deriveStatus } from '../lib/status'
@@ -58,7 +59,10 @@ export default function VerifyPage() {
   const navigate = useNavigate()
   const [input, setInput] = useState(param ?? '')
   const [localError, setLocalError] = useState<string | null>(null)
-  const config = useConfig()
+  const config = useMarketConfig()
+  const { chainKeyFor } = useMarket()
+  const paymentChain = chainKeyFor('payment')
+  const assetChain = chainKeyFor('asset')
   const now = useNow()
   const paymentToken = useTokenDisplay('payment')
   const assetToken = useTokenDisplay('asset')
@@ -140,21 +144,21 @@ export default function VerifyPage() {
             <TradeTicket
               pay={{
                 symbol: paymentSymbol,
-                chain: 'base',
+                chain: paymentChain,
                 kind: 'payment',
                 mark: paymentToken.mark,
                 color: paymentToken.color,
                 amount: formatAmount(order?.paymentAmount, paymentDecimals),
-                hint: `You pay · ${CHAIN_LABELS.base}`,
+                hint: `You pay · ${CHAIN_LABELS[paymentChain]}`,
               }}
               receive={{
                 symbol: assetSymbol,
-                chain: 'unichain',
+                chain: assetChain,
                 kind: 'asset',
                 mark: assetToken.mark,
                 color: assetToken.color,
                 amount: formatAmount(order?.assetAmount, assetDecimals),
-                hint: `You receive · ${CHAIN_LABELS.unichain}`,
+                hint: `You receive · ${CHAIN_LABELS[assetChain]}`,
               }}
             />
             <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -168,9 +172,9 @@ export default function VerifyPage() {
           <div>
             <h2 className="mb-3 text-sm font-medium text-ink-900">Explorers</h2>
             <div className="grid gap-4 md:grid-cols-3">
-              <ExplorerCard chain="base" event={proof?.paymentLocked} description={`Payment locked on ${CHAIN_LABELS.base}`} />
+              <ExplorerCard chain={paymentChain} event={proof?.paymentLocked} description={`Payment locked on ${CHAIN_LABELS[paymentChain]}`} />
               <ExplorerCard chain="lasna" event={proof?.reactive} description={`Settlement decision on ${CHAIN_LABELS.lasna}`} />
-              <ExplorerCard chain="unichain" event={proof?.assetLocked} description={`Asset locked on ${CHAIN_LABELS.unichain}`} />
+              <ExplorerCard chain={assetChain} event={proof?.assetLocked} description={`Asset locked on ${CHAIN_LABELS[assetChain]}`} />
             </div>
           </div>
 

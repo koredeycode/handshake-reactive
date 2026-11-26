@@ -3,10 +3,20 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAccount, usePublicClient, useWriteContract } from 'wagmi'
 import { parseUnits, type Address, type Hex } from 'viem'
 import { AlertCircle, Check, ChevronDown, RefreshCw } from 'lucide-react'
-import { configuredAddress, useConfig } from '../lib/config'
+import { CHAIN_IDS, CHAIN_LABELS } from '../lib/chains'
+import { configuredAddress } from '../lib/config'
 import { reactiveAbi } from '../lib/contracts'
-import { formatAmount, formatDeadline, normalizeAddress, randomOrderId, toUnitString, truncate } from '../lib/format'
+import {
+  formatAmount,
+  formatDeadline,
+  normalizeAddress,
+  randomOrderId,
+  toUnitString,
+  truncate,
+  ZERO_ADDRESS,
+} from '../lib/format'
 import { logClient } from '../lib/logs'
+import { useMarket, useMarketConfig } from '../lib/markets'
 import { useTokenBalance } from '../lib/queries'
 import { useTokenDisplay } from '../lib/tokenDisplay'
 import WriteButton from './WriteButton'
@@ -43,14 +53,18 @@ function parseAmount(value: string, decimals: number): bigint | null {
 export default function NewOrderForm() {
   const navigate = useNavigate()
   const [params] = useSearchParams()
-  const config = useConfig()
+  const config = useMarketConfig()
+  const { market, chainKeyFor } = useMarket()
+  const paymentChain = chainKeyFor('payment')
+  const assetChain = chainKeyFor('asset')
   const { address } = useAccount()
   const { writeContractAsync, isPending } = useWriteContract()
-  const lasnaClient = logClient(usePublicClient({ chainId: 5318007 })) as unknown as {
+  const lasnaClient = logClient(usePublicClient({ chainId: CHAIN_IDS.lasna })) as unknown as {
     waitForTransactionReceipt: (args: { hash: Hex }) => Promise<unknown>
   } | null
 
   const [orderId, setOrderId] = useState<string>(() => randomOrderId())
+  const [openOrder, setOpenOrder] = useState(false)
   const [seller, setSeller] = useState('')
   const [paymentAmount, setPaymentAmount] = useState(params.get('pay') ?? '100')
   const [assetAmount, setAssetAmount] = useState(params.get('get') ?? '1')
@@ -70,6 +84,7 @@ export default function NewOrderForm() {
   const parsedPayment = useMemo(() => parseAmount(paymentAmount, paymentDecimals), [paymentAmount, paymentDecimals])
   const parsedAsset = useMemo(() => parseAmount(assetAmount, assetDecimals), [assetAmount, assetDecimals])
   const normalizedSeller = normalizeAddress(seller)
+  const sellerAddress = openOrder ? ZERO_ADDRESS : normalizedSeller
   const entered = customValue.trim() === '' ? NaN : Number(customValue)
   const duration = Number.isFinite(entered) ? entered * unit : NaN
   const validDuration = Number.isSafeInteger(duration) ? duration : null
@@ -89,8 +104,8 @@ export default function NewOrderForm() {
 
   const validation = useMemo(() => {
     if (!/^0x[a-fA-F0-9]{64}$/.test(orderId)) return 'Order ID must be 32 bytes: 0x followed by 64 hex characters.'
-    if (!normalizedSeller) return 'Enter a valid seller address.'
-    if (address && normalizedSeller.toLowerCase() === address.toLowerCase()) return 'The seller must differ from the buyer.'
+    if (!openOrder && !normalizedSeller) return 'Enter a valid seller address.'
+    if (!openOrder && address && normalizedSeller && normalizedSeller.toLowerCase() === address.toLowerCase()) return 'The seller must differ from the buyer.'
     if (!parsedPayment) return 'Payment amount must be greater than zero.'
     if (!parsedAsset) return 'Asset amount must be greater than zero.'
     if (paymentBalance.data !== undefined && paymentBalance.data !== null && paymentBalance.data < parsedPayment) {
@@ -101,6 +116,7 @@ export default function NewOrderForm() {
     return null
   }, [
     orderId,
+    openOrder,
     normalizedSeller,
     address,
     parsedPayment,
@@ -127,7 +143,7 @@ export default function NewOrderForm() {
         functionName: 'createOrder',
         args: [
           orderId as Hex,
-          normalizedSeller as Hex,
+          sellerAddress as Hex,
           paymentTokenAddress as Hex,
           parsedPayment!,
           assetTokenAddress as Hex,
@@ -136,7 +152,9 @@ export default function NewOrderForm() {
         ],
       })
       await lasnaClient?.waitForTransactionReceipt({ hash })
-      navigate(`/orders/${orderId}?tx=${hash}`)
+      const query = new URLSearchParams({ tx: hash })
+      if (market) query.set('market', market.id)
+      navigate(`/orders/${orderId}?${query}`)
     } catch {
       setError('The trade could not be created. Try again.')
     } finally {
@@ -151,7 +169,7 @@ export default function NewOrderForm() {
           <TradeTicket
             pay={{
               symbol: paymentToken.symbol,
-              chain: 'base',
+              chain: paymentChain,
               amount: paymentAmount,
               onAmountChange: setPaymentAmount,
               kind: 'payment',
@@ -160,30 +178,63 @@ export default function NewOrderForm() {
               hint:
                 paymentBalance.data !== undefined && paymentBalance.data !== null
                   ? `${paymentToken.name} · balance ${toUnitString(paymentBalance.data, paymentDecimals)} ${paymentToken.symbol}`
-                  : `${paymentToken.name} · Base Sepolia testnet`,
+                  : `${paymentToken.name} · ${CHAIN_LABELS[paymentChain]} testnet`,
             }}
             receive={{
               symbol: assetToken.symbol,
-              chain: 'unichain',
+              chain: assetChain,
               amount: assetAmount,
               onAmountChange: setAssetAmount,
               kind: 'asset',
               mark: assetToken.mark,
               color: assetToken.color,
-              hint: `${assetToken.name} · Unichain Sepolia testnet`,
+              hint: `${assetToken.name} · ${CHAIN_LABELS[assetChain]} testnet`,
             }}
           />
 
           <div className="mt-5 space-y-5 px-1">
-            <Field label="Seller address" hint="Receives payment on Base Sepolia">
-              <input
-                className={inputClass}
-                placeholder="0x…"
-                value={seller}
-                onChange={(e) => setSeller(e.target.value)}
-                spellCheck={false}
-              />
+            <Field label="Counterparty" hint={openOrder ? 'Anyone can match' : 'Named seller'}>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={openOrder}
+                onClick={() => setOpenOrder((value) => !value)}
+                className="flex w-full items-center justify-between gap-3 rounded-xl border border-line bg-paper-50 px-3 py-2.5 text-left transition-colors hover:bg-paper-100"
+              >
+                <span className="text-[12px] font-medium text-ink-900">
+                  Open order — any seller can match
+                </span>
+                <span
+                  className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
+                    openOrder ? 'bg-accent' : 'bg-paper-200'
+                  }`}
+                  aria-hidden="true"
+                >
+                  <span
+                    className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-all ${
+                      openOrder ? 'left-[18px]' : 'left-0.5'
+                    }`}
+                  />
+                </span>
+              </button>
+              {openOrder && (
+                <p className="mt-2 text-[11px] leading-relaxed text-ink-500">
+                  The first seller to lock the full asset amount sets the winner. Later locks are refunded, and payment is released to the winner.
+                </p>
+              )}
             </Field>
+
+            {!openOrder && (
+              <Field label="Seller address" hint={`Receives payment on ${CHAIN_LABELS[paymentChain]}`}>
+                <input
+                  className={inputClass}
+                  placeholder="0x…"
+                  value={seller}
+                  onChange={(e) => setSeller(e.target.value)}
+                  spellCheck={false}
+                />
+              </Field>
+            )}
 
             <Field label="Settlement window" hint="30 seconds – 30 days">
               <div className="flex flex-wrap gap-2">
@@ -316,7 +367,10 @@ export default function NewOrderForm() {
               <Metric label="Deadline" value={deadline !== null ? formatDeadline(BigInt(deadline)) : '—'} />
               <Metric label="Window" value={validDuration !== null ? `${validDuration}s` : '—'} />
               <Metric label="Buyer" value={address ? truncate(address, 8, 6) : '—'} />
-              <Metric label="Seller" value={normalizedSeller ? truncate(normalizedSeller, 8, 6) : '—'} />
+              <Metric
+                label="Seller"
+                value={openOrder ? 'Open to any seller' : normalizedSeller ? truncate(normalizedSeller, 8, 6) : '—'}
+              />
               <Metric label="Payment leg" value={formatAmount(parsedPayment ?? 0n, paymentDecimals, paymentToken.symbol)} />
               <Metric label="Asset leg" value={formatAmount(parsedAsset ?? 0n, assetDecimals, assetToken.symbol)} />
             </div>
@@ -326,9 +380,11 @@ export default function NewOrderForm() {
         <Panel title="Settlement trail">
           <ol className="space-y-4 text-xs text-ink-500">
             {[
-              '01 Buyer locks payment on Base Sepolia',
-              '02 Seller locks the asset on Unichain Sepolia',
-              '03 One decision releases both legs',
+              `01 Buyer locks payment on ${CHAIN_LABELS[paymentChain]}`,
+              openOrder
+                ? `02 Any seller can lock the asset on ${CHAIN_LABELS[assetChain]}`
+                : `02 Seller locks the asset on ${CHAIN_LABELS[assetChain]}`,
+              openOrder ? '03 One decision pays the first valid seller' : '03 One decision releases both legs',
             ].map((step) => (
               <li key={step}>
                 <span className="tnum mr-3 font-mono text-ink-400">{step.slice(0, 2)}</span>

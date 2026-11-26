@@ -3,9 +3,10 @@ import { useQuery } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
 import { usePublicClient } from 'wagmi'
 import { CHAIN_IDS, CHAIN_LABELS } from '../../lib/chains'
-import { useConfig } from '../../lib/config'
+
 import { formatTimestamp, normalizeOrderId, truncate } from '../../lib/format'
 import { fetchEventFeed, logClient, type ProofClients } from '../../lib/logs'
+import { useMarket, useMarketConfig } from '../../lib/markets'
 import { Button, ChainPill, CopyButton, EmptyState, Panel, Spinner, TxLink, inputClass } from '../ui'
 
 const EVENT_TYPES = [
@@ -21,20 +22,28 @@ const EVENT_TYPES = [
 ]
 
 export default function EventLog() {
-  const config = useConfig()
+  const config = useMarketConfig()
+  const { market, chainKeyFor } = useMarket()
   const [params] = useSearchParams()
   const [orderFilter, setOrderFilter] = useState(params.get('order') ?? '')
   const [typeFilter, setTypeFilter] = useState('all')
   const lasna = logClient(usePublicClient({ chainId: CHAIN_IDS.lasna }))
-  const base = logClient(usePublicClient({ chainId: CHAIN_IDS.base }))
-  const unichain = logClient(usePublicClient({ chainId: CHAIN_IDS.unichain }))
-  const clients: ProofClients = { lasna, base, unichain }
+  const payment = logClient(usePublicClient({ chainId: CHAIN_IDS[chainKeyFor('payment')] }))
+  const asset = logClient(usePublicClient({ chainId: CHAIN_IDS[chainKeyFor('asset')] }))
+  const clients: ProofClients = { lasna, payment, asset }
+  const chainKeys = { payment: chainKeyFor('payment'), asset: chainKeyFor('asset') }
 
   const feed = useQuery({
-    queryKey: ['event-feed', config.reactive.systemContract, config.base.paymentEscrow, config.unichain.assetEscrow],
+    queryKey: [
+      'event-feed',
+      market.id,
+      config.reactive.systemContract,
+      config.base.paymentEscrow,
+      config.unichain.assetEscrow,
+    ],
     staleTime: 20_000,
     refetchInterval: 30_000, // dev-only; was 10s
-    queryFn: () => fetchEventFeed(config, clients),
+    queryFn: () => fetchEventFeed(config, clients, chainKeys),
   })
 
   const normalized = normalizeOrderId(orderFilter)
@@ -54,7 +63,7 @@ export default function EventLog() {
   return (
     <Panel
       title="Raw event log"
-      subtitle={`Decoded logs from ${CHAIN_LABELS.lasna}, ${CHAIN_LABELS.base} and ${CHAIN_LABELS.unichain} · last ~2,000 blocks per chain`}
+      subtitle={`Decoded logs from ${CHAIN_LABELS.lasna}, ${CHAIN_LABELS[chainKeys.payment]} and ${CHAIN_LABELS[chainKeys.asset]} · last ~2,000 blocks per chain`}
       action={
         <div className="flex flex-wrap items-center gap-2">
           {feed.isFetching && <Spinner />}

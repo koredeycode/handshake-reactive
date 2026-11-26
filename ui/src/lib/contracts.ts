@@ -90,6 +90,13 @@ export const reactiveAbi = [
   },
   {
     type: 'function',
+    name: 'cancelOrder',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'orderId_', type: 'bytes32' }],
+    outputs: [],
+  },
+  {
+    type: 'function',
     name: 'coverDebt',
     stateMutability: 'nonpayable',
     inputs: [],

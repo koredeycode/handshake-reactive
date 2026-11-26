@@ -1,7 +1,8 @@
 import { useAccount } from 'wagmi'
 import { CHAIN_LABELS } from '../../lib/chains'
-import { useConfig } from '../../lib/config'
+
 import { formatNative } from '../../lib/format'
+import { useMarket, useMarketConfig } from '../../lib/markets'
 import { useHealth, useNativeBalances } from '../../lib/queries'
 import { useTokenDisplay } from '../../lib/tokenDisplay'
 import { AlertCircle, Wallet } from 'lucide-react'
@@ -17,8 +18,8 @@ const CAVEATS = [
     body: 'The deadline sweep runs on Cron10. Expired orders settle within roughly one tick, not at the exact second.',
   },
   {
-    title: 'No cancellation in the MVP',
-    body: 'There is no buyer cancel path before the deadline. An abandoned order refunds automatically once it expires.',
+    title: 'Cancellation before matching',
+    body: 'A buyer can cancel an open, unmatched order before its deadline. Abandoned orders refund automatically once they expire.',
   },
   {
     title: 'Pre-flight terms hash',
@@ -27,7 +28,8 @@ const CAVEATS = [
 ]
 
 export default function WarningsPanel() {
-  const config = useConfig()
+  const config = useMarketConfig()
+  const { chainKeyFor } = useMarket()
   const health = useHealth()
   const { address } = useAccount()
   const balances = useNativeBalances(address)
@@ -36,6 +38,8 @@ export default function WarningsPanel() {
 
   const indebted = (health.data ?? []).filter((row) => row.debt !== undefined && row.debt > 0n)
   const tokenSymbols = [`${paymentToken.name} (${paymentToken.symbol})`, `${assetToken.name} (${assetToken.symbol})`]
+  const chainLabelFor = (key: 'lasna' | 'payment' | 'asset') =>
+    key === 'lasna' ? CHAIN_LABELS.lasna : CHAIN_LABELS[chainKeyFor(key)]
 
   return (
     <div className="space-y-6">
@@ -56,7 +60,7 @@ export default function WarningsPanel() {
               Execution paused — top up with depositTo before demoing
             </p>
             <p className="mt-1 text-[11px] leading-relaxed text-bad">
-              Debt on {indebted.map((row) => CHAIN_LABELS[row.key]).join(', ')}. Reactive transactions and callbacks
+              Debt on {indebted.map((row) => chainLabelFor(row.key)).join(', ')}. Reactive transactions and callbacks
               are not delivered while debt is above zero. Verification reads still work.
             </p>
           </div>
@@ -64,7 +68,7 @@ export default function WarningsPanel() {
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {(health.data ?? []).map((row) => (
             <div key={row.key} className="rounded-xl border border-line bg-paper-50 p-4">
-              <div className="text-xs font-medium text-ink-900">{CHAIN_LABELS[row.key]}</div>
+              <div className="text-xs font-medium text-ink-900">{chainLabelFor(row.key)}</div>
               <div className="mt-3 grid grid-cols-2 gap-2">
                 <Metric
                   label="Debt"
@@ -83,11 +87,11 @@ export default function WarningsPanel() {
         <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {[
             { key: 'lasna' as const, symbol: 'lREACT', balance: balances.lasna?.value },
-            { key: 'base' as const, symbol: 'ETH', balance: balances.base?.value },
-            { key: 'unichain' as const, symbol: 'ETH', balance: balances.unichain?.value },
+            { key: 'payment' as const, symbol: 'ETH', balance: balances.payment?.value },
+            { key: 'asset' as const, symbol: 'ETH', balance: balances.asset?.value },
           ].map((item) => (
             <div key={item.key} className="rounded-xl border border-line bg-paper-50 p-4">
-              <div className="text-xs font-medium text-ink-900">{CHAIN_LABELS[item.key]}</div>
+              <div className="text-xs font-medium text-ink-900">{chainLabelFor(item.key)}</div>
               <div className="tnum mt-2 font-mono text-sm text-ink-700">
                 {item.balance !== undefined ? formatNative(item.balance, item.symbol) : '—'}
               </div>

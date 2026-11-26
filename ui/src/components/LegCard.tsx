@@ -1,11 +1,13 @@
 import { useAccount, usePublicClient, useWriteContract } from 'wagmi'
 import type { Address, Hex } from 'viem'
 import { CHAIN_IDS, CHAIN_LABELS, addressUrl } from '../lib/chains'
-import { configuredAddress, useConfig } from '../lib/config'
+import { configuredAddress } from '../lib/config'
 import { assetEscrowAbi, erc20Abi, paymentEscrowAbi } from '../lib/contracts'
-import { computeTermsHash, formatAmount, truncate } from '../lib/format'
+import { computeTermsHash, formatAmount, isZeroAddress, truncate, ZERO_ADDRESS } from '../lib/format'
 import { logClient } from '../lib/logs'
+import { useMarket, useMarketConfig } from '../lib/markets'
 import { useAllowance, useTokenBalance, type LegKind } from '../lib/queries'
+import { isOpenOrder } from '../lib/status'
 import { useTokenDisplay } from '../lib/tokenDisplay'
 import type { ChainKey } from '../lib/chains'
 import type { Leg, Order } from '../lib/types'
@@ -34,8 +36,9 @@ export default function LegCard({
   setNotice: (n: TxNotice | null) => void
   refresh: () => void
 }) {
-  const chainKey: ChainKey = kind === 'payment' ? 'base' : 'unichain'
-  const config = useConfig()
+  const { chainKeyFor } = useMarket()
+  const chainKey: ChainKey = chainKeyFor(kind)
+  const config = useMarketConfig()
   const { address } = useAccount()
   const { writeContractAsync, isPending } = useWriteContract()
   const client = logClient(usePublicClient({ chainId: CHAIN_IDS[chainKey] })) as unknown as {
@@ -48,11 +51,16 @@ export default function LegCard({
   const escrow = configuredAddress(kind === 'payment' ? config.base.paymentEscrow : config.unichain.assetEscrow)
   const token = configuredAddress(kind === 'payment' ? config.base.paymentToken : config.unichain.assetToken)
   const isPayment = kind === 'payment'
+  const open = isOpenOrder(order)
   const amount = isPayment ? order.paymentAmount : order.assetAmount
   const expectedToken = isPayment ? order.paymentToken : order.assetToken
   const counterparty = isPayment ? order.seller : order.buyer
-  const depositor = isPayment ? order.buyer : order.seller
-  const canLockByMe = !!address && address.toLowerCase() === depositor.toLowerCase()
+  const depositor = isPayment ? order.buyer : open ? address ?? ZERO_ADDRESS : order.seller
+  const canLockByMe = !!address && (
+    isPayment
+      ? address.toLowerCase() === depositor.toLowerCase()
+      : open || address.toLowerCase() === depositor.toLowerCase()
+  )
   const insufficient = balance.data !== undefined && balance.data !== null && balance.data < amount
   const needsApproval = allowance.data !== undefined && allowance.data !== null && allowance.data < amount
   const decimals = display.decimals
@@ -61,6 +69,14 @@ export default function LegCard({
   // Precondition: the terms hash is derived from getOrder(id), never from a quote.
   const termsHash = computeTermsHash(order)
   const termsMismatch = !!leg && leg.termsHash?.toLowerCase() !== termsHash.toLowerCase()
+  const winnerKnown = !!order.winner && !isZeroAddress(order.winner)
+  const counterpartyLabel = open && isPayment
+    ? winnerKnown
+      ? truncate(order.winner, 8, 6)
+      : 'Open — winner set at settlement'
+    : leg
+      ? truncate(leg.counterparty, 8, 6)
+      : truncate(counterparty, 8, 6)
 
   async function write(label: string, fn: () => Promise<Hex>) {
     try {
@@ -82,10 +98,13 @@ export default function LegCard({
   }
 
   const locked = !!leg && leg.state > 0n
-  const lockLabel = `Lock ${symbol}`
+  const isMatch = open && !isPayment
+  const lockLabel = isMatch ? 'Match order' : `Lock ${symbol}`
   const lockDisabled = !canLockByMe || insufficient || !escrow || !token || locked
   const lockTitle = !canLockByMe
-    ? `Only the ${isPayment ? 'buyer' : 'seller'} can lock this leg`
+    ? isMatch
+      ? 'Connect a wallet to match this order'
+      : `Only the ${isPayment ? 'buyer' : 'seller'} can lock this leg`
     : insufficient
       ? `Not enough ${symbol} to lock this leg`
       : locked
@@ -118,7 +137,7 @@ export default function LegCard({
 
       <div className="mt-5 flex flex-wrap items-center gap-2 text-[11px]">
         <span className="rounded-md border border-line bg-paper-50 px-2 py-0.5 font-medium text-ink-700">
-          {isPayment ? 'Buyer' : 'Seller'}
+          {isMatch ? 'Any seller' : isPayment ? 'Buyer' : 'Seller'}
         </span>
         <span className="text-ink-500">
           {canLockByMe
@@ -127,7 +146,9 @@ export default function LegCard({
               : `You deliver ${symbol}`
             : isPayment
               ? `Buyer pays ${symbol}`
-              : `Seller delivers ${symbol}`}
+              : isMatch
+                ? `Sellers deliver ${symbol}`
+                : `Seller delivers ${symbol}`}
         </span>
       </div>
 
@@ -147,8 +168,8 @@ export default function LegCard({
         </div>
         <div>
           <dt className="text-[11px] text-ink-400">Counterparty</dt>
-          <dd className="tnum mt-1 font-mono text-xs text-ink-700">
-            {leg ? truncate(leg.counterparty, 8, 6) : truncate(counterparty, 8, 6)}
+          <dd className={`mt-1 text-xs ${counterpartyLabel.startsWith('Open') ? 'text-ink-500' : 'tnum font-mono text-ink-700'}`}>
+            {counterpartyLabel}
           </dd>
         </div>
         <div>

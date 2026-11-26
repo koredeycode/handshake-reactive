@@ -1,9 +1,10 @@
 import { useBalance, useReadContract } from 'wagmi'
 import type { Address, Hex } from 'viem'
 import { CHAIN_IDS, CHAIN_LABELS } from './chains'
-import { configuredAddress, useConfig } from './config'
+import { configuredAddress } from './config'
 import { erc20Abi } from './contracts'
 import { formatAmount, formatNative } from './format'
+import { useMarket, type LegKind } from './markets'
 import { useTokenDisplay } from './tokenDisplay'
 import type { ChainKey } from './chains'
 
@@ -24,25 +25,42 @@ export interface BalanceChip {
  * no value is invented.
  */
 export function useWalletBalances(address?: Hex | null): BalanceChip[] {
-  const config = useConfig()
+  const { market, chainKeyFor, legConfig } = useMarket()
   const payment = useTokenDisplay('payment')
   const asset = useTokenDisplay('asset')
   const owner = address as Address | undefined
   const enabled = !!address
   const balanceQuery = { enabled, refetchInterval: 15_000, staleTime: 10_000 }
-  const paymentToken = configuredAddress(config.base.paymentToken)
-  const assetToken = configuredAddress(config.unichain.assetToken)
+  const chainFor = (kind: LegKind): ChainKey => chainKeyFor(kind)
+  const paymentToken = configuredAddress(legConfig('payment').token)
+  const assetToken = configuredAddress(legConfig('asset').token)
 
-  const baseNative = useBalance({ address: owner, chainId: CHAIN_IDS.base, query: balanceQuery })
-  const unichainNative = useBalance({ address: owner, chainId: CHAIN_IDS.unichain, query: balanceQuery })
-  const lasnaNative = useBalance({ address: owner, chainId: CHAIN_IDS.lasna, query: balanceQuery })
+  const paymentNative = useBalance({
+    address: owner,
+    chainId: CHAIN_IDS[chainFor('payment')],
+    scopeKey: `${market.id}:payment-native`,
+    query: balanceQuery,
+  })
+  const assetNative = useBalance({
+    address: owner,
+    chainId: CHAIN_IDS[chainFor('asset')],
+    scopeKey: `${market.id}:asset-native`,
+    query: balanceQuery,
+  })
+  const lasnaNative = useBalance({
+    address: owner,
+    chainId: CHAIN_IDS.lasna,
+    scopeKey: `${market.id}:lasna-native`,
+    query: balanceQuery,
+  })
 
   const paymentBalance = useReadContract({
     address: (paymentToken ?? undefined) as Address | undefined,
     abi: erc20Abi,
     functionName: 'balanceOf',
     args: owner ? [owner] : undefined,
-    chainId: CHAIN_IDS.base,
+    chainId: CHAIN_IDS[chainFor('payment')],
+    scopeKey: `${market.id}:payment-token`,
     query: { ...balanceQuery, enabled: enabled && !!paymentToken },
   })
   const assetBalance = useReadContract({
@@ -50,11 +68,12 @@ export function useWalletBalances(address?: Hex | null): BalanceChip[] {
     abi: erc20Abi,
     functionName: 'balanceOf',
     args: owner ? [owner] : undefined,
-    chainId: CHAIN_IDS.unichain,
+    chainId: CHAIN_IDS[chainFor('asset')],
+    scopeKey: `${market.id}:asset-token`,
     query: { ...balanceQuery, enabled: enabled && !!assetToken },
   })
 
-  const nativeLabel = (query: typeof baseNative): string => {
+  const nativeLabel = (query: typeof paymentNative): string => {
     if (query.isError) return '—'
     if (query.isLoading || !query.data) return '…'
     return formatNative(query.data.value, query.data.symbol)
@@ -66,20 +85,23 @@ export function useWalletBalances(address?: Hex | null): BalanceChip[] {
     return formatAmount(query.data, decimals, symbol)
   }
 
+  const paymentChain = chainFor('payment')
+  const assetChain = chainFor('asset')
+
   return [
     {
-      key: 'base-native',
-      chain: 'base',
+      key: 'payment-native',
+      chain: paymentChain,
       asset: 'Native',
-      label: nativeLabel(baseNative),
-      title: `${CHAIN_LABELS.base} · native balance`,
+      label: nativeLabel(paymentNative),
+      title: `${CHAIN_LABELS[paymentChain]} · native balance`,
     },
     {
-      key: 'unichain-native',
-      chain: 'unichain',
+      key: 'asset-native',
+      chain: assetChain,
       asset: 'Native',
-      label: nativeLabel(unichainNative),
-      title: `${CHAIN_LABELS.unichain} · native balance`,
+      label: nativeLabel(assetNative),
+      title: `${CHAIN_LABELS[assetChain]} · native balance`,
     },
     {
       key: 'lasna-native',
@@ -90,17 +112,17 @@ export function useWalletBalances(address?: Hex | null): BalanceChip[] {
     },
     {
       key: 'payment-token',
-      chain: 'base',
+      chain: paymentChain,
       asset: payment.symbol,
       label: erc20Label(paymentBalance, payment.symbol, payment.decimals),
-      title: `${payment.name} (${payment.symbol}) · ${CHAIN_LABELS.base}`,
+      title: `${payment.name} (${payment.symbol}) · ${CHAIN_LABELS[paymentChain]}`,
     },
     {
       key: 'asset-token',
-      chain: 'unichain',
+      chain: assetChain,
       asset: asset.symbol,
       label: erc20Label(assetBalance, asset.symbol, asset.decimals),
-      title: `${asset.name} (${asset.symbol}) · ${CHAIN_LABELS.unichain}`,
+      title: `${asset.name} (${asset.symbol}) · ${CHAIN_LABELS[assetChain]}`,
     },
   ]
 }

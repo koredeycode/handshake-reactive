@@ -90,12 +90,13 @@ export interface ProofData {
   assetRefunded?: ProofEvent
   scan: {
     lasnaFrom: bigint
-    baseFrom: bigint
-    unichainFrom: bigint
+    /** Role-keyed windows: payment/asset chains come from the selected market. */
+    paymentFrom: bigint
+    assetFrom: bigint
     /** Per-chain scan tips, reused as a small cursor window on the next poll. */
     lasnaTo?: bigint
-    baseTo?: bigint
-    unichainTo?: bigint
+    paymentTo?: bigint
+    assetTo?: bigint
     to: bigint
   }
 }

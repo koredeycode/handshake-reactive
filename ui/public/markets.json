@@ -1,0 +1,81 @@
+{
+  "_comment": "Market registry. No keys. systemContract/legacy are chain-wide; per-market addresses are role-based, not chain-slot-based. Disabled entries are hidden until their instance is deployed and proven.",
+  "version": 1,
+  "defaultMarketId": "forward-tusd-base-tasset-unichain",
+  "systemContract": "0x8888888888888888888888888888888888888888",
+  "legacySystemContract": "0x0000000000000000000000000000000000fffFfF",
+  "markets": [
+    {
+      "id": "forward-tusd-base-tasset-unichain",
+      "label": "Pay on Base · receive on Unichain",
+      "direction": "forward",
+      "enabled": true,
+      "reactive": {
+        "chainId": 5318007,
+        "rc": "0x6d1Da6e00066f4b3A16Fec64010478165BAb34E6",
+        "deployBlock": 9279105
+      },
+      "payment": {
+        "chainId": 84532,
+        "chainKey": "base",
+        "escrow": "0xc5ca1b349d214855aB62291C8990ECC63881bDAe",
+        "token": "0x6d1Da6e00066f4b3A16Fec64010478165BAb34E6",
+        "tokenSymbol": "tUSD",
+        "tokenDecimals": 6,
+        "callbackProxy": "0x476F44b11F5C942c58f4c8E3d0300E5710743585",
+        "scanFromBlock": 63775999
+      },
+      "asset": {
+        "chainId": 1301,
+        "chainKey": "unichain",
+        "escrow": "0xc5ca1b349d214855aB62291C8990ECC63881bDAe",
+        "token": "0x6d1Da6e00066f4b3A16Fec64010478165BAb34E6",
+        "tokenSymbol": "tASSET",
+        "tokenDecimals": 18,
+        "callbackProxy": "0x775c9B990ADe401060B78D0e98684eEf8d2466C1",
+        "scanFromBlock": 68824600
+      },
+      "scan": { "lasnaFromBlock": 9279105, "lookbackBlocks": 50000 },
+      "notes": {
+        "latency": "2nd lock → RC 0 s; RC → payment cb +1 s; RC → asset cb +2 s (LATENCY.md)",
+        "proofSection": "DEPLOYMENT.md §Proven loops"
+      }
+    },
+    {
+      "id": "reverse-tusd-unichain-tasset-base",
+      "label": "Pay on Unichain · receive on Base",
+      "direction": "reverse",
+      "enabled": false,
+      "reactive": {
+        "chainId": 5318007,
+        "rc": "0x0000000000000000000000000000000000000000",
+        "deployBlock": 0
+      },
+      "payment": {
+        "chainId": 1301,
+        "chainKey": "unichain",
+        "escrow": "0x0000000000000000000000000000000000000000",
+        "token": "0x0000000000000000000000000000000000000000",
+        "tokenSymbol": "tUSD",
+        "tokenDecimals": 6,
+        "callbackProxy": "0x775c9B990ADe401060B78D0e98684eEf8d2466C1",
+        "scanFromBlock": 0
+      },
+      "asset": {
+        "chainId": 84532,
+        "chainKey": "base",
+        "escrow": "0x0000000000000000000000000000000000000000",
+        "token": "0x0000000000000000000000000000000000000000",
+        "tokenSymbol": "tASSET",
+        "tokenDecimals": 18,
+        "callbackProxy": "0x476F44b11F5C942c58f4c8E3d0300E5710743585",
+        "scanFromBlock": 0
+      },
+      "scan": { "lasnaFromBlock": 0, "lookbackBlocks": 50000 },
+      "notes": {
+        "latency": "Pending verification",
+        "proofSection": "Pending deployment"
+      }
+    }
+  ]
+}

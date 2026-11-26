@@ -28,7 +28,7 @@ export interface AppConfig {
 const env = import.meta.env
 
 /** Env vars win over public/contracts.json so Vercel preview deploys can override at build time. */
-function withOverrides(config: AppConfig): AppConfig {
+export function withOverrides(config: AppConfig): AppConfig {
   return {
     reactive: {
       reactiveContract: env.VITE_RC_ADDRESS || config.reactive.reactiveContract,

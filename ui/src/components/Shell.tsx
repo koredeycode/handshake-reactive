@@ -1,12 +1,14 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, NavLink, useLocation } from 'react-router-dom'
 import { useAccount, useConnect, useDisconnect } from 'wagmi'
 import { ChevronDown, ClipboardList, Droplets, House, LogOut, Plus, Search, Wallet } from 'lucide-react'
 import { useWalletBalances } from '../lib/balances'
 import { CHAIN_LABELS } from '../lib/chains'
 import { copyText, truncate } from '../lib/format'
+import { useMarket } from '../lib/markets'
 import { useCopyFeedback } from '../lib/proofs'
 import { Button, ChainMark, ConvergenceMark, icon } from './ui'
+import MarketSelector from './MarketSelector'
 import type { ChainKey } from '../lib/chains'
 
 const NAV = [
@@ -34,19 +36,26 @@ function Logo() {
   )
 }
 
-/** Connected wallet: truncated address + chevron. Balances live in the panel. */
-const BALANCE_GROUPS: Array<{ chain: ChainKey; keys: string[] }> = [
-  { chain: 'base', keys: ['base-native', 'payment-token'] },
-  { chain: 'unichain', keys: ['unichain-native', 'asset-token'] },
-  { chain: 'lasna', keys: ['lasna-native'] },
-]
+function useBalanceGroups(): Array<{ chain: ChainKey; keys: string[] }> {
+  const { chainKeyFor } = useMarket()
+  return useMemo(
+    () => [
+      { chain: chainKeyFor('payment'), keys: ['payment-native', 'payment-token'] },
+      { chain: chainKeyFor('asset'), keys: ['asset-native', 'asset-token'] },
+      { chain: 'lasna' as ChainKey, keys: ['lasna-native'] },
+    ],
+    [chainKeyFor],
+  )
+}
 
+/** Connected wallet: truncated address + chevron. Balances live in the panel. */
 function WalletControl() {
   const { address, isConnected } = useAccount()
   const { connectors, connect, isPending } = useConnect()
   const { disconnect } = useDisconnect()
   const { copied, setCopied } = useCopyFeedback()
   const chips = useWalletBalances(isConnected ? address : null)
+  const groups = useBalanceGroups()
   const [open, setOpen] = useState(false)
   const root = useRef<HTMLDivElement>(null)
   const connector = connectors[0]
@@ -108,7 +117,7 @@ function WalletControl() {
             <span className="text-[10px] text-ink-400">Testnets</span>
           </div>
           <div className="space-y-3 py-3">
-            {BALANCE_GROUPS.map(({ chain, keys }) => (
+            {groups.map(({ chain, keys }) => (
               <div key={chain}>
                 <div className="flex items-center gap-2 text-[11px] font-medium text-ink-700">
                   <ChainMark chain={chain} />
@@ -228,12 +237,13 @@ export default function Shell({ children }: { children: ReactNode }) {
 
       <div className="lg:pl-[256px]">
         <header className="sticky top-0 z-20 flex h-16 items-center justify-between gap-4 border-b border-line bg-paper-50/95 px-6 backdrop-blur-sm lg:px-10">
-          <div className="flex items-center gap-2 text-[13px]">
+          <div className="hidden min-w-0 items-center gap-2 text-[13px] sm:flex">
             <span className="text-ink-400">Handshake</span>
             <span className="text-ink-400">/</span>
-            <span className="font-medium text-ink-900">{label}</span>
+            <span className="truncate font-medium text-ink-900">{label}</span>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+            <MarketSelector />
             {publicView ? (
               <span className="rounded-full border border-line bg-paper-0 px-2.5 py-1 text-[11px] text-ink-500">
                 Public view
