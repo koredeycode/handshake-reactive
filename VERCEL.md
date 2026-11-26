@@ -5,7 +5,7 @@
 https://handshake-reactive.vercel.app
 
 Old auto-generated URL still resolves: https://ui-nine-gold.vercel.app
-- Latest production deployment: `ui-mr4oezk78-koredeycodes-projects.vercel.app` (serves the redesigned UI)
+- Latest production deployment: `handshake-reactive-gur5g3h97-koredeycodes-projects.vercel.app` (Git-triggered, serves the DEX-redesigned UI with faucet and `/dev`)
 - Inspector: https://vercel.com/koredeycodes-projects/ui/9SyYFbGRD9MEwh8R9JzSNF5tuRiF
 - Status: `READY`, target `production`
 
