@@ -2,6 +2,8 @@
 
 Cross-chain RFQ / OTC settlement primitives for the Handshake demo:
 
+See [TOOLING.md](TOOLING.md) for deployment, funding, preflight, latency observation and proof tooling.
+
 | Contract | Chain | Role |
 |---|---|---|
 | `src/HandshakeReactive.sol` | Reactive Lasna (5318007) | Neutral arbiter; order state machine; requests both callbacks in one `react()` |

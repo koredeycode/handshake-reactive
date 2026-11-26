@@ -1,0 +1,26 @@
+{
+  "name": "handshake-tooling",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Deployment, funding, preflight and proof tooling for the Handshake reactive OTC settlement demo",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "deploy": "tsx ts/deploy.ts",
+    "observe": "tsx ts/observe.ts",
+    "proofs": "tsx ts/collectProofs.ts",
+    "proof": "tsx ts/proofBundle.ts",
+    "preflight": "bash scripts/preflight.sh"
+  },
+  "dependencies": {
+    "viem": "^2.31.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
