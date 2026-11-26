@@ -5,6 +5,7 @@ import OrderBoard from '../components/OrderBoard'
 import TradeTicket from '../components/TradeTicket'
 import { Button, ConvergenceMark, RouteStrip, icon } from '../components/ui'
 import { useAccount } from 'wagmi'
+import { useTicketAssetPairs } from '../lib/assetPairs'
 import { CHAIN_LABELS } from '../lib/chains'
 import { toUnitString } from '../lib/format'
 import { FORWARD_MARKET_ID, REVERSE_MARKET_ID, useMarket } from '../lib/markets'
@@ -21,6 +22,14 @@ export default function OrdersPage() {
   const assetToken = useTokenDisplay('asset')
   const paymentBalance = useTokenBalance('payment', address)
   const assetBalance = useTokenBalance('asset', address)
+  const {
+    paymentOptions,
+    assetOptions,
+    selectedPayment,
+    selectedAsset,
+    selectPayment,
+    selectAsset,
+  } = useTicketAssetPairs()
   const [pay, setPay] = useState('')
   const [receive, setReceive] = useState('')
 
@@ -74,6 +83,9 @@ export default function OrdersPage() {
               kind: 'payment',
               mark: paymentToken.mark,
               color: paymentToken.color,
+              assetOptions: paymentOptions,
+              selectedAsset: selectedPayment,
+              onAssetChange: selectPayment,
               hint: paymentBalance.data !== undefined && paymentBalance.data !== null
                 ? `${paymentToken.name} · balance ${toUnitString(paymentBalance.data, paymentDecimals)} ${paymentSymbol}`
                 : `${paymentToken.name} · ${CHAIN_LABELS[paymentChain]} testnet`,
@@ -86,6 +98,9 @@ export default function OrdersPage() {
               kind: 'asset',
               mark: assetToken.mark,
               color: assetToken.color,
+              assetOptions: assetOptions,
+              selectedAsset: selectedAsset,
+              onAssetChange: selectAsset,
               hint: assetBalance.data !== undefined && assetBalance.data !== null
                 ? `${assetToken.name} · balance ${toUnitString(assetBalance.data, assetDecimals)} ${assetSymbol}`
                 : `${assetToken.name} · ${CHAIN_LABELS[assetChain]} testnet`,

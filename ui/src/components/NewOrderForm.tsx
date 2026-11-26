@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useAccount, usePublicClient, useWriteContract } from 'wagmi'
 import { parseUnits, type Address, type Hex } from 'viem'
 import { AlertCircle, Check, ChevronDown, RefreshCw } from 'lucide-react'
+import { useTicketAssetPairs } from '../lib/assetPairs'
 import { CHAIN_IDS, CHAIN_LABELS } from '../lib/chains'
 import { configuredAddress } from '../lib/config'
 import { reactiveAbi } from '../lib/contracts'
@@ -89,6 +90,14 @@ export default function NewOrderForm() {
   const paymentToken = useTokenDisplay('payment')
   const assetToken = useTokenDisplay('asset')
   const paymentBalance = useTokenBalance('payment', address)
+  const {
+    paymentOptions,
+    assetOptions,
+    selectedPayment,
+    selectedAsset,
+    selectPayment,
+    selectAsset,
+  } = useTicketAssetPairs()
 
   const normalizedSeller = normalizeAddress(seller)
   const openOrder = !normalizedSeller
@@ -217,6 +226,12 @@ export default function NewOrderForm() {
               kind: 'payment',
               mark: paymentToken.mark,
               color: paymentToken.color,
+              assetOptions: paymentOptions,
+              selectedAsset: selectedPayment,
+              onAssetChange: (address) => {
+                selectPayment(address)
+                setError(null)
+              },
               hint:
                 paymentBalance.data !== undefined && paymentBalance.data !== null
                   ? `${paymentToken.name} · balance ${toUnitString(paymentBalance.data, paymentDecimals)} ${paymentToken.symbol}`
@@ -230,10 +245,19 @@ export default function NewOrderForm() {
               kind: 'asset',
               mark: assetToken.mark,
               color: assetToken.color,
+              assetOptions: assetOptions,
+              selectedAsset: selectedAsset,
+              onAssetChange: (address) => {
+                selectAsset(address)
+                setError(null)
+              },
               hint: `${assetToken.name} · ${CHAIN_LABELS[assetChain]} testnet`,
             }}
             onReverse={reverseDirection}
           />
+          <p className="mt-3 px-1 text-[11px] leading-relaxed text-ink-400">
+            Assets are limited to pairs with a deployed settlement market. Flip the arrow for the reverse pair.
+          </p>
 
           <div className="mt-5 space-y-5 px-1">
             <Field label="Seller address" hint="Optional">

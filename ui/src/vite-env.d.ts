@@ -20,6 +20,8 @@ interface ImportMetaEnv {
   readonly VITE_LASNA_RPC?: string
   /** Enables the hidden /dev diagnostics route in production builds. */
   readonly VITE_DEV_TOOLS?: string
+  /** Optional WalletConnect Cloud project id; enables the WalletConnect connector. */
+  readonly VITE_WALLETCONNECT_PROJECT_ID?: string
 }
 
 interface ImportMeta {

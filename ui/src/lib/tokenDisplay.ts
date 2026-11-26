@@ -14,6 +14,10 @@ export interface TokenDisplayEntry {
 
 export type TokenRegistry = Record<ChainKey, Record<string, TokenDisplayEntry>>
 
+export interface ChainTokenOption extends TokenDisplayEntry {
+  address: string
+}
+
 const EMPTY: TokenRegistry = { base: {}, unichain: {}, lasna: {} }
 
 /**
@@ -45,6 +49,14 @@ export function useTokenRegistry() {
     staleTime: Infinity,
     gcTime: Infinity,
   })
+}
+
+/** All tokens listed for one chain in tokens.json, with their live addresses. */
+export function useChainTokens(chain: ChainKey): ChainTokenOption[] {
+  const registry = useTokenRegistry()
+  return Object.entries(registry.data?.[chain] ?? {})
+    .map(([address, entry]) => ({ address, ...entry }))
+    .sort((a, b) => a.symbol.localeCompare(b.symbol))
 }
 
 export function findTokenEntry(
