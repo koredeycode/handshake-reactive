@@ -42,7 +42,8 @@ export default function WriteButton({
         icon={<Wallet {...icon} />}
         onClick={() => connectors[0] && connect({ connector: connectors[0] })}
       >
-        Connect wallet
+        <span className="hidden sm:inline">Connect wallet</span>
+        <span className="sm:hidden">Connect</span>
       </Button>
     )
   }

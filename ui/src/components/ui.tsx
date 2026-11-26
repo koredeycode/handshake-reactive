@@ -49,7 +49,7 @@ export function Button({
 }: ButtonProps) {
   const shape =
     'inline-flex items-center justify-center gap-2 rounded-xl font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50'
-  const sizing = size === 'sm' ? 'h-9 px-3.5 text-[12px]' : 'h-11 px-5 text-[13px]'
+  const sizing = size === 'sm' ? 'h-10 px-3.5 text-[12px]' : 'h-11 px-5 text-[13px]'
   const tone =
     variant === 'primary'
       ? 'bg-accent text-white hover:bg-accent-ink'
@@ -150,10 +150,15 @@ export function RouteStrip({ className = '' }: { className?: string }) {
   const { chainKeyFor } = useMarket()
   return (
     <div className={`flex flex-wrap items-center gap-1.5 text-[11px] text-ink-400 ${className}`}>
-      <ChainPill chain={chainKeyFor('payment')} />
-      <ArrowRight {...icon} />
-      <ChainPill chain="lasna" />
-      <ArrowRight {...icon} />
+      {/* Pills travel with their arrow so lines never end on an orphan arrow. */}
+      <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+        <ChainPill chain={chainKeyFor('payment')} />
+        <ArrowRight {...icon} className="hidden sm:block" />
+      </span>
+      <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+        <ChainPill chain="lasna" />
+        <ArrowRight {...icon} className="hidden sm:block" />
+      </span>
       <ChainPill chain={chainKeyFor('asset')} />
     </div>
   )
@@ -251,15 +256,18 @@ export function ExternalLink({
   href,
   children,
   className = '',
+  title,
 }: {
   href?: string | null
   children: ReactNode
   className?: string
+  title?: string
 }) {
   if (!href) return <span className={`text-ink-400 ${className}`}>{children}</span>
   return (
     <a
       href={href}
+      title={title}
       target="_blank"
       rel="noreferrer noopener"
       className={`inline-flex items-center gap-1 text-ink-700 underline decoration-line underline-offset-2 transition-colors hover:text-accent ${className}`}
@@ -270,10 +278,24 @@ export function ExternalLink({
   )
 }
 
-export function TxLink({ chain, hash, label }: { chain: ChainKey; hash?: string | null; label?: string }) {
+export function TxLink({
+  chain,
+  hash,
+  label,
+  className = '',
+}: {
+  chain: ChainKey
+  hash?: string | null
+  label?: string
+  className?: string
+}) {
   if (!hash) return <span className="text-ink-400">—</span>
   return (
-    <ExternalLink href={txUrl(chain, hash)} className="font-mono text-[11px]">
+    <ExternalLink
+      href={txUrl(chain, hash)}
+      title={hash}
+      className={`font-mono text-[11px] ${className}`}
+    >
       {label ?? truncate(hash, 10, 8)}
     </ExternalLink>
   )

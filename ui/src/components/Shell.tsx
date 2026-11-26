@@ -8,7 +8,6 @@ import { copyText, truncate } from '../lib/format'
 import { useMarket } from '../lib/markets'
 import { useCopyFeedback } from '../lib/proofs'
 import { Button, ChainMark, ConvergenceMark, icon } from './ui'
-import MarketSelector from './MarketSelector'
 import type { ChainKey } from '../lib/chains'
 
 const NAV = [
@@ -85,7 +84,8 @@ function WalletControl() {
         disabled={!connector || isPending}
         onClick={() => connector && connect({ connector })}
       >
-        {isPending ? 'Connecting' : 'Connect wallet'}
+        <span className="hidden sm:inline">{isPending ? 'Connecting' : 'Connect wallet'}</span>
+        <span className="sm:hidden">{isPending ? '…' : 'Connect'}</span>
       </Button>
     )
   }
@@ -97,7 +97,7 @@ function WalletControl() {
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
-        className="flex items-center gap-2 rounded-xl border border-line bg-paper-0 px-2.5 py-1.5 transition-colors hover:bg-paper-100"
+        className="flex min-h-10 items-center gap-2 rounded-xl border border-line bg-paper-0 px-2.5 py-1.5 transition-colors hover:bg-paper-100"
       >
         <span className="h-1.5 w-1.5 rounded-full bg-accent" />
         <span className="tnum font-mono text-[11px] text-ink-700">
@@ -143,7 +143,7 @@ function WalletControl() {
                 const ok = await copyText(address)
                 setCopied(ok ? 'address' : 'failed')
               }}
-              className="text-[11px] text-ink-500 transition-colors hover:text-accent"
+              className="inline-flex min-h-10 items-center px-1 text-[12px] text-ink-500 transition-colors hover:text-accent"
             >
               {copied === 'address' ? 'Copied' : 'Copy address'}
             </button>
@@ -153,7 +153,7 @@ function WalletControl() {
                 setOpen(false)
                 disconnect()
               }}
-              className="inline-flex items-center gap-1 text-[11px] text-ink-500 transition-colors hover:text-bad"
+              className="inline-flex min-h-10 items-center gap-1 px-1 text-[12px] text-ink-500 transition-colors hover:text-bad"
             >
               <LogOut {...icon} />
               Disconnect
@@ -236,20 +236,26 @@ export default function Shell({ children }: { children: ReactNode }) {
       </aside>
 
       <div className="lg:pl-[256px]">
-        <header className="sticky top-0 z-20 flex h-16 items-center justify-between gap-4 border-b border-line bg-paper-50/95 px-6 backdrop-blur-sm lg:px-10">
+        <header className="sticky top-0 z-20 flex h-16 items-center justify-between gap-4 border-b border-line bg-paper-50/95 px-4 backdrop-blur-sm sm:px-6 lg:px-10">
+          <Link
+            to="/"
+            aria-label="Home"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-ink-900 text-white sm:hidden"
+          >
+            <ConvergenceMark className="h-4 w-4 text-accent" />
+          </Link>
           <div className="hidden min-w-0 items-center gap-2 text-[13px] sm:flex">
             <span className="text-ink-400">Handshake</span>
             <span className="text-ink-400">/</span>
             <span className="truncate font-medium text-ink-900">{label}</span>
           </div>
           <div className="flex shrink-0 items-center gap-2 sm:gap-3">
-            <MarketSelector />
             {publicView ? (
-              <span className="rounded-full border border-line bg-paper-0 px-2.5 py-1 text-[11px] text-ink-500">
+              <span className="rounded-full border border-line bg-paper-0 px-2 py-0.5 text-[10px] text-ink-500 sm:px-2.5 sm:py-1 sm:text-[11px]">
                 Public view
               </span>
             ) : internal ? (
-              <span className="rounded-full border border-bad/25 bg-bad-soft px-2.5 py-1 text-[11px] text-bad">
+              <span className="rounded-full border border-bad/25 bg-bad-soft px-2 py-0.5 text-[10px] text-bad sm:px-2.5 sm:py-1 sm:text-[11px]">
                 Internal
               </span>
             ) : (
@@ -258,20 +264,23 @@ export default function Shell({ children }: { children: ReactNode }) {
           </div>
         </header>
 
-        <nav className="flex gap-1 overflow-x-auto border-b border-line bg-paper-0 px-4 py-2 lg:hidden">
+        <nav
+          aria-label="Primary"
+          className="grid grid-cols-3 gap-1 border-b border-line bg-paper-0 px-3 py-2 sm:grid-cols-6 lg:hidden"
+        >
           {NAV.map(({ to, label: itemLabel, Icon, end }) => (
             <NavLink
               key={to}
               to={to}
               end={end}
               className={({ isActive }) =>
-                `inline-flex shrink-0 items-center gap-2 rounded-xl px-3 py-2 text-[11px] transition-colors ${
+                `flex min-h-11 flex-col items-center justify-center gap-1 rounded-xl px-1 py-1.5 text-center text-[10px] leading-tight transition-colors ${
                   isActive ? 'bg-accent-soft font-medium text-accent-ink' : 'text-ink-500'
                 }`
               }
             >
               <Icon {...icon} />
-              {itemLabel}
+              <span>{itemLabel}</span>
             </NavLink>
           ))}
           {UTILITY_NAV.map(({ to, label: itemLabel, Icon }) => (
@@ -279,13 +288,13 @@ export default function Shell({ children }: { children: ReactNode }) {
               key={to}
               to={to}
               className={({ isActive }) =>
-                `inline-flex shrink-0 items-center gap-2 rounded-xl px-3 py-2 text-[11px] transition-colors ${
+                `flex min-h-11 flex-col items-center justify-center gap-1 rounded-xl px-1 py-1.5 text-center text-[10px] leading-tight transition-colors ${
                   isActive ? 'bg-paper-100 font-medium text-ink-900' : 'text-ink-500'
                 }`
               }
             >
               <Icon {...icon} />
-              {itemLabel}
+              <span>{itemLabel}</span>
             </NavLink>
           ))}
         </nav>

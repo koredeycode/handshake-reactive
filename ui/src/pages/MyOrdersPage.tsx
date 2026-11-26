@@ -14,29 +14,28 @@ import {
   icon,
 } from '../components/ui'
 import { countdown, formatAmount, formatDeadline, isZeroAddress, truncate } from '../lib/format'
-import { useMarket } from '../lib/markets'
+import { chainKeyFromId } from '../lib/markets'
 import { buildHops, useProof } from '../lib/proofs'
-import { useOrders, type OrderRow } from '../lib/queries'
+import { useAllOrders, type AggregatedOrderRow } from '../lib/queries'
 import { deriveStatus } from '../lib/status'
-import { useTokenDisplay } from '../lib/tokenDisplay'
+import { useMarketTokenDisplay } from '../lib/tokenDisplay'
 import { useNow } from '../lib/useNow'
 
 const MAX_ROWS = 8
 
 interface WalletOrderProps {
-  row: OrderRow
+  row: AggregatedOrderRow
   wallet: Address
   now: number
-  payment: ReturnType<typeof useTokenDisplay>
-  asset: ReturnType<typeof useTokenDisplay>
 }
 
 /** One wallet order, with only the observed hashes relevant to the user's side. */
-function WalletOrderRow({ row, wallet, now, payment, asset }: WalletOrderProps) {
-  const { id, order } = row
-  const { chainKeyFor } = useMarket()
-  const paymentChain = chainKeyFor('payment')
-  const assetChain = chainKeyFor('asset')
+function WalletOrderRow({ row, wallet, now }: WalletOrderProps) {
+  const { id, order, market } = row
+  const payment = useMarketTokenDisplay(market, 'payment')
+  const asset = useMarketTokenDisplay(market, 'asset')
+  const paymentChain = chainKeyFromId(market.payment.chainId, market.payment.chainKey)
+  const assetChain = chainKeyFromId(market.asset.chainId, market.asset.chainKey)
   const address = wallet.toLowerCase()
   const isBuyer = order.buyer.toLowerCase() === address
   const isSeller =
@@ -46,7 +45,7 @@ function WalletOrderRow({ row, wallet, now, payment, asset }: WalletOrderProps) 
   // Proof queries are shared by queryKey with the detail/verify screens. The
   // hook only polls while the order is non-terminal; settled/refunded rows
   // fetch once and are then cached indefinitely (no per-row 5s log scans).
-  const proof = useProof(id, order)
+  const proof = useProof(id, order, market)
   const expired = countdown(order.deadline, now) === 'expired'
 
   const hashes = buildHops(order, proof.data, { payment: paymentChain, asset: assetChain })
@@ -109,7 +108,7 @@ function WalletOrderRow({ row, wallet, now, payment, asset }: WalletOrderProps) 
           </span>
         )}
         <Link
-          to={`/orders/${id}`}
+          to={`/orders/${id}?market=${market.id}`}
           className="ml-auto inline-flex items-center gap-1 font-medium text-ink-700 transition-colors hover:text-accent"
         >
           Order detail <ArrowRight {...icon} />
@@ -123,10 +122,8 @@ export default function MyOrdersPage() {
   const navigate = useNavigate()
   const { address, isConnected } = useAccount()
   const { connectors, connect, isPending } = useConnect()
-  const { data: orders, isLoading, isError, refetch, isFetching } = useOrders()
+  const { data: orders, isLoading, isError, refetch, isFetching } = useAllOrders()
   const now = useNow()
-  const payment = useTokenDisplay('payment')
-  const asset = useTokenDisplay('asset')
 
   const mine = address
     ? (orders ?? []).filter(
@@ -181,7 +178,7 @@ export default function MyOrdersPage() {
   ) : (
     <ul className="divide-y divide-line">
       {mine.slice(0, MAX_ROWS).map((row) => (
-        <WalletOrderRow key={row.id} row={row} wallet={address} now={now} payment={payment} asset={asset} />
+        <WalletOrderRow key={row.id} row={row} wallet={address} now={now} />
       ))}
     </ul>
   )

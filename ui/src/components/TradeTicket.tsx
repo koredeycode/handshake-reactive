@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { ArrowDown } from 'lucide-react'
+import { ArrowDown, ArrowUpDown } from 'lucide-react'
 import type { ChainKey } from '../lib/chains'
 import { ChainPill, TokenMark, icon } from './ui'
 
@@ -23,7 +23,8 @@ function AmountTile({ side, direction }: { side: TicketSide; direction: 'pay' | 
       readOnly={!side.onAmountChange}
       placeholder="0.00"
       aria-label={direction === 'pay' ? 'Pay amount' : 'Receive amount'}
-      className="tnum min-w-0 flex-1 border-0 bg-transparent p-0 font-mono text-[30px] font-medium leading-tight text-ink-900 outline-none placeholder:text-ink-400/50 sm:text-[34px]"
+      size={1}
+      className="tnum w-full min-w-0 flex-1 border-0 bg-transparent p-0 font-mono text-[30px] font-medium leading-tight text-ink-900 outline-none placeholder:text-ink-400/50 sm:text-[34px]"
     />
   )
   return (
@@ -49,18 +50,36 @@ export default function TradeTicket({
   pay,
   receive,
   footer,
+  onReverse,
 }: {
   pay: TicketSide
   receive: TicketSide
   footer?: ReactNode
+  /** Set only on trade entry screens; read-only tickets keep a decorative arrow. */
+  onReverse?: () => void
 }) {
   return (
     <div className="rounded-2xl border border-line bg-paper-0 p-4 sm:p-5">
       <AmountTile side={pay} direction="pay" />
-      <div className="relative z-10 h-2">
-        <span className="absolute left-1/2 top-1/2 flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-line bg-paper-0 text-ink-700">
-          <ArrowDown {...icon} />
-        </span>
+      <div className="relative z-10 flex h-11 items-center justify-center">
+        {onReverse ? (
+          <button
+            type="button"
+            onClick={onReverse}
+            aria-label="Reverse trade direction"
+            title="Reverse trade direction"
+            className="flex h-10 w-10 items-center justify-center rounded-full border border-line bg-paper-0 text-ink-700 transition-colors hover:border-accent/40 hover:bg-accent-soft hover:text-accent-ink"
+          >
+            <ArrowUpDown {...icon} />
+          </button>
+        ) : (
+          <span
+            aria-hidden="true"
+            className="flex h-8 w-8 items-center justify-center rounded-full border border-line bg-paper-0 text-ink-700"
+          >
+            <ArrowDown {...icon} />
+          </span>
+        )}
       </div>
       <AmountTile side={receive} direction="receive" />
       {footer && <div className="mt-4">{footer}</div>}

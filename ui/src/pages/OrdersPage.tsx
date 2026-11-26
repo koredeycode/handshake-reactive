@@ -7,14 +7,14 @@ import { Button, ConvergenceMark, RouteStrip, icon } from '../components/ui'
 import { useAccount } from 'wagmi'
 import { CHAIN_LABELS } from '../lib/chains'
 import { toUnitString } from '../lib/format'
-import { useMarket } from '../lib/markets'
+import { FORWARD_MARKET_ID, REVERSE_MARKET_ID, useMarket } from '../lib/markets'
 import { useTokenBalance } from '../lib/queries'
 import { useTokenDisplay } from '../lib/tokenDisplay'
 
 export default function OrdersPage() {
   const navigate = useNavigate()
   const { address } = useAccount()
-  const { chainKeyFor, market } = useMarket()
+  const { chainKeyFor, market, setMarket } = useMarket()
   const paymentChain = chainKeyFor('payment')
   const assetChain = chainKeyFor('asset')
   const paymentToken = useTokenDisplay('payment')
@@ -29,13 +29,21 @@ export default function OrdersPage() {
   const paymentDecimals = paymentToken.decimals
   const assetDecimals = assetToken.decimals
 
+  const reversed = market.direction === 'reverse'
+
+  function reverseDirection() {
+    setPay(receive)
+    setReceive(pay)
+    setMarket(reversed ? FORWARD_MARKET_ID : REVERSE_MARKET_ID)
+  }
+
   function startTrade() {
     const params = new URLSearchParams()
-    if (market) params.set('market', market.id)
+    params.set('market', market.id)
+    params.set('direction', reversed ? 'reverse' : 'forward')
     if (pay.trim()) params.set('pay', pay.trim())
     if (receive.trim()) params.set('get', receive.trim())
-    const query = params.toString()
-    navigate(`/new${query ? `?${query}` : ''}`)
+    navigate(`/new?${params}`)
   }
 
   return (
@@ -48,8 +56,8 @@ export default function OrdersPage() {
         <RouteStrip />
       </div>
 
-      <div className="grid items-start gap-6 xl:h-[calc(100vh-190px)] xl:grid-cols-[minmax(360px,420px)_minmax(0,1fr)]">
-        <section className="xl:sticky xl:top-6">
+      <div className="grid grid-cols-1 items-start gap-6 min-w-0 xl:h-[calc(100vh-190px)] xl:grid-cols-[minmax(360px,420px)_minmax(0,1fr)]">
+        <section className="min-w-0 xl:sticky xl:top-6">
           <div className="mb-3 flex items-center justify-between gap-3">
             <h2 className="text-sm font-medium text-ink-900">Trade ticket</h2>
             <span className="flex items-center gap-2 text-[11px] text-ink-400">
@@ -82,6 +90,7 @@ export default function OrdersPage() {
                 ? `${assetToken.name} · balance ${toUnitString(assetBalance.data, assetDecimals)} ${assetSymbol}`
                 : `${assetToken.name} · ${CHAIN_LABELS[assetChain]} testnet`,
             }}
+            onReverse={reverseDirection}
             footer={
               <>
                 <Button variant="primary" className="w-full" icon={<Plus {...icon} />} onClick={startTrade}>
@@ -95,7 +104,7 @@ export default function OrdersPage() {
           />
         </section>
 
-        <div className="min-h-0 xl:h-full">
+        <div className="min-h-0 min-w-0 xl:h-full">
           <OrderBoard scrollable />
         </div>
       </div>

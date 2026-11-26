@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import { useAccount, usePublicClient, useWriteContract } from 'wagmi'
 import { parseUnits, type Address, type Hex } from 'viem'
 import { AlertCircle, Check, ChevronDown, RefreshCw } from 'lucide-react'
@@ -16,7 +17,16 @@ import {
   ZERO_ADDRESS,
 } from '../lib/format'
 import { logClient } from '../lib/logs'
-import { useMarket, useMarketConfig } from '../lib/markets'
+import {
+  FORWARD_MARKET_ID,
+  OPEN_MARKET_ID,
+  REVERSE_MARKET_ID,
+  chainKeyFromId,
+  clearMarketQueries,
+  findMarket,
+  marketToAppConfig,
+  useMarket,
+} from '../lib/markets'
 import { useTokenBalance } from '../lib/queries'
 import { useTokenDisplay } from '../lib/tokenDisplay'
 import WriteButton from './WriteButton'
@@ -52,11 +62,13 @@ function parseAmount(value: string, decimals: number): bigint | null {
 
 export default function NewOrderForm() {
   const navigate = useNavigate()
-  const [params] = useSearchParams()
-  const config = useMarketConfig()
-  const { market, chainKeyFor } = useMarket()
-  const paymentChain = chainKeyFor('payment')
-  const assetChain = chainKeyFor('asset')
+  const [params, setParams] = useSearchParams()
+  const queryClient = useQueryClient()
+  const { registry, markets, market } = useMarket()
+  // Direction lives in the trade UI: the hidden market id selects the venue.
+  const direction = market?.direction === 'reverse' ? 'reverse' : 'forward'
+  const paymentChain = chainKeyFromId(market.payment.chainId, market.payment.chainKey)
+  const assetChain = chainKeyFromId(market.asset.chainId, market.asset.chainKey)
   const { address } = useAccount()
   const { writeContractAsync, isPending } = useWriteContract()
   const lasnaClient = logClient(usePublicClient({ chainId: CHAIN_IDS.lasna })) as unknown as {
@@ -64,7 +76,6 @@ export default function NewOrderForm() {
   } | null
 
   const [orderId, setOrderId] = useState<string>(() => randomOrderId())
-  const [openOrder, setOpenOrder] = useState(false)
   const [seller, setSeller] = useState('')
   const [paymentAmount, setPaymentAmount] = useState(params.get('pay') ?? '100')
   const [assetAmount, setAssetAmount] = useState(params.get('get') ?? '1')
@@ -79,11 +90,22 @@ export default function NewOrderForm() {
   const assetToken = useTokenDisplay('asset')
   const paymentBalance = useTokenBalance('payment', address)
 
+  const normalizedSeller = normalizeAddress(seller)
+  const openOrder = !normalizedSeller
+  // Forward + blank seller uses the open-orders RC; reverse + blank seller
+  // uses the reverse RC (deployed from the same open-orders artifact).
+  const targetMarketId = direction === 'reverse'
+    ? REVERSE_MARKET_ID
+    : openOrder
+      ? OPEN_MARKET_ID
+      : FORWARD_MARKET_ID
+  const targetMarket = findMarket(markets, targetMarketId) ?? market
+  const writeConfig = marketToAppConfig(registry, targetMarket)
+
   const paymentDecimals = paymentToken.decimals
   const assetDecimals = assetToken.decimals
   const parsedPayment = useMemo(() => parseAmount(paymentAmount, paymentDecimals), [paymentAmount, paymentDecimals])
   const parsedAsset = useMemo(() => parseAmount(assetAmount, assetDecimals), [assetAmount, assetDecimals])
-  const normalizedSeller = normalizeAddress(seller)
   const sellerAddress = openOrder ? ZERO_ADDRESS : normalizedSeller
   const entered = customValue.trim() === '' ? NaN : Number(customValue)
   const duration = Number.isFinite(entered) ? entered * unit : NaN
@@ -98,14 +120,16 @@ export default function NewOrderForm() {
           : null
   const deadline = validDuration !== null ? Math.floor(Date.now() / 1000) + validDuration : null
 
-  const rc = configuredAddress(config.reactive.reactiveContract)
-  const paymentTokenAddress = configuredAddress(config.base.paymentToken)
-  const assetTokenAddress = configuredAddress(config.unichain.assetToken)
+  const rc = configuredAddress(writeConfig.reactive.reactiveContract)
+  const paymentTokenAddress = configuredAddress(writeConfig.base.paymentToken)
+  const assetTokenAddress = configuredAddress(writeConfig.unichain.assetToken)
 
   const validation = useMemo(() => {
     if (!/^0x[a-fA-F0-9]{64}$/.test(orderId)) return 'Order ID must be 32 bytes: 0x followed by 64 hex characters.'
-    if (!openOrder && !normalizedSeller) return 'Enter a valid seller address.'
-    if (!openOrder && address && normalizedSeller && normalizedSeller.toLowerCase() === address.toLowerCase()) return 'The seller must differ from the buyer.'
+    if (seller.trim() && !normalizedSeller) return 'Enter a valid seller address.'
+    if (!openOrder && address && normalizedSeller && normalizedSeller.toLowerCase() === address.toLowerCase()) {
+      return 'The seller must differ from the buyer.'
+    }
     if (!parsedPayment) return 'Payment amount must be greater than zero.'
     if (!parsedAsset) return 'Asset amount must be greater than zero.'
     if (paymentBalance.data !== undefined && paymentBalance.data !== null && paymentBalance.data < parsedPayment) {
@@ -116,8 +140,9 @@ export default function NewOrderForm() {
     return null
   }, [
     orderId,
-    openOrder,
+    seller,
     normalizedSeller,
+    openOrder,
     address,
     parsedPayment,
     parsedAsset,
@@ -128,6 +153,24 @@ export default function NewOrderForm() {
     assetTokenAddress,
     durationError,
   ])
+
+  function reverseDirection() {
+    setPaymentAmount(assetAmount)
+    setAssetAmount(paymentAmount)
+    const nextId = direction === 'forward' ? REVERSE_MARKET_ID : FORWARD_MARKET_ID
+    setParams(
+      (previous) => {
+        const updated = new URLSearchParams(previous)
+        updated.set('market', nextId)
+        if (nextId === REVERSE_MARKET_ID) updated.set('direction', 'reverse')
+        else updated.delete('direction')
+        return updated
+      },
+      { replace: true },
+    )
+    clearMarketQueries(queryClient)
+    setError(null)
+  }
 
   async function submit() {
     if (validation) {
@@ -152,8 +195,7 @@ export default function NewOrderForm() {
         ],
       })
       await lasnaClient?.waitForTransactionReceipt({ hash })
-      const query = new URLSearchParams({ tx: hash })
-      if (market) query.set('market', market.id)
+      const query = new URLSearchParams({ tx: hash, market: targetMarket.id })
       navigate(`/orders/${orderId}?${query}`)
     } catch {
       setError('The trade could not be created. Try again.')
@@ -163,8 +205,8 @@ export default function NewOrderForm() {
   }
 
   return (
-    <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.2fr)_minmax(300px,0.8fr)]">
-      <div className="space-y-6">
+    <div className="grid grid-cols-1 items-start gap-6 min-w-0 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
+      <div className="min-w-0 space-y-6">
         <Panel title="Trade ticket" subtitle="The connected wallet is the buyer" bodyClass="p-4 sm:p-5">
           <TradeTicket
             pay={{
@@ -190,51 +232,23 @@ export default function NewOrderForm() {
               color: assetToken.color,
               hint: `${assetToken.name} · ${CHAIN_LABELS[assetChain]} testnet`,
             }}
+            onReverse={reverseDirection}
           />
 
           <div className="mt-5 space-y-5 px-1">
-            <Field label="Counterparty" hint={openOrder ? 'Anyone can match' : 'Named seller'}>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={openOrder}
-                onClick={() => setOpenOrder((value) => !value)}
-                className="flex w-full items-center justify-between gap-3 rounded-xl border border-line bg-paper-50 px-3 py-2.5 text-left transition-colors hover:bg-paper-100"
-              >
-                <span className="text-[12px] font-medium text-ink-900">
-                  Open order — any seller can match
-                </span>
-                <span
-                  className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
-                    openOrder ? 'bg-accent' : 'bg-paper-200'
-                  }`}
-                  aria-hidden="true"
-                >
-                  <span
-                    className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-all ${
-                      openOrder ? 'left-[18px]' : 'left-0.5'
-                    }`}
-                  />
-                </span>
-              </button>
-              {openOrder && (
-                <p className="mt-2 text-[11px] leading-relaxed text-ink-500">
-                  The first seller to lock the full asset amount sets the winner. Later locks are refunded, and payment is released to the winner.
-                </p>
-              )}
+            <Field label="Seller address" hint="Optional">
+              <input
+                className={inputClass}
+                placeholder="0x… — leave blank for any seller"
+                value={seller}
+                onChange={(e) => setSeller(e.target.value)}
+                spellCheck={false}
+                aria-describedby="seller-hint"
+              />
+              <p id="seller-hint" className="mt-2 text-[11px] leading-relaxed text-ink-500">
+                Leave blank to let any seller match. The first seller to lock the full asset amount wins; later locks are refunded.
+              </p>
             </Field>
-
-            {!openOrder && (
-              <Field label="Seller address" hint={`Receives payment on ${CHAIN_LABELS[paymentChain]}`}>
-                <input
-                  className={inputClass}
-                  placeholder="0x…"
-                  value={seller}
-                  onChange={(e) => setSeller(e.target.value)}
-                  spellCheck={false}
-                />
-              </Field>
-            )}
 
             <Field label="Settlement window" hint="30 seconds – 30 days">
               <div className="flex flex-wrap gap-2">
@@ -340,7 +354,7 @@ export default function NewOrderForm() {
         </Panel>
       </div>
 
-      <div className="space-y-6">
+      <div className="min-w-0 space-y-6">
         <Panel title="Order details">
           <div className="space-y-4">
             <Field label="Order ID" hint="32 bytes">
@@ -384,7 +398,7 @@ export default function NewOrderForm() {
               openOrder
                 ? `02 Any seller can lock the asset on ${CHAIN_LABELS[assetChain]}`
                 : `02 Seller locks the asset on ${CHAIN_LABELS[assetChain]}`,
-              openOrder ? '03 One decision pays the first valid seller' : '03 One decision releases both legs',
+              openOrder ? '03 First valid lock pays the winner' : '03 One decision releases both legs',
             ].map((step) => (
               <li key={step}>
                 <span className="tnum mr-3 font-mono text-ink-400">{step.slice(0, 2)}</span>
