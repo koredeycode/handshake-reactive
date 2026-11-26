@@ -24,11 +24,23 @@ Canonical constants (from `script/HandshakeSupport.sol`, `scripts/preflight.sh`,
 
 ---
 
+## 0. Live instances (filled 2026-11-26)
+
+Three markets are deployed, funded, preflight-green (debt 0, 7 subscriptions each) and enabled in `ui/public/markets.json`. The selector offers all three; original proof hashes remain in `DEPLOYMENT.md`.
+
+| Market id | Label | RC (Lasna) | Payment leg | Asset leg | Proof |
+|---|---|---|---|---|---|
+| `forward-tusd-base-tasset-unichain` | Pay on Base · receive on Unichain | `0x6d1Da6e…34E6` | tUSD / escrow on **Base Sepolia** | tASSET / escrow on **Unichain Sepolia** | `DEPLOYMENT.md` §Proven loops |
+| `open-tusd-base-tasset-unichain` | Open orders · Base → Unichain | `0x679d9B73…3480` | tUSD / escrow `0x6f28EDb5…3480` on **Base** | tASSET / escrow `0x6f28EDb5…3480` on **Unichain** | `DEPLOYMENT.md` §Proof — open order / race |
+| `reverse-tusd-unichain-tasset-base` | Pay on Unichain · receive on Base | `0xC7A4aB5a…514` | tUSD `0x58025878…578c` / escrow `0xFc0C5588…64db` on **Unichain** | tASSET `0x58025878…578c` / escrow `0xFc0C5588…64db` on **Base** | `DEPLOYMENT.md` §Proof — reverse market |
+
+Full addresses, deploy/setVenues/funding tx hashes and from-blocks are in `DEPLOYMENT.md`. The reverse instance required new chain-local tokens because the original tUSD/tASSET ERC-20s exist only on their original chains.
+
 ## 1. Market registry design (`ui/public/markets.json`)
 
 ### 1.1 Schema
 
-Proposed file, one entry per market. Roles are explicit (`payment` / `asset`) so a direction swap is data, not code. `enabled` gates the selector; the reverse entry ships as `false` until §3–§5 are complete and proven.
+Implemented as `ui/public/markets.json`, one entry per market. Roles are explicit (`payment` / `asset`) so a direction swap is data, not code. `enabled` gates the selector. All three entries below are now deployed, funded, proven and `enabled: true`; see the live-instance table at the top of §0. The JSON snippets in this section are the original planning shapes — the authoritative values are in `ui/public/markets.json` and `DEPLOYMENT.md`.
 
 ```jsonc
 {
