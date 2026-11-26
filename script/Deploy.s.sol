@@ -7,7 +7,8 @@ import {HandshakeSupport, IHandshakeReactive} from "script/HandshakeSupport.sol"
 
 /// @notice Deploys in the strict PRD §13 order:
 ///   1. HandshakeReactive on Lasna (payable, lightly funded)
-///   2. TestUSD on Base Sepolia and TestAsset on Unichain Sepolia
+///   2. Payment token on the payment chain and asset token on the asset chain
+///      (defaults: Base Sepolia / Unichain Sepolia; override with PAYMENT_RPC / ASSET_RPC)
 ///   3. PaymentEscrow / AssetEscrow with the RC address baked in
 ///   4. RC.setVenues(...) installing all subscriptions
 ///   5. Optional funding via AUTO_FUND=1 (normally run script/Fund.s.sol next)
@@ -18,8 +19,8 @@ import {HandshakeSupport, IHandshakeReactive} from "script/HandshakeSupport.sol"
 contract DeployScript is Script {
     function run() external {
         string memory lazyRpc = HandshakeSupport.rpc("REACTIVE_RPC");
-        string memory baseRpc = HandshakeSupport.rpc("BASE_RPC");
-        string memory unichainRpc = HandshakeSupport.rpc("UNICHAIN_RPC");
+        string memory paymentRpc = HandshakeSupport.paymentRpc();
+        string memory assetRpc = HandshakeSupport.assetRpc();
 
         // 1. RC first — no subscriptions can be installed until the escrows exist.
         address rc = HandshakeSupport.envAddressOr("RC_ADDRESS", address(0));
@@ -36,7 +37,7 @@ contract DeployScript is Script {
         // 2. Test tokens.
         address paymentToken = HandshakeSupport.envAddressOr("PAYMENT_TOKEN_ADDRESS", address(0));
         if (paymentToken == address(0)) {
-            HandshakeSupport.selectFork(baseRpc);
+            HandshakeSupport.selectFork(paymentRpc);
             paymentToken = HandshakeSupport.deploy(
                 HandshakeSupport.VM.envOr("PAYMENT_TOKEN_ARTIFACT", string("src/tokens/TestUSD.sol:TestUSD")),
                 "",
@@ -46,7 +47,7 @@ contract DeployScript is Script {
 
         address assetToken = HandshakeSupport.envAddressOr("ASSET_TOKEN_ADDRESS", address(0));
         if (assetToken == address(0)) {
-            HandshakeSupport.selectFork(unichainRpc);
+            HandshakeSupport.selectFork(assetRpc);
             assetToken = HandshakeSupport.deploy(
                 HandshakeSupport.VM.envOr("ASSET_TOKEN_ARTIFACT", string("src/tokens/TestAsset.sol:TestAsset")),
                 "",
@@ -60,7 +61,7 @@ contract DeployScript is Script {
         // 3. Escrows — callbackSender_ is immutable, so the RC address must be exact.
         address paymentEscrow = HandshakeSupport.envAddressOr("PAYMENT_ESCROW_ADDRESS", address(0));
         if (paymentEscrow == address(0)) {
-            HandshakeSupport.selectFork(baseRpc);
+            HandshakeSupport.selectFork(paymentRpc);
             paymentEscrow = HandshakeSupport.deploy(
                 HandshakeSupport.VM.envOr("PAYMENT_ESCROW_ARTIFACT", string("src/PaymentEscrow.sol:PaymentEscrow")),
                 abi.encode(HandshakeSupport.paymentCallbackProxy(), rc, paymentToken),
@@ -70,7 +71,7 @@ contract DeployScript is Script {
 
         address assetEscrow = HandshakeSupport.envAddressOr("ASSET_ESCROW_ADDRESS", address(0));
         if (assetEscrow == address(0)) {
-            HandshakeSupport.selectFork(unichainRpc);
+            HandshakeSupport.selectFork(assetRpc);
             assetEscrow = HandshakeSupport.deploy(
                 HandshakeSupport.VM.envOr("ASSET_ESCROW_ARTIFACT", string("src/AssetEscrow.sol:AssetEscrow")),
                 abi.encode(HandshakeSupport.assetCallbackProxy(), rc, assetToken),

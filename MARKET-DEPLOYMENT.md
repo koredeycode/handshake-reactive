@@ -33,12 +33,20 @@ address override skips that deployment step and reuses the given contract.
 | `ASSET_CHAIN_ID_OVERRIDE` | `1301` | asset chain ID in `setVenues`, manifest, deploy events |
 | `PAYMENT_PROXY_OVERRIDE` | `0x476F44b11F5C942c58f4c8E3d0300E5710743585` | payment escrow's callback proxy, and the proxy funded by `fundAll` |
 | `ASSET_PROXY_OVERRIDE` | `0x775c9B990ADe401060B78D0e98684eEf8d2466C1` | asset escrow's callback proxy, and the proxy funded by `fundAll` |
+| `PAYMENT_RPC` | value of `BASE_RPC` | fork used for the payment token/escrow deploys and for payment-leg funding + debt checks |
+| `ASSET_RPC` | value of `UNICHAIN_RPC` | fork used for the asset token/escrow deploys and for asset-leg funding + debt checks |
+
+`PAYMENT_RPC` / `ASSET_RPC` are read through `HandshakeSupport.paymentRpc()` /
+`assetRpc()`, and every leg deploy, deposit, and health check in `Deploy.s.sol` and
+`fundAll()` uses those helpers. An empty or unset value falls back to the legacy
+`BASE_RPC` / `UNICHAIN_RPC` variables, so the default market is unchanged.
+`Fund.s.sol` has no forks of its own — it delegates entirely to `fundAll()`.
 
 The RC's venue whitelist accepts `5318007`, `84532`, `1301`, `11155111`, so a reverse
 market using the two existing testnets needs no contract change.
 
-Other existing overrides: `REACTIVE_RPC` / `BASE_RPC` / `UNICHAIN_RPC` (HTTP
-endpoints; the variable names are labels, not a hard constraint on the chain),
+Other existing overrides: `REACTIVE_RPC` (Lasna endpoint; unchanged by the leg
+selectors), `BASE_RPC` / `UNICHAIN_RPC` (the legacy defaults for the two legs),
 `RC_ARTIFACT`, `PAYMENT_TOKEN_ARTIFACT`, `ASSET_TOKEN_ARTIFACT`,
 `PAYMENT_ESCROW_ARTIFACT`, `ASSET_ESCROW_ARTIFACT`, `RC_DEPLOY_VALUE_WEI`,
 `RC_FUND_AMOUNT_WEI`, `PAYMENT_RESERVE_WEI`, `ASSET_RESERVE_WEI`, `AUTO_FUND`,
@@ -55,15 +63,20 @@ forge script script/Fund.s.sol:FundScript --rpc-url $REACTIVE_RPC \
 
 ## Example: reverse market (tUSD on Unichain, tASSET on Base)
 
-Point the payment-side RPC variable at Unichain and the asset-side RPC variable at
-Base, then swap the chain IDs and callback proxies. Deploy fresh tokens on the
-corresponding chains (the artifact overrides are explicit so the runbook is
+Set the **new** leg-specific RPC variables to the correct endpoints, then swap the
+chain IDs and callback proxies. Leave `BASE_RPC` / `UNICHAIN_RPC` at their canonical
+values; they are only fallbacks and must not be repurposed. Deploy fresh tokens on
+the corresponding chains (the artifact overrides are explicit so the runbook is
 unambiguous).
 
 ```bash
 export REACTIVE_RPC=https://lasna-rpc.rnk.dev/
-export BASE_RPC=https://sepolia.unichain.org          # payment chain endpoint
-export UNICHAIN_RPC=https://sepolia.base.org          # asset chain endpoint
+export BASE_RPC=https://sepolia.base.org              # unchanged legacy default
+export UNICHAIN_RPC=https://sepolia.unichain.org      # unchanged legacy default
+
+# These select the forks for every leg deploy / fund / health check:
+export PAYMENT_RPC=https://sepolia.unichain.org       # payment leg -> Unichain
+export ASSET_RPC=https://sepolia.base.org             # asset leg -> Base
 
 export PAYMENT_CHAIN_ID_OVERRIDE=1301
 export ASSET_CHAIN_ID_OVERRIDE=84532
@@ -87,6 +100,10 @@ forge script script/Fund.s.sol:FundScript --rpc-url $REACTIVE_RPC \
   --account main --broadcast --slow
 ```
 
-The generated manifest reports the overridden chain IDs and proxy addresses, so the
-TypeScript tooling follows whichever market was deployed. Existing deployment hashes
-in `DEPLOYMENT.md` are historical records and are intentionally left untouched.
+The generated manifest maps each **chain ID to its callback proxy** using the same
+overrides: `{"1301": "0x775c…", "84532": "0x476F…"}` for the reverse market above,
+with `chainIds` and the `Deployed` events likewise reflecting the swapped IDs. The
+manifest contains no RPC URLs, so its byte-for-byte default output is unchanged.
+
+Existing deployment hashes in `DEPLOYMENT.md` are historical records and are
+intentionally left untouched.

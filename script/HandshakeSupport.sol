@@ -98,6 +98,26 @@ library HandshakeSupport {
         return VM.envOr("ASSET_PROXY_OVERRIDE", UNICHAIN_CALLBACK_PROXY);
     }
 
+    /// @notice RPC endpoint for each leg. PAYMENT_RPC / ASSET_RPC let a reverse market
+    ///         point the payment and asset legs at the correct chains without repurposing
+    ///         the legacy BASE_RPC / UNICHAIN_RPC variable names. An empty override is
+    ///         treated as unset, so the old no-override behaviour is identical.
+    function paymentRpc() internal view returns (string memory) {
+        if (VM.envExists("PAYMENT_RPC")) {
+            string memory override_ = VM.envString("PAYMENT_RPC");
+            if (bytes(override_).length != 0) return override_;
+        }
+        return rpc("BASE_RPC");
+    }
+
+    function assetRpc() internal view returns (string memory) {
+        if (VM.envExists("ASSET_RPC")) {
+            string memory override_ = VM.envString("ASSET_RPC");
+            if (bytes(override_).length != 0) return override_;
+        }
+        return rpc("UNICHAIN_RPC");
+    }
+
     /// @notice Reads a uint from a contract with a graceful fallback for optional view methods.
     function readUint(address target_, bytes memory callData_) internal view returns (uint256 value, bool ok) {
         (bool success, bytes memory result) = target_.staticcall(callData_);
@@ -121,12 +141,12 @@ library HandshakeSupport {
         IFundingContract(SYSTEM_CONTRACT).depositTo{value: rcAmount}(rc_);
         VM.stopBroadcast();
 
-        selectFork(rpc("BASE_RPC"));
+        selectFork(paymentRpc());
         VM.broadcast();
         IFundingContract(paymentCallbackProxy()).depositTo{value: paymentAmount}(paymentEscrow_);
         VM.stopBroadcast();
 
-        selectFork(rpc("UNICHAIN_RPC"));
+        selectFork(assetRpc());
         VM.broadcast();
         IFundingContract(assetCallbackProxy()).depositTo{value: assetAmount}(assetEscrow_);
         VM.stopBroadcast();
@@ -134,11 +154,11 @@ library HandshakeSupport {
         // Verify health on each chain before returning.
         selectFork(rpc("REACTIVE_RPC"));
         require(IFundingContract(SYSTEM_CONTRACT).debt(rc_) == 0, "HandshakeSupport: RC still in debt");
-        selectFork(rpc("BASE_RPC"));
+        selectFork(paymentRpc());
         require(
             IFundingContract(paymentCallbackProxy()).debt(paymentEscrow_) == 0, "HandshakeSupport: payment escrow still in debt"
         );
-        selectFork(rpc("UNICHAIN_RPC"));
+        selectFork(assetRpc());
         require(
             IFundingContract(assetCallbackProxy()).debt(assetEscrow_) == 0, "HandshakeSupport: asset escrow still in debt"
         );
