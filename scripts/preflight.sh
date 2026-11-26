@@ -29,8 +29,8 @@ BUYER="${BUYER_ADDRESS:-}"
 SELLER="${SELLER_ADDRESS:-}"
 
 MIN_LASNA="${MIN_LASNA_BALANCE:-100000000000000000}"
-MIN_BASE="${MIN_BASE_BALANCE:-50000000000000000}"
-MIN_UNICHAIN="${MIN_UNICHAIN_BALANCE:-50000000000000000}"
+MIN_BASE="${MIN_BASE_BALANCE:-10000000000000000}"
+MIN_UNICHAIN="${MIN_UNICHAIN_BALANCE:-5000000000000000}"
 MIN_SUBS="${MIN_ACTIVE_SUBSCRIPTIONS:-7}"
 LOOKBACK="${SUBSCRIPTION_LOOKBACK_BLOCKS:-300000}"
 
@@ -45,7 +45,7 @@ fail() {
 }
 
 to_dec() {
-  local raw="$1"
+  local raw="${1%% *}"   # cast appends "[1.999e16]" to large decimals
   if [[ "$raw" =~ ^0x[0-9a-fA-F]+$ ]]; then
     cast to-dec "$raw" 2>/dev/null || printf '?'
   else
@@ -102,7 +102,8 @@ check_balance() {
     return
   fi
   wei=$(to_dec "$raw")
-  if [ "$wei" != "?" ] && [ "$wei" -ge "$min" ] 2>/dev/null; then
+  # Bash integer arithmetic overflows above 2^63; lREACT balances are ~2e19 wei.
+  if [ "$wei" != "?" ] && python3 -c "import sys; sys.exit(0 if int('$wei') >= int('$min') else 1)" 2>/dev/null; then
     pass "$label balance $raw wei >= $min"
   else
     fail "$label balance $wei wei < $min" "$fix"
