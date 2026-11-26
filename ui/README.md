@@ -29,8 +29,10 @@ Live addresses are read at runtime from `public/contracts.json`. `public/tokens.
 
 | Route | Screen |
 | --- | --- |
+| `/` | Home: product headline, Base → Lasna → Unichain route, primary trade action and a live order book preview |
 | `/orders` | Trade screen: swap-style trade ticket and the live order book |
-| `/new` | Trade ticket + order details: validation, presets and chain guards |
+| `/my-orders` | Personal order history: real orders where the connected wallet is buyer or seller, with observed tx hashes |
+| `/new` | Trade ticket + order details: validation, quick presets, custom settlement window (30 seconds – 30 days) and chain guards |
 | `/orders/:orderId` | Order detail: trade card, lock/approve/retry, settlement trail and paired leg cards |
 | `/verify` · `/verify/:orderId` | Public tracking — read-only, no wallet, only real hashes |
 | `/faucet` | Quiet testnet destination: mint the two demo tokens, refresh balances, find native ETH faucets |
@@ -50,10 +52,15 @@ Lasna has no Multicall3 at viem's canonical address. wagmi is configured with `b
 
 Official colored chain marks are bundled in `public/chains/` and served locally — there is no runtime CDN dependency:
 
-- `base.svg` and `unichain.svg` — Web3 Icons (MIT), network "branded" SVGs: https://github.com/0xa3k5/web3icons (https://web3icons.io). Base is the official Base Square in Base Blue; Unichain is its brand pink mark.
-- `lasna.svg` — Reactive Network official "Symbol / Color on dark" brand mark from the Reactive Network press room: https://reactive.network/press (direct asset: https://reactive.network/brand/symbol-color-white.svg). Reactive Network owns that mark; see its brand guidelines for usage.
+- `base.svg` — the official Base Square in Base Blue, from Web3 Icons (MIT), network "branded" SVG: https://github.com/0xa3k5/web3icons (https://web3icons.io). Base and Web3 Icons own their respective marks.
+- `unichain.svg` — the Unichain brand mark in brand pink, also from Web3 Icons (MIT): https://github.com/0xa3k5/web3icons (https://web3icons.io).
+- `lasna.svg` — the Reactscan brand mark (gradient ring `#62D0FF → #3C2EFF → #CBB5FF` and white bolt) rebuilt as a clean local SVG from the inline header logo at https://lasna.reactscan.net (`<a aria-label="Home">`, viewBox `0 0 64 64`). Reactscan / Reactive Network own that mark; see their brand guidelines for usage.
 
 These are third-party brand assets used purely to identify the chains; no logo is generated at runtime.
+
+## Handshake mark and favicon
+
+`public/favicon.svg` is Handshake's own mark, drawn in code — not a third-party asset: two lines (the payment leg on Base and the asset leg on Unichain) converge into one reactive decision on Lasna, and the line continues out to the two settlement callbacks. The convergence point is picked out in the product accent on a dark rounded square. The same two-lines-to-one signature is used in the in-app logo and the decision node of the settlement trail.
 
 ## Stack
 

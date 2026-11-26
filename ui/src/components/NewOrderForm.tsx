@@ -13,11 +13,22 @@ import WriteButton from './WriteButton'
 import TradeTicket from './TradeTicket'
 import { Button, ConvergenceMark, Field, Metric, Panel, inputClass, icon } from './ui'
 
+/** Mirror of the contract's MIN_DURATION / MAX_DURATION (HandshakeReactive.sol). */
+const MIN_DURATION = 30
+const MAX_DURATION = 30 * 24 * 60 * 60
+
 const DURATIONS = [
   { label: '1 minute', value: 60 },
   { label: '2 minutes', value: 120 },
   { label: '1 hour', value: 3600 },
 ]
+
+const UNITS = [
+  { label: 'seconds', seconds: 1 },
+  { label: 'minutes', seconds: 60 },
+  { label: 'hours', seconds: 60 * 60 },
+  { label: 'days', seconds: 24 * 60 * 60 },
+] as const
 
 function parseAmount(value: string, decimals: number): bigint | null {
   if (!/^\d+(\.\d+)?$/.test(value.trim())) return null
@@ -43,7 +54,9 @@ export default function NewOrderForm() {
   const [seller, setSeller] = useState('')
   const [paymentAmount, setPaymentAmount] = useState(params.get('pay') ?? '100')
   const [assetAmount, setAssetAmount] = useState(params.get('get') ?? '1')
-  const [duration, setDuration] = useState(120)
+  const [customValue, setCustomValue] = useState('120')
+  const [unit, setUnit] = useState<(typeof UNITS)[number]['seconds']>(1)
+  const [preset, setPreset] = useState<number | null>(120)
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
@@ -56,7 +69,18 @@ export default function NewOrderForm() {
   const parsedPayment = useMemo(() => parseAmount(paymentAmount, paymentDecimals), [paymentAmount, paymentDecimals])
   const parsedAsset = useMemo(() => parseAmount(assetAmount, assetDecimals), [assetAmount, assetDecimals])
   const normalizedSeller = normalizeAddress(seller)
-  const deadline = Math.floor(Date.now() / 1000) + duration
+  const entered = customValue.trim() === '' ? NaN : Number(customValue)
+  const duration = Number.isFinite(entered) ? entered * unit : NaN
+  const validDuration = Number.isSafeInteger(duration) ? duration : null
+  const durationError =
+    validDuration === null
+      ? 'Enter a whole number for the settlement window.'
+      : validDuration < MIN_DURATION
+        ? 'The window must be at least 30 seconds.'
+        : validDuration > MAX_DURATION
+          ? 'The window cannot be longer than 30 days.'
+          : null
+  const deadline = validDuration !== null ? Math.floor(Date.now() / 1000) + validDuration : null
 
   const rc = configuredAddress(config.reactive.reactiveContract)
   const paymentTokenAddress = configuredAddress(config.base.paymentToken)
@@ -72,7 +96,7 @@ export default function NewOrderForm() {
       return `Not enough ${paymentToken.symbol} to cover the payment leg.`
     }
     if (!rc || !paymentTokenAddress || !assetTokenAddress) return 'The settlement venue is not configured.'
-    if (duration < 30) return 'Choose a duration of at least 30 seconds.'
+    if (durationError) return durationError
     return null
   }, [
     orderId,
@@ -85,7 +109,7 @@ export default function NewOrderForm() {
     rc,
     paymentTokenAddress,
     assetTokenAddress,
-    duration,
+    durationError,
   ])
 
   async function submit() {
@@ -107,7 +131,7 @@ export default function NewOrderForm() {
           parsedPayment!,
           assetTokenAddress as Hex,
           parsedAsset!,
-          BigInt(duration),
+          BigInt(validDuration!),
         ],
       })
       await lasnaClient?.waitForTransactionReceipt({ hash })
@@ -160,23 +184,60 @@ export default function NewOrderForm() {
               />
             </Field>
 
-            <Field label="Settlement window" hint="Deadline is set when the trade is created">
+            <Field label="Settlement window" hint="30 seconds – 30 days">
               <div className="flex flex-wrap gap-2">
-                {DURATIONS.map((preset) => (
+                {DURATIONS.map((option) => (
                   <button
-                    key={preset.value}
+                    key={option.value}
                     type="button"
-                    onClick={() => setDuration(preset.value)}
+                    onClick={() => {
+                      setPreset(option.value)
+                      setCustomValue(String(option.value))
+                      setUnit(1)
+                    }}
                     className={`h-9 rounded-xl border px-3 text-[11px] font-medium transition-colors ${
-                      duration === preset.value
+                      preset === option.value
                         ? 'border-accent/25 bg-accent-soft text-accent-ink'
                         : 'border-line bg-paper-0 text-ink-500 hover:bg-paper-100'
                     }`}
                   >
-                    {preset.label}
+                    {option.label}
                   </button>
                 ))}
               </div>
+              <div className="mt-3 flex gap-2">
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  step={1}
+                  aria-label="Custom settlement window"
+                  className={inputClass}
+                  value={customValue}
+                  onChange={(event) => {
+                    setPreset(null)
+                    setCustomValue(event.target.value)
+                  }}
+                />
+                <select
+                  aria-label="Settlement window unit"
+                  className={`${inputClass} w-auto min-w-[112px]`}
+                  value={unit}
+                  onChange={(event) => {
+                    setPreset(null)
+                    setUnit(Number(event.target.value) as (typeof UNITS)[number]['seconds'])
+                  }}
+                >
+                  {UNITS.map((option) => (
+                    <option key={option.seconds} value={option.seconds}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <p className="mt-2 text-[11px] text-ink-400">
+                {durationError ? <span className="text-warn">{durationError}</span> : 'The deadline is set when the trade is created.'}
+              </p>
             </Field>
 
             {error && (
@@ -225,8 +286,8 @@ export default function NewOrderForm() {
               <span className="block">duplicates are rejected on-chain</span>
             </p>
             <div className="grid grid-cols-2 gap-3 pt-1">
-              <Metric label="Deadline" value={formatDeadline(BigInt(deadline))} />
-              <Metric label="Window" value={`${duration}s`} />
+              <Metric label="Deadline" value={deadline !== null ? formatDeadline(BigInt(deadline)) : '—'} />
+              <Metric label="Window" value={validDuration !== null ? `${validDuration}s` : '—'} />
               <Metric label="Buyer" value={address ? truncate(address, 8, 6) : '—'} />
               <Metric label="Seller" value={normalizedSeller ? truncate(normalizedSeller, 8, 6) : '—'} />
               <Metric label="Payment leg" value={formatAmount(parsedPayment ?? 0n, paymentDecimals, paymentToken.symbol)} />
