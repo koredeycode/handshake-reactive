@@ -10,6 +10,8 @@ import type { ChainKey } from './chains'
 export interface BalanceChip {
   key: string
   chain: ChainKey
+  /** Short row name inside the wallet dropdown, e.g. "Native" or a token symbol. */
+  asset: string
   label: string
   title: string
 }
@@ -66,30 +68,35 @@ export function useWalletBalances(address?: Hex | null): BalanceChip[] {
     {
       key: 'base-native',
       chain: 'base',
+      asset: 'Native',
       label: nativeLabel(baseNative),
       title: `${CHAIN_LABELS.base} · native balance`,
     },
     {
       key: 'unichain-native',
       chain: 'unichain',
+      asset: 'Native',
       label: nativeLabel(unichainNative),
       title: `${CHAIN_LABELS.unichain} · native balance`,
     },
     {
       key: 'lasna-native',
       chain: 'lasna',
+      asset: 'Native',
       label: nativeLabel(lasnaNative),
       title: `${CHAIN_LABELS.lasna} · native balance`,
     },
     {
       key: 'payment-token',
       chain: 'base',
+      asset: payment.symbol,
       label: erc20Label(paymentBalance, payment.symbol, payment.decimals),
       title: `${payment.name} (${payment.symbol}) · ${CHAIN_LABELS.base}`,
     },
     {
       key: 'asset-token',
       chain: 'unichain',
+      asset: asset.symbol,
       label: erc20Label(assetBalance, asset.symbol, asset.decimals),
       title: `${asset.name} (${asset.symbol}) · ${CHAIN_LABELS.unichain}`,
     },

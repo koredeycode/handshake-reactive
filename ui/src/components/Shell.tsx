@@ -1,11 +1,13 @@
-import type { ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, NavLink, useLocation } from 'react-router-dom'
 import { useAccount, useConnect, useDisconnect } from 'wagmi'
-import { ClipboardList, Droplets, LogOut, Plus, Search, Wallet } from 'lucide-react'
+import { ChevronDown, ClipboardList, Droplets, LogOut, Plus, Search, Wallet } from 'lucide-react'
 import { useWalletBalances } from '../lib/balances'
+import { CHAIN_LABELS } from '../lib/chains'
 import { copyText, truncate } from '../lib/format'
 import { useCopyFeedback } from '../lib/proofs'
 import { Button, ChainMark, ConvergenceMark, icon } from './ui'
+import type { ChainKey } from '../lib/chains'
 
 const NAV = [
   { to: '/orders', label: 'Trade', Icon: ClipboardList },
@@ -30,37 +32,38 @@ function Logo() {
   )
 }
 
-/** Compact per-chain chips. Reads are chain-scoped, so no wrong-chain banner. */
-function WalletBalances() {
-  const { address, isConnected } = useAccount()
-  const chips = useWalletBalances(isConnected ? address : null)
-
-  if (!isConnected || !address) return null
-  return (
-    <div
-      aria-label="Wallet balances"
-      className="hidden max-w-[54vw] items-center gap-1.5 overflow-x-auto sm:flex"
-    >
-      {chips.map((chip) => (
-        <span
-          key={chip.key}
-          title={chip.title}
-          className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-line bg-paper-0 px-2 py-1 text-[11px] text-ink-400"
-        >
-          <ChainMark chain={chip.chain} className="h-3 w-3" />
-          <span className="tnum font-mono text-ink-700">{chip.label}</span>
-        </span>
-      ))}
-    </div>
-  )
-}
+/** Connected wallet: truncated address + chevron. Balances live in the panel. */
+const BALANCE_GROUPS: Array<{ chain: ChainKey; keys: string[] }> = [
+  { chain: 'base', keys: ['base-native', 'payment-token'] },
+  { chain: 'unichain', keys: ['unichain-native', 'asset-token'] },
+  { chain: 'lasna', keys: ['lasna-native'] },
+]
 
 function WalletControl() {
   const { address, isConnected } = useAccount()
   const { connectors, connect, isPending } = useConnect()
   const { disconnect } = useDisconnect()
   const { copied, setCopied } = useCopyFeedback()
+  const chips = useWalletBalances(isConnected ? address : null)
+  const [open, setOpen] = useState(false)
+  const root = useRef<HTMLDivElement>(null)
   const connector = connectors[0]
+
+  useEffect(() => {
+    if (!open) return
+    const onPointerDown = (event: PointerEvent) => {
+      if (root.current && !root.current.contains(event.target as Node)) setOpen(false)
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [open])
 
   if (!isConnected || !address) {
     return (
@@ -77,27 +80,76 @@ function WalletControl() {
   }
 
   return (
-    <div className="flex items-center gap-2 rounded-xl border border-line bg-paper-0 px-2.5 py-1.5">
-      <span className="h-1.5 w-1.5 rounded-full bg-accent" />
+    <div className="relative" ref={root}>
       <button
         type="button"
-        title="Copy address"
-        onClick={async () => {
-          const ok = await copyText(address)
-          setCopied(ok ? 'address' : 'failed')
-        }}
-        className="tnum font-mono text-[11px] text-ink-700 transition-colors hover:text-accent"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+        className="flex items-center gap-2 rounded-xl border border-line bg-paper-0 px-2.5 py-1.5 transition-colors hover:bg-paper-100"
       >
-        {copied === 'address' ? 'Copied' : truncate(address, 6, 4)}
+        <span className="h-1.5 w-1.5 rounded-full bg-accent" />
+        <span className="tnum font-mono text-[11px] text-ink-700">
+          {copied === 'address' ? 'Copied' : truncate(address, 6, 4)}
+        </span>
+        <ChevronDown {...icon} className={`text-ink-400 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
-      <button
-        type="button"
-        title="Disconnect"
-        onClick={() => disconnect()}
-        className="text-ink-400 transition-colors hover:text-bad"
-      >
-        <LogOut {...icon} />
-      </button>
+
+      {open && (
+        <div
+          role="menu"
+          aria-label="Wallet balances"
+          className="absolute right-0 top-full z-40 mt-2 w-[272px] rounded-2xl border border-line bg-paper-0 p-3 shadow-[0_18px_45px_rgba(24,24,27,0.12)]"
+        >
+          <div className="flex items-center justify-between border-b border-line pb-2.5">
+            <span className="text-[11px] font-medium text-ink-700">Wallet balances</span>
+            <span className="text-[10px] text-ink-400">Testnets</span>
+          </div>
+          <div className="space-y-3 py-3">
+            {BALANCE_GROUPS.map(({ chain, keys }) => (
+              <div key={chain}>
+                <div className="flex items-center gap-2 text-[11px] font-medium text-ink-700">
+                  <ChainMark chain={chain} />
+                  {CHAIN_LABELS[chain]}
+                </div>
+                <div className="mt-1.5 space-y-1 pl-6">
+                  {chips
+                    .filter((chip) => keys.includes(chip.key))
+                    .map((chip) => (
+                      <div key={chip.key} title={chip.title} className="flex items-baseline justify-between gap-3 text-[11px]">
+                        <span className="text-ink-500">{chip.asset}</span>
+                        <span className="tnum font-mono text-ink-900">{chip.label}</span>
+                      </div>
+                    ))}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="flex items-center justify-between border-t border-line pt-2.5">
+            <button
+              type="button"
+              onClick={async () => {
+                const ok = await copyText(address)
+                setCopied(ok ? 'address' : 'failed')
+              }}
+              className="text-[11px] text-ink-500 transition-colors hover:text-accent"
+            >
+              {copied === 'address' ? 'Copied' : 'Copy address'}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false)
+                disconnect()
+              }}
+              className="inline-flex items-center gap-1 text-[11px] text-ink-500 transition-colors hover:text-bad"
+            >
+              <LogOut {...icon} />
+              Disconnect
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -184,10 +236,7 @@ export default function Shell({ children }: { children: ReactNode }) {
                 Internal
               </span>
             ) : (
-              <>
-                <WalletBalances />
-                <WalletControl />
-              </>
+              <WalletControl />
             )}
           </div>
         </header>

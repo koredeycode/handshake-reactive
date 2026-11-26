@@ -1,6 +1,6 @@
 import type { ButtonHTMLAttributes, ReactNode } from 'react'
 import { ArrowRight, ArrowUpRight, Copy, Inbox } from 'lucide-react'
-import { CHAIN_LABELS, CHAIN_SHORT, txUrl } from '../lib/chains'
+import { CHAIN_LABELS, CHAIN_LOGO, CHAIN_SHORT, txUrl } from '../lib/chains'
 import { copyText, truncate } from '../lib/format'
 import { useCopyFeedback } from '../lib/proofs'
 import { STATUS_DOT, STATUS_LABEL, STATUS_STYLES } from '../lib/status'
@@ -123,51 +123,24 @@ export function Metric({
 }
 
 /**
- * Small inline chain marks. Monochrome (currentColor) so they inherit the quiet
- * ink tone of a pill and the accent only where the pill is already active.
- * No external images, no image CDN, no chain-brand colors.
+ * Official colored chain logos served from public/chains. Rendered at one
+ * consistent 16px across pills, route strips, order rows and timelines.
  */
 export function ChainMark({
   chain,
-  className = 'h-3.5 w-3.5',
+  className = 'h-4 w-4',
 }: {
   chain: ChainKey
   className?: string
 }) {
   return (
-    <svg
-      viewBox="0 0 16 16"
+    <img
+      src={CHAIN_LOGO[chain]}
       className={`${className} shrink-0`}
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.3}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      role="img"
-      aria-label={`${CHAIN_LABELS[chain]} mark`}
-    >
-      {chain === 'base' && (
-        <>
-          <circle cx="8" cy="8" r="6.1" />
-          <path d="M10.4 5.2a3.5 3.5 0 1 0 0 5.6" />
-        </>
-      )}
-      {chain === 'unichain' && (
-        <>
-          <path d="M8 1.9 13.4 5v6L8 14.1 2.6 11V5z" />
-          <path d="M2.6 5 8 8l5.4-3M8 8v6.1" />
-        </>
-      )}
-      {chain === 'lasna' && (
-        <>
-          <circle cx="8" cy="2.7" r="1" />
-          <circle cx="13.1" cy="11.1" r="1" />
-          <circle cx="2.9" cy="11.1" r="1" />
-          <path d="M8 3.7v3.1m-1.2 1.4-3 2.2m6-2.2 3 2.2" />
-          <circle cx="8" cy="8" r="1.2" />
-        </>
-      )}
-    </svg>
+      alt={CHAIN_LABELS[chain]}
+      title={CHAIN_LABELS[chain]}
+      draggable={false}
+    />
   )
 }
 
@@ -188,7 +161,7 @@ export function RouteStrip({ className = '' }: { className?: string }) {
 export function ChainName({ chain, className = '' }: { chain: ChainKey; className?: string }) {
   return (
     <span className={`inline-flex items-center gap-1 whitespace-nowrap ${className}`}>
-      <ChainMark chain={chain} className="h-3 w-3" />
+      <ChainMark chain={chain} />
       {CHAIN_LABELS[chain]}
     </span>
   )
