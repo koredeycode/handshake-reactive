@@ -1,13 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="none">
-  <!-- Handshake convergence mark: the payment leg and the asset leg meet at
-       one decision, then the single line continues out. Drawn in code; no
-       third-party artwork. -->
+  <!-- Handshake convergence mark — the same paths, stroke and accent as the
+       in-app logo (ui/src/components/ui.tsx: ConvergenceMark), scaled into a
+       64px tile. Drawn in code; no third-party artwork. -->
   <title>Handshake</title>
   <rect width="64" height="64" rx="16" fill="#18181b"/>
-  <g transform="translate(8 8) scale(2)" fill="none" stroke="#e11d62" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round">
+  <g transform="translate(8 8) scale(2)" fill="none" stroke="#e11d62" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
     <path d="M3 6c5.5 0 6.5 6 9 6"/>
     <path d="M3 18c5.5 0 6.5-6 9-6"/>
     <path d="M12 12h9"/>
   </g>
-  <circle cx="32" cy="32" r="3.5" fill="#fff"/>
 </svg>
