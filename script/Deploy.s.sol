@@ -3,15 +3,7 @@ pragma solidity ^0.8.29;
 
 import {Script} from "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
-import {
-    HandshakeSupport,
-    IHandshakeReactive,
-    BASE_CALLBACK_PROXY,
-    UNICHAIN_CALLBACK_PROXY,
-    REACTIVE_CHAIN_ID,
-    PAYMENT_CHAIN_ID,
-    ASSET_CHAIN_ID
-} from "script/HandshakeSupport.sol";
+import {HandshakeSupport, IHandshakeReactive} from "script/HandshakeSupport.sol";
 
 /// @notice Deploys in the strict PRD §13 order:
 ///   1. HandshakeReactive on Lasna (payable, lightly funded)
@@ -71,7 +63,7 @@ contract DeployScript is Script {
             HandshakeSupport.selectFork(baseRpc);
             paymentEscrow = HandshakeSupport.deploy(
                 HandshakeSupport.VM.envOr("PAYMENT_ESCROW_ARTIFACT", string("src/PaymentEscrow.sol:PaymentEscrow")),
-                abi.encode(BASE_CALLBACK_PROXY, rc, paymentToken),
+                abi.encode(HandshakeSupport.paymentCallbackProxy(), rc, paymentToken),
                 0
             );
         }
@@ -81,7 +73,7 @@ contract DeployScript is Script {
             HandshakeSupport.selectFork(unichainRpc);
             assetEscrow = HandshakeSupport.deploy(
                 HandshakeSupport.VM.envOr("ASSET_ESCROW_ARTIFACT", string("src/AssetEscrow.sol:AssetEscrow")),
-                abi.encode(UNICHAIN_CALLBACK_PROXY, rc, assetToken),
+                abi.encode(HandshakeSupport.assetCallbackProxy(), rc, assetToken),
                 0
             );
         }
@@ -93,7 +85,9 @@ contract DeployScript is Script {
         HandshakeSupport.selectFork(lazyRpc);
         if (!IHandshakeReactive(rc).venuesSet()) {
             HandshakeSupport.VM.broadcast();
-            IHandshakeReactive(rc).setVenues(PAYMENT_CHAIN_ID, paymentEscrow, ASSET_CHAIN_ID, assetEscrow);
+            IHandshakeReactive(rc).setVenues(
+                HandshakeSupport.paymentChainId(), paymentEscrow, HandshakeSupport.assetChainId(), assetEscrow
+            );
             HandshakeSupport.VM.stopBroadcast();
             emit VenuesInstalled(rc);
         } else {
@@ -108,11 +102,11 @@ contract DeployScript is Script {
         );
 
         // HandshakeSupport.VM.log cannot format addresses conveniently; console2 can.
-        emit Deployed(REACTIVE_CHAIN_ID, rc);
-        emit Deployed(PAYMENT_CHAIN_ID, paymentToken);
-        emit Deployed(ASSET_CHAIN_ID, assetToken);
-        emit Deployed(PAYMENT_CHAIN_ID, paymentEscrow);
-        emit Deployed(ASSET_CHAIN_ID, assetEscrow);
+        emit Deployed(HandshakeSupport.reactiveChainId(), rc);
+        emit Deployed(HandshakeSupport.paymentChainId(), paymentToken);
+        emit Deployed(HandshakeSupport.assetChainId(), assetToken);
+        emit Deployed(HandshakeSupport.paymentChainId(), paymentEscrow);
+        emit Deployed(HandshakeSupport.assetChainId(), assetEscrow);
 
         // 5. Optional funding. Default off: prefer the explicit Fund.s.sol step.
         if (keccak256(bytes(HandshakeSupport.VM.envOr("AUTO_FUND", string("0")))) == keccak256("1")) {

@@ -78,7 +78,9 @@ contract PaymentEscrow is AbstractCallback {
         if (token_ != address(PAYMENT_TOKEN)) revert WrongToken();
         if (amount_ == 0) revert ZeroAmount();
         if (deadline_ <= block.timestamp) revert DeadlinePassed();
-        if (counterparty_ == address(0)) revert WrongRecipient();
+        // counterparty == address(0) is the open-order marker: the winning seller is
+        // chosen later by the reactive contract, so no seller is fixed at lock time.
+        // The Leg struct stays 8 fields for the UI's fixed-tuple decoder.
 
         leg.depositor = msg.sender;
         leg.counterparty = counterparty_;
@@ -102,7 +104,10 @@ contract PaymentEscrow is AbstractCallback {
         Leg storage leg = legs[orderId_];
         if (leg.state != LegState.LOCKED) return;
         if (nonce_ <= leg.nonce) revert StaleNonce();
-        if (recipient_ != leg.counterparty) revert WrongRecipient();
+        // A zero recipient can never receive funds. Named legs keep the exact-equality
+        // check; open legs (counterparty == 0) accept any nonzero winning seller.
+        if (recipient_ == address(0)) revert WrongRecipient();
+        if (leg.counterparty != address(0) && recipient_ != leg.counterparty) revert WrongRecipient();
         if (amount_ != leg.amount) revert WrongAmount();
 
         leg.state = LegState.RELEASED;

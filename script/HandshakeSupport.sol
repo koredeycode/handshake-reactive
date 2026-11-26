@@ -76,6 +76,28 @@ library HandshakeSupport {
         return VM.envOr(envName_, default_);
     }
 
+    /// @notice Market parameters. Env overrides let a new market reuse these scripts
+    ///         without editing constants; defaults are the current live testnet values.
+    function reactiveChainId() internal view returns (uint256) {
+        return VM.envOr("REACTIVE_CHAIN_ID_OVERRIDE", REACTIVE_CHAIN_ID);
+    }
+
+    function paymentChainId() internal view returns (uint256) {
+        return VM.envOr("PAYMENT_CHAIN_ID_OVERRIDE", PAYMENT_CHAIN_ID);
+    }
+
+    function assetChainId() internal view returns (uint256) {
+        return VM.envOr("ASSET_CHAIN_ID_OVERRIDE", ASSET_CHAIN_ID);
+    }
+
+    function paymentCallbackProxy() internal view returns (address) {
+        return VM.envOr("PAYMENT_PROXY_OVERRIDE", BASE_CALLBACK_PROXY);
+    }
+
+    function assetCallbackProxy() internal view returns (address) {
+        return VM.envOr("ASSET_PROXY_OVERRIDE", UNICHAIN_CALLBACK_PROXY);
+    }
+
     /// @notice Reads a uint from a contract with a graceful fallback for optional view methods.
     function readUint(address target_, bytes memory callData_) internal view returns (uint256 value, bool ok) {
         (bool success, bytes memory result) = target_.staticcall(callData_);
@@ -101,34 +123,38 @@ library HandshakeSupport {
 
         selectFork(rpc("BASE_RPC"));
         VM.broadcast();
-        IFundingContract(BASE_CALLBACK_PROXY).depositTo{value: paymentAmount}(paymentEscrow_);
+        IFundingContract(paymentCallbackProxy()).depositTo{value: paymentAmount}(paymentEscrow_);
         VM.stopBroadcast();
 
         selectFork(rpc("UNICHAIN_RPC"));
         VM.broadcast();
-        IFundingContract(UNICHAIN_CALLBACK_PROXY).depositTo{value: assetAmount}(assetEscrow_);
+        IFundingContract(assetCallbackProxy()).depositTo{value: assetAmount}(assetEscrow_);
         VM.stopBroadcast();
 
         // Verify health on each chain before returning.
         selectFork(rpc("REACTIVE_RPC"));
         require(IFundingContract(SYSTEM_CONTRACT).debt(rc_) == 0, "HandshakeSupport: RC still in debt");
         selectFork(rpc("BASE_RPC"));
-        require(IFundingContract(BASE_CALLBACK_PROXY).debt(paymentEscrow_) == 0, "HandshakeSupport: payment escrow still in debt");
+        require(
+            IFundingContract(paymentCallbackProxy()).debt(paymentEscrow_) == 0, "HandshakeSupport: payment escrow still in debt"
+        );
         selectFork(rpc("UNICHAIN_RPC"));
-        require(IFundingContract(UNICHAIN_CALLBACK_PROXY).debt(assetEscrow_) == 0, "HandshakeSupport: asset escrow still in debt");
+        require(
+            IFundingContract(assetCallbackProxy()).debt(assetEscrow_) == 0, "HandshakeSupport: asset escrow still in debt"
+        );
     }
 
     /// @notice Builds the JSON manifest consumed by the TypeScript tooling.
     function manifest(address rc_, address paymentToken_, address assetToken_, address paymentEscrow_, address assetEscrow_)
         internal
-        pure
+        view
         returns (string memory)
     {
         return string.concat(
             "{\n",
-            '  "chainIds": {"lasna": 5318007, "baseSepolia": 84532, "unichainSepolia": 1301},\n',
+            '  "chainIds": {"lasna": ', VM.toString(reactiveChainId()), ', "baseSepolia": ', VM.toString(paymentChainId()), ', "unichainSepolia": ', VM.toString(assetChainId()), '},\n',
             '  "systemContract": "', VM.toString(SYSTEM_CONTRACT), '",\n',
-            '  "callbackProxies": {"84532": "', VM.toString(BASE_CALLBACK_PROXY), '", "1301": "', VM.toString(UNICHAIN_CALLBACK_PROXY), '"},\n',
+            '  "callbackProxies": {"', VM.toString(paymentChainId()), '": "', VM.toString(paymentCallbackProxy()), '", "', VM.toString(assetChainId()), '": "', VM.toString(assetCallbackProxy()), '"},\n',
             '  "reactive": "', VM.toString(rc_), '",\n',
             '  "paymentToken": "', VM.toString(paymentToken_), '",\n',
             '  "assetToken": "', VM.toString(assetToken_), '",\n',

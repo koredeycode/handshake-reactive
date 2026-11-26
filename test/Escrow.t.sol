@@ -212,4 +212,77 @@ contract EscrowTest is Test {
         assertEq(uint8(assetEscrow.getLeg(ORDER, SELLER).state), uint8(AssetEscrow.LegState.RELEASED));
         assertEq(asset.balanceOf(BUYER), ASSET_AMOUNT);
     }
+
+    // -------------------------------------------------------------- open payment legs
+
+    function _lockOpenPayment() internal {
+        vm.startPrank(BUYER);
+        usd.approve(address(paymentEscrow), PAYMENT_AMOUNT);
+        paymentEscrow.lock(ORDER, address(usd), PAYMENT_AMOUNT, address(0), TERMS, deadline);
+        vm.stopPrank();
+    }
+
+    function testOpenPaymentLockAcceptsZeroCounterpartyWithoutStructChange() public {
+        _lockOpenPayment();
+        PaymentEscrow.Leg memory leg = paymentEscrow.getLeg(ORDER);
+        assertEq(leg.depositor, BUYER);
+        assertEq(leg.counterparty, address(0));
+        assertEq(leg.amount, PAYMENT_AMOUNT);
+        assertEq(uint8(leg.state), uint8(PaymentEscrow.LegState.LOCKED));
+        assertEq(usd.balanceOf(address(paymentEscrow)), PAYMENT_AMOUNT);
+    }
+
+    function testOpenPaymentReleasePaysChosenWinnerAndIsIdempotent() public {
+        _lockOpenPayment();
+
+        MockCallbackProxy(BASE_PROXY).forward(
+            address(paymentEscrow),
+            abi.encodeCall(PaymentEscrow.release, (REACTIVE, ORDER, SELLER_TWO, PAYMENT_AMOUNT, 7))
+        );
+        assertEq(usd.balanceOf(SELLER_TWO), PAYMENT_AMOUNT);
+        assertEq(usd.balanceOf(address(paymentEscrow)), 0);
+        assertEq(uint8(paymentEscrow.getLeg(ORDER).state), uint8(PaymentEscrow.LegState.RELEASED));
+        assertEq(paymentEscrow.getLeg(ORDER).nonce, 7);
+
+        // A duplicate callback cannot pay a second seller.
+        MockCallbackProxy(BASE_PROXY).forward(
+            address(paymentEscrow), abi.encodeCall(PaymentEscrow.release, (REACTIVE, ORDER, SELLER, PAYMENT_AMOUNT, 8))
+        );
+        assertEq(usd.balanceOf(SELLER), 0);
+        assertEq(paymentEscrow.getLeg(ORDER).nonce, 7);
+    }
+
+    function testOpenPaymentReleaseRejectsZeroRecipient() public {
+        _lockOpenPayment();
+        vm.expectRevert(abi.encodeWithSignature("WrongRecipient()"));
+        vm.prank(BASE_PROXY);
+        paymentEscrow.release(REACTIVE, ORDER, address(0), PAYMENT_AMOUNT, 1);
+        assertEq(uint8(paymentEscrow.getLeg(ORDER).state), uint8(PaymentEscrow.LegState.LOCKED));
+    }
+
+    function testNamedPaymentReleaseStillRequiresExactNonzeroRecipient() public {
+        _lockPayment();
+        vm.expectRevert(abi.encodeWithSignature("WrongRecipient()"));
+        vm.prank(BASE_PROXY);
+        paymentEscrow.release(REACTIVE, ORDER, address(0), PAYMENT_AMOUNT, 1);
+
+        vm.expectRevert(abi.encodeWithSignature("WrongRecipient()"));
+        vm.prank(BASE_PROXY);
+        paymentEscrow.release(REACTIVE, ORDER, SELLER_TWO, PAYMENT_AMOUNT, 1);
+
+        MockCallbackProxy(BASE_PROXY).forward(
+            address(paymentEscrow), abi.encodeCall(PaymentEscrow.release, (REACTIVE, ORDER, SELLER, PAYMENT_AMOUNT, 2))
+        );
+        assertEq(usd.balanceOf(SELLER), PAYMENT_AMOUNT);
+    }
+
+    function testOpenPaymentRefundReturnsFundsToBuyer() public {
+        _lockOpenPayment();
+        vm.warp(deadline + 1);
+        MockCallbackProxy(BASE_PROXY).forward(
+            address(paymentEscrow), abi.encodeCall(PaymentEscrow.refund, (REACTIVE, ORDER, 3))
+        );
+        assertEq(uint8(paymentEscrow.getLeg(ORDER).state), uint8(PaymentEscrow.LegState.REFUNDED));
+        assertEq(usd.balanceOf(BUYER), 1_000e6);
+    }
 }
