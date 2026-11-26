@@ -5,11 +5,12 @@ import { configuredAddress, useConfig } from '../lib/config'
 import { assetEscrowAbi, erc20Abi, paymentEscrowAbi } from '../lib/contracts'
 import { computeTermsHash, formatAmount, truncate } from '../lib/format'
 import { logClient } from '../lib/logs'
-import { useAllowance, useTokenBalance, useTokenMeta, type LegKind } from '../lib/queries'
+import { useAllowance, useTokenBalance, type LegKind } from '../lib/queries'
+import { useTokenDisplay } from '../lib/tokenDisplay'
 import type { ChainKey } from '../lib/chains'
 import type { Leg, Order } from '../lib/types'
 import WriteButton, { type TxNotice } from './WriteButton'
-import { ExternalLink, TxLink } from './ui'
+import { ChainPill, ExternalLink, TokenMark, TxLink } from './ui'
 
 function stateLabel(state?: bigint | null): string {
   if (state === undefined || state === null) return 'Not locked'
@@ -40,7 +41,7 @@ export default function LegCard({
   const client = logClient(usePublicClient({ chainId: CHAIN_IDS[chainKey] })) as unknown as {
     waitForTransactionReceipt: (args: { hash: Hex }) => Promise<unknown>
   } | null
-  const meta = useTokenMeta(kind)
+  const display = useTokenDisplay(kind)
   const balance = useTokenBalance(kind, address)
   const allowance = useAllowance(kind, address)
 
@@ -54,8 +55,8 @@ export default function LegCard({
   const canLockByMe = !!address && address.toLowerCase() === depositor.toLowerCase()
   const insufficient = balance.data !== undefined && balance.data !== null && balance.data < amount
   const needsApproval = allowance.data !== undefined && allowance.data !== null && allowance.data < amount
-  const decimals = meta.data?.decimals ?? (isPayment ? 6 : 18)
-  const symbol = meta.data?.symbol ?? (isPayment ? 'TestUSD' : 'TEST')
+  const decimals = display.decimals
+  const symbol = display.symbol
 
   // Precondition: the terms hash is derived from getOrder(id), never from a quote.
   const termsHash = computeTermsHash(order)
@@ -91,26 +92,37 @@ export default function LegCard({
         : undefined
 
   return (
-    <section className="rounded-[14px] border border-line bg-paper-0 p-6">
+    <section className="rounded-2xl border border-line bg-paper-0 p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h3 className="text-sm font-medium text-ink-900">{isPayment ? 'Payment leg' : 'Asset leg'}</h3>
-          <p className="mt-1 text-[11px] text-ink-400">{CHAIN_LABELS[chainKey]}</p>
+        <div className="flex items-center gap-3">
+          <TokenMark
+            symbol={symbol}
+            kind={isPayment ? 'payment' : 'asset'}
+            mark={display.mark}
+            color={display.color}
+          />
+          <div>
+            <h3 className="text-sm font-medium text-ink-900">{isPayment ? 'Payment leg' : 'Asset leg'}</h3>
+            <p className="mt-0.5 text-[11px] text-ink-400">{CHAIN_LABELS[chainKey]}</p>
+          </div>
         </div>
         <span
-          className={`rounded-lg border px-2.5 py-1 text-[11px] font-medium ${
-            locked ? 'border-accent/25 bg-accent-soft text-accent' : 'border-line bg-paper-50 text-ink-500'
+          className={`rounded-full border px-2.5 py-1 text-[11px] font-medium ${
+            locked ? 'border-accent/25 bg-accent-soft text-accent-ink' : 'border-line bg-paper-50 text-ink-500'
           }`}
         >
           {stateLabel(leg?.state)}
         </span>
       </div>
 
-      <div className="mt-6 tnum font-mono text-2xl text-ink-900">
-        {formatAmount(leg ? leg.amount : amount, decimals, symbol)}
+      <div className="mt-6 flex flex-wrap items-end justify-between gap-3">
+        <div className="tnum font-mono text-[28px] font-medium leading-none text-ink-900">
+          {formatAmount(leg ? leg.amount : amount, decimals, symbol)}
+        </div>
+        <ChainPill chain={chainKey} />
       </div>
 
-      <dl className="mt-5 grid grid-cols-2 gap-x-6 gap-y-4 border-t border-line pt-5">
+      <dl className="mt-6 grid grid-cols-2 gap-x-6 gap-y-4 border-t border-line pt-5">
         <div>
           <dt className="text-[11px] text-ink-400">Depositor</dt>
           <dd className="tnum mt-1 font-mono text-xs text-ink-700">
@@ -143,7 +155,7 @@ export default function LegCard({
       </dl>
 
       {termsMismatch && (
-        <p className="mt-5 rounded-lg border border-bad/25 bg-bad-soft px-3 py-2 text-xs text-bad">
+        <p className="mt-5 rounded-xl border border-bad/25 bg-bad-soft px-3 py-2 text-xs text-bad">
           Terms on this leg no longer match the order. Do not lock.
         </p>
       )}

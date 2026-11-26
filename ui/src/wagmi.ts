@@ -4,6 +4,9 @@ import { lasna, unichainSepolia } from './lib/chains'
 
 export const wagmiConfig = createConfig({
   chains: [lasna, baseSepolia, unichainSepolia],
+  // Lasna has no Multicall3 at viem's canonical address. Automatic request
+  // batching falls back to per-call eth_call so reads never require it.
+  batch: { multicall: false },
   connectors: [injected({ shimDisconnect: true })],
   multiInjectedProviderDiscovery: true,
   transports: {

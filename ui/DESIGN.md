@@ -1,17 +1,30 @@
 # Design direction
 
 - **Product.** Cross-chain OTC settlement for traders and market makers — lock on two chains, one reactive arbiter releases both legs.
-- **Character.** exact, calm, financial. A settlement desk, not a dashboard.
-- **World.** A dealing-room ledger: warm paper-white surfaces, ink type, quiet hairlines, one ledger-blue accent for the active thing.
-- **Moments.** The settlement timeline is the single rich moment: two legs converge into one decision, then two releases. Figures are set in tabular numerals.
+- **Character.** `sharp, liquid, exact`. An exchange floor, not a bank portal.
+- **World.** A DEX trade screen: paired token tiles, chain pills, an amount-dominated trade card, a precise settlement trail.
+- **Moments.** The trade card (big tabular amounts, token marks, chain pills) and the settlement timeline are the two rich moments. Figures are set in tabular numerals.
 - **Signature.** A two-lines-to-one convergence mark, used in the logo and the decision node of the timeline, and nowhere else.
+- **Material.** One tinted neutral ramp (paper / ink), hairline borders, 12–16px radii, a 4px spacing grid, sentence case, one icon set (Lucide), one accent (pink/coral `#e11d62`) used only on the primary action, active state and one key figure. No glows, gradients, emoji, tracked uppercase labels or decorative status color.
 
 Design principles follow the unslop skill by Damir Sokolovsky ([@heydamir](https://x.com/heydamir)), CC BY 4.0. No assets were copied.
 
 ## Audit
 
-The old interface was a developer console wearing a product skin. Its landing screen was an "Operator console" headed by a five-second polling banner, a debt banner with `cast send` commands and a "copy commands" button, native-balance chips for all three chains, and a system-health panel printing debt, reserves, pool balances and a "subscriptions live in the Reactive node" note. Below that sat an order table, a three-run "Demo guide", and a collapsible 250-row decoded event log. The primary navigation led to Verify, Latency, How it works and an event log; the landing copy explained RPC scan windows and "no invented hashes". Order detail exposed expected `termsHash` hex, a proof-markdown block for a submission form, an "event log" teaser, RC flags and nonce, and a timeline whose missing rows literally read "not observed yet" beside a latency table with "no latency sample keyed to this order". The public verify page was titled "Public verification", asked visitors not to trust the dashboard, and printed a paste-ready proof table. A purple-to-blue gradient powered the logo, buttons and active states, with glow shadows, radial washes, animated status dots, staggered slide-ins, uppercase tracked labels and 700–900 weight headings.
+The interface before the product-grade redesign was a developer console wearing a product skin: debt banners with `cast send` commands, native-balance chips, a health panel printing debt/reserves/pool balances, a demo guide, a 250-row event log, a latency chart and a nav leading to Verify / Latency / How it works. A purple-to-blue gradient powered the logo, buttons and active states, with glow shadows, radial washes, animated status dots, staggered slide-ins, uppercase tracked labels and heavy headings.
 
-## What was removed
+The product-grade pass removed that chrome but read too much like a settlement desk portal. This pass keeps the restraint and changes the material: the landing screen is now a trade screen with a swap-style ticket and an order book of paired token tiles; token marks are solid-color circles with one or two letters; chain pills label every leg; the settlement timeline reads as a precise trail of observed hops; typography and radii are rounded out toward a DEX while staying on the 4px grid.
 
-Developer-facing chrome is gone from user screens: the debt banner and `cast send` commands, native-balance chips, system health/debt/reserves/subscription panel, demo guide, giant event log, latency chart and methodology caveats, "honest limitations" page, proof-markdown blocks, raw `termsHash` display, RC flags/nonce, "not observed yet" debug text, and every gradient, glow, colored shadow and looping animation. Primary navigation is now Orders, New trade and Track an order. The event feed, health and latency tooling are deleted rather than hidden; chain reads and writes, explorer URL patterns, runtime `contracts.json` config, the `termsHash` precondition computed from `getOrder`, approve/lock actions, retry, and read-only `/verify` tracking all remain unchanged.
+## Token presentation
+
+`public/tokens.json` is presentation metadata keyed by chain and live token address: the Base Sepolia asset is **Arc USD** (`aUSD`, mark `A`) and the Unichain Sepolia asset is **Nova** (`NOVA`, mark `N`). The ERC-20 contracts keep their real on-chain names and symbols; the file only changes what the UI shows, and the copy always says testnet. Marks are inline SVG circles with one letter, no external images.
+
+The quiet `/faucet` destination lets a connected wallet call the existing public `mint(address,uint256)` on each live demo token, watch balances refresh, and find native ETH faucets (Alchemy, ZalalenA, Superchain) for gas. It reuses the same write/switch-chain/receipt pattern as approve and lock.
+
+## Diagnostics
+
+Everything removed from the product is preserved on the hidden internal route `/dev`, reachable by direct URL (in production add `?dev=1` or build with `VITE_DEV_TOOLS=1`). It is deliberately absent from primary navigation and clearly labelled internal. It contains the debt/reserves/health panel, debt and eventual-atomicity warnings, the raw decoded event log, the latency chart with methodology caveats, and raw order/proof/venues JSON with literal "Not observed yet" debug states. All values come from live chain reads or the static observer file; none are seeded.
+
+## Multicall
+
+Lasna has no Multicall3 at viem's canonical address. `createConfig` sets `batch: { multicall: false }`, and the order board reads IDs and orders with plain `readContract` calls in parallel instead of `multicall`. No read path depends on a multicall3 deployment.

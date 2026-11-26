@@ -25,12 +25,13 @@ export const STATUS_LABEL: Record<OrderStatus, string> = {
   INVALID: 'Invalid',
 }
 
+/** Pending states are neutral; the accent marks live activity only. */
 export const STATUS_STYLES: Record<OrderStatus, string> = {
   AWAITING_PAYMENT: 'border-line bg-paper-100 text-ink-500',
   AWAITING_ASSET: 'border-line bg-paper-100 text-ink-500',
-  READY: 'border-accent/25 bg-accent-soft text-accent',
-  SETTLING: 'border-accent/25 bg-accent-soft text-accent',
-  SETTLED: 'border-good/25 bg-good-soft text-good',
+  READY: 'border-accent/25 bg-accent-soft text-accent-ink',
+  SETTLING: 'border-accent/25 bg-accent-soft text-accent-ink',
+  SETTLED: 'border-line bg-paper-100 text-ink-700',
   REFUNDING: 'border-warn/25 bg-warn-soft text-warn',
   REFUNDED: 'border-line bg-paper-100 text-ink-500',
   INVALID: 'border-bad/25 bg-bad-soft text-bad',
@@ -41,7 +42,7 @@ export const STATUS_DOT: Record<OrderStatus, string> = {
   AWAITING_ASSET: 'bg-ink-400',
   READY: 'bg-accent',
   SETTLING: 'bg-accent',
-  SETTLED: 'bg-good',
+  SETTLED: 'bg-ink-900',
   REFUNDING: 'bg-warn',
   REFUNDED: 'bg-ink-400',
   INVALID: 'bg-bad',
