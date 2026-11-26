@@ -1,116 +1,103 @@
-# Handshake — deployment & proof tooling
+# Handshake contracts
 
-Tooling branch (`feat/tooling`) for the Handshake reactive OTC settlement demo.
-It implements the PRD runbook (strict deploy order, pre-funded callbacks, observable
-proof capture) without deploying anything by default. **No contract addresses, keys,
-or secrets are hardcoded.**
+Cross-chain RFQ / OTC settlement primitives for the Handshake demo:
 
-## Layout
+See [TOOLING.md](TOOLING.md) for deployment, funding, preflight, latency observation and proof tooling.
 
-| File | Purpose |
-|---|---|
-| `script/HandshakeSupport.sol` | **Single place** for Solidity-side ABIs, network constants, deployment/funding helpers |
-| `script/Deploy.s.sol` | Strict-order deployment: RC (Lasna) → tokens → escrows (RC baked in) → `setVenues` → optional funding |
-| `script/Fund.s.sol` | `SYSTEM.depositTo(RC)` and proxy `depositTo(escrow)` on Base/Unichain, then asserts `debt == 0` |
-| `scripts/preflight.sh` | Debt/reserves, wallet balances and active-subscription gate; prints exact `cast send --account …` fixes |
-| `ts/abis.ts` | **Single place** for TypeScript-side ABIs (mirror of the Solidity interfaces) |
-| `ts/networks.ts` | Chain IDs, RPC/WebSocket URLs, canonical explorers, proxy/system addresses |
-| `ts/deploy.ts` | viem deploy helper (same strict order) with `--account`-style Foundry alternative above |
-| `ts/observe.ts` | WebSocket observer recording ms timestamps: second lock → reactive → both callbacks → `latency.json` |
-| `ts/collectProofs.ts` | Given an order ID, resolve origin/reactive/callback hashes from logs and print a markdown table |
-| `ts/proofBundle.ts` | Emit `proof.md`: hashes, explorer links, decoded payloads, debt/reserves snapshot, verification commands |
+| Contract | Chain | Role |
+|---|---|---|
+| `src/HandshakeReactive.sol` | Reactive Lasna (5318007) | Neutral arbiter; order state machine; requests both callbacks in one `react()` |
+| `src/PaymentEscrow.sol` | Base Sepolia (84532) | Holds the buyer's payment leg |
+| `src/AssetEscrow.sol` | Unichain Sepolia (1301) | Holds the asset leg; keyed by `(orderId, seller)` for race mode |
+| `src/tokens/TestUSD.sol`, `src/tokens/TestAsset.sol` | Base / Unichain Sepolia | Public-mint demo ERC-20s |
 
-## Setup
+Design notes:
 
-```bash
-forge build                 # contracts branch merged first; libs are submodules
-npm install
-cp .env.example .env        # fill addresses/wallets, never keys in git
+- `setVenues()` installs 6 escrow event subscriptions plus `Cron10` from the legacy system
+  contract `0x0000000000000000000000000000000000fffFfF`. `react()` is guarded by
+  `onlySystem` and filters both the cron source address and its exact topic0.
+- One `uint64` nonce per order is bumped for every callback batch. Escrows require
+  `nonce > leg.nonce`, accept callbacks only from the pinned proxy and injected reactive
+  sender, and treat `RELEASED` / `REFUNDED` as terminal (repeat callbacks are no-ops).
+- Closure is tracked per leg: a single terminal event cannot hide a dropped callback on the
+  other leg. `retry(bytes32)` and the bounded (8 orders/tick, 30s cooldown) cron sweep can
+  finish the open leg. Late `Locked` logs after a refund decision immediately refund that
+  depositor.
+- `AssetEscrow` callbacks carry the seller explicitly:
+  `release(address,bytes32,address,address,uint256,uint64)` and
+  `refund(address,bytes32,address,uint64)`. This is required so a race loser can be
+  refunded without touching the winner's leg. As with all callbacks, the first argument is
+  reserved for the reactive address injected by the proxy (pass `address(0)`).
+- `termsHash(bytes32)` on the reactive contract returns the canonical hash the UI passes
+  into `lock()`; a mismatch marks the order invalid and refunds the locked legs.
+- `via_ir` is enabled because the public `orders` mapping getter returns the full 22-field
+  `Order` struct, which exceeds the legacy EVM stack limit.
+
+Run `forge build && forge test -vv` (36 tests). No deployment or transaction scripts live
+in this package.
+
+## Foundry
+
+**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
+
+Foundry consists of:
+
+- **Forge**: Ethereum testing framework (like Truffle, Hardhat and DappTools).
+- **Cast**: Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
+- **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
+- **Chisel**: Fast, utilitarian, and verbose solidity REPL.
+
+## Documentation
+
+https://book.getfoundry.sh/
+
+## Usage
+
+### Build
+
+```shell
+$ forge build
 ```
 
-Signing:
+### Test
 
-- Foundry scripts and `preflight.sh` use the **keystore account** (`--account main`).
-  Keys stay in Foundry's keystore; this repo never reads a private key for those paths.
-- **Do not use `ts/deploy.ts` for signing with a raw `PRIVATE_KEY`.** Prefer the Foundry
-  keystore scripts above. `ts/deploy.ts` is a fallback only: it reads `PRIVATE_KEY` from the
-  shell/dotenv, refuses to run if unset, and that key must **never** be committed to the repo.
-
-## Deploy (PRD §13)
-
-```bash
-export REACTIVE_RPC=https://lasna-rpc.rnk.dev/
-export BASE_RPC=https://sepolia.base.org
-export UNICHAIN_RPC=https://sepolia.unichain.org
-
-forge script script/Deploy.s.sol:DeployScript --rpc-url $REACTIVE_RPC \
-  --account main --broadcast --slow
+```shell
+$ forge test
 ```
 
-Artifact names default to `src/HandshakeReactive.sol:HandshakeReactive`,
-`src/tokens/TestUSD.sol:TestUSD`, `src/tokens/TestAsset.sol:TestAsset`,
-`src/PaymentEscrow.sol:PaymentEscrow`, `src/AssetEscrow.sol:AssetEscrow`.
-Override with `*_ARTIFACT` env vars if the contracts branch uses different paths.
-Previously deployed components can be reused by setting their `*_ADDRESS` env vars.
-`setVenues` is one-shot on the contracts branch: `Deploy.s.sol` calls it only when the RC
-reports `venuesSet() == false`, and logs `VenuesAlreadySet` when subscriptions already exist.
-First-run still follows the strict deploy order.
+### Format
 
-The script writes `deployments.json` (gitignored). Funding is a separate step by default:
-
-```bash
-forge script script/Fund.s.sol:FundScript --rpc-url $REACTIVE_RPC \
-  --account main --broadcast --slow
+```shell
+$ forge fmt
 ```
 
-Amounts: `RC_FUND_AMOUNT_WEI` (default 1 lREACT), `PAYMENT_RESERVE_WEI` and
-`ASSET_RESERVE_WEI` (default 0.02 ETH each). Set `AUTO_FUND=1` on Deploy to combine them.
+### Gas Snapshots
 
-Fallback only: `npm run deploy` (viem; requires `PRIVATE_KEY` from the shell — never commit it).
-
-## Preflight (before every demo / video take)
-
-```bash
-npm run preflight
+```shell
+$ forge snapshot
 ```
 
-Checks on all three chains: `debt == 0`, `reserves > 0` (when exposed), wallet balances
-above thresholds, and at least `MIN_ACTIVE_SUBSCRIPTIONS` (default 7: six events + Cron10)
-active subscriptions on Lasna. Subscription state is derived from `Subscribe` /
-`Unsubscribe` logs from the system contract; set `SUBSCRIPTION_FROM_BLOCK` if the RC was
-deployed before the default lookback window. Any failure prints the exact
-`cast send … --account $FOUNDRY_ACCOUNT …` command (or faucet URL) to fix it.
+### Anvil
 
-## Observability & proofs
-
-```bash
-npm run observe                 # Ctrl-C to flush latency.json / latency.csv
-npm run proofs -- 0x<orderId>   # markdown table of all resolved tx hashes
-npm run proof -- 0x<orderId>    # writes proof.md (also printed to stdout)
+```shell
+$ anvil
 ```
 
-`observe.ts` derives WebSocket URLs from the HTTP RPCs unless `REACTIVE_WS`, `BASE_WS`,
-`UNICHAIN_WS` are set. It records wall-clock `Date.now()` at WebSocket log arrival
-(observer delay included) and also stores on-chain block numbers/timestamps; EVM
-timestamps have 1-second granularity. `collectProofs.ts` looks back
-`PROOF_LOOKBACK_BLOCKS` (default 200k) blocks — raise it for older orders. It never
-invents a hash: missing hops render as “not observed”.
+### Deploy
 
-Canonical explorers: [BaseScan](https://sepolia.basescan.org/tx/{hash}),
-[Reactscan](https://lasna.reactscan.net/tx/{hash}),
-[Uniscan](https://sepolia.uniscan.xyz/tx/{hash}).
+Deployment, funding and verification scripts are maintained in the tooling PR; this package
+contains only the contracts and their unit tests.
 
-## Validation
+### Cast
 
-```bash
-npm install
-npx tsc --noEmit
-forge build
+```shell
+$ cast <subcommand>
 ```
 
-Merge note: after `feat/contracts` lands, verify `ts/abis.ts` against
-`forge inspect <Contract> abi` and adjust only `script/HandshakeSupport.sol` and
-`ts/abis.ts`; all scripts and utilities consume those two files.
+### Help
 
-Honest limitation: Handshake is eventually atomic via two callbacks, not a single
-atomic cross-chain transaction.
+```shell
+$ forge --help
+$ anvil --help
+$ cast --help
+```
