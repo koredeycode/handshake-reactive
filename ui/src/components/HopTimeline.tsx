@@ -12,19 +12,19 @@ function ConvergenceDiagram() {
   return (
     <div className="mb-6 rounded-2xl border border-line bg-paper-50 px-5 py-3">
       <svg viewBox="0 0 480 64" className="h-16 w-full text-ink-400" fill="none" aria-hidden="true">
-        <g stroke="currentColor" strokeOpacity="0.5" strokeWidth="1.5" strokeLinecap="round">
-          <path d="M10 16 C 150 16, 170 32, 240 32" />
-          <path d="M10 48 C 150 48, 170 32, 240 32" />
-          <path d="M240 32 C 310 32, 330 16, 470 16" />
-          <path d="M240 32 C 310 32, 330 48, 470 48" />
+        <g stroke="currentColor" strokeOpacity="0.45" strokeWidth="1.5" strokeLinecap="round">
+          <path d="M10 21 C 110 21, 175 29, 240 29" />
+          <path d="M10 43 C 110 43, 175 35, 240 35" />
+          <path d="M240 29 C 305 29, 370 21, 470 21" />
+          <path d="M240 35 C 305 35, 370 43, 470 43" />
         </g>
-        <g className="font-mono text-[10px]" fill="currentColor" fillOpacity="0.8">
-          <text x="10" y="9">Payment</text>
-          <text x="10" y="61">Asset</text>
-          <text x="470" y="9" textAnchor="end">Payment out</text>
-          <text x="470" y="61" textAnchor="end">Asset out</text>
+        <g className="font-mono text-[10px]" fill="currentColor" fillOpacity="0.72">
+          <text x="10" y="10">Payment locked · Base Sepolia</text>
+          <text x="10" y="60">Asset locked · Unichain Sepolia</text>
+          <text x="470" y="10" textAnchor="end">Payment to seller · Base Sepolia</text>
+          <text x="470" y="60" textAnchor="end">Asset to buyer · Unichain Sepolia</text>
         </g>
-        <circle cx="240" cy="32" r="11" className="fill-paper-0 stroke-accent" strokeWidth="1.5" />
+        <circle cx="240" cy="32" r="10" className="fill-paper-0 stroke-ink-400" strokeOpacity="0.5" strokeWidth="1.5" />
       </svg>
       <div className="-mt-11 flex justify-center">
         <span className="flex h-6 w-6 items-center justify-center text-accent">

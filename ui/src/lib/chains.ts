@@ -2,8 +2,8 @@ import { defineChain } from 'viem'
 import { baseSepolia } from 'viem/chains'
 
 /**
- * Lasna and Unichain Sepolia are not in viem's chain list (or are named
- * differently), so we define them explicitly. All values come from PRD §11.1.
+ * Reactive Lasna and Unichain Sepolia are not in viem's chain list (or are
+ * named differently), so we define them explicitly. All values come from PRD §11.1.
  */
 export const lasna = defineChain({
   id: 5318007,
@@ -51,12 +51,6 @@ export const CHAIN_LABELS: Record<ChainKey, string> = {
   lasna: 'Reactive Lasna',
   base: 'Base Sepolia',
   unichain: 'Unichain Sepolia',
-}
-
-export const CHAIN_SHORT: Record<ChainKey, string> = {
-  lasna: 'Lasna',
-  base: 'Base',
-  unichain: 'Unichain',
 }
 
 export const CHAIN_ACCENT: Record<ChainKey, string> = {

@@ -174,7 +174,7 @@ export default function NewOrderForm() {
           />
 
           <div className="mt-5 space-y-5 px-1">
-            <Field label="Seller address" hint="Receives payment on Base">
+            <Field label="Seller address" hint="Receives payment on Base Sepolia">
               <input
                 className={inputClass}
                 placeholder="0x…"
@@ -299,8 +299,8 @@ export default function NewOrderForm() {
         <Panel title="Settlement trail">
           <ol className="space-y-4 text-xs text-ink-500">
             {[
-              '01 Buyer locks payment on Base',
-              '02 Seller locks the asset on Unichain',
+              '01 Buyer locks payment on Base Sepolia',
+              '02 Seller locks the asset on Unichain Sepolia',
               '03 One decision releases both legs',
             ].map((step) => (
               <li key={step}>

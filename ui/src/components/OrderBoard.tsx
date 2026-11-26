@@ -93,7 +93,7 @@ export default function OrderBoard() {
                     <div className="flex flex-wrap items-end gap-x-6 gap-y-2">
                       <div>
                         <div className="flex items-center gap-1 text-[11px] text-ink-400">
-                          <ChainMark chain="base" /> You pay · Base
+                          <ChainMark chain="base" /> You pay · Base Sepolia
                         </div>
                         <div className="tnum font-mono text-[15px] font-medium text-ink-900">
                           {formatAmount(order.paymentAmount, paymentDecimals, paymentSymbol)}
@@ -102,7 +102,7 @@ export default function OrderBoard() {
                       <ArrowRight {...icon} className="mb-1 text-ink-400" />
                       <div>
                         <div className="flex items-center gap-1 text-[11px] text-ink-400">
-                          <ChainMark chain="unichain" /> You receive · Unichain
+                          <ChainMark chain="unichain" /> You receive · Unichain Sepolia
                         </div>
                         <div className="tnum font-mono text-[15px] font-medium text-ink-900">
                           {formatAmount(order.assetAmount, assetDecimals, assetSymbol)}

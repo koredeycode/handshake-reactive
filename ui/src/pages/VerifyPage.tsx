@@ -168,9 +168,9 @@ export default function VerifyPage() {
           <div>
             <h2 className="mb-3 text-sm font-medium text-ink-900">Explorers</h2>
             <div className="grid gap-4 md:grid-cols-3">
-              <ExplorerCard chain="base" event={proof?.paymentLocked} description="Payment locked on Base" />
-              <ExplorerCard chain="lasna" event={proof?.reactive} description="Settlement decision on Lasna" />
-              <ExplorerCard chain="unichain" event={proof?.assetLocked} description="Asset locked on Unichain" />
+              <ExplorerCard chain="base" event={proof?.paymentLocked} description={`Payment locked on ${CHAIN_LABELS.base}`} />
+              <ExplorerCard chain="lasna" event={proof?.reactive} description={`Settlement decision on ${CHAIN_LABELS.lasna}`} />
+              <ExplorerCard chain="unichain" event={proof?.assetLocked} description={`Asset locked on ${CHAIN_LABELS.unichain}`} />
             </div>
           </div>
 

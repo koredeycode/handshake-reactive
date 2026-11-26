@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { useAccount, useChainId, useConnect, useSwitchChain } from 'wagmi'
 import { ArrowLeftRight, Wallet } from 'lucide-react'
-import { CHAIN_IDS, CHAIN_SHORT } from '../lib/chains'
+import { CHAIN_IDS, CHAIN_LABELS } from '../lib/chains'
 import { Button, icon } from './ui'
 import type { ChainKey } from '../lib/chains'
 import type { Hex } from 'viem'
@@ -54,7 +54,7 @@ export default function WriteButton({
         icon={<ArrowLeftRight {...icon} />}
         onClick={() => void switchChainAsync({ chainId: CHAIN_IDS[targetChain] })}
       >
-        Switch to {CHAIN_SHORT[targetChain]}
+        Switch to {CHAIN_LABELS[targetChain]}
       </Button>
     )
   }

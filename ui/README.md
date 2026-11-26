@@ -1,6 +1,6 @@
 # Handshake UI
 
-React + Vite + TypeScript static console for Handshake — trust-minimized cross-chain OTC settlement on Reactive Omni (Lasna ↔ Base Sepolia ↔ Unichain Sepolia). No backend: the browser reads public RPCs directly and links to canonical explorers.
+React + Vite + TypeScript static console for Handshake — trust-minimized cross-chain OTC settlement on Reactive Omni (Reactive Lasna ↔ Base Sepolia ↔ Unichain Sepolia). No backend: the browser reads public RPCs directly and links to canonical explorers.
 
 ## Run
 
@@ -29,7 +29,7 @@ Live addresses are read at runtime from `public/contracts.json`. `public/tokens.
 
 | Route | Screen |
 | --- | --- |
-| `/` | Home: product headline, Base → Lasna → Unichain route, primary trade action and a live order book preview |
+| `/` | Home: product headline, Base Sepolia → Reactive Lasna → Unichain Sepolia route, primary trade action and a live order book preview |
 | `/orders` | Trade screen: swap-style trade ticket and the live order book |
 | `/my-orders` | Personal order history: real orders where the connected wallet is buyer or seller, with observed tx hashes |
 | `/new` | Trade ticket + order details: validation, quick presets, custom settlement window (30 seconds – 30 days) and chain guards |
@@ -42,11 +42,11 @@ Live addresses are read at runtime from `public/contracts.json`. `public/tokens.
 
 Every displayed hash, amount, timestamp and status comes from `getOrder`, `orderIds`, `getLeg`, `debt`/`reserves`, ERC-20 reads, or decoded on-chain logs (`PaymentLocked`, `AssetLocked`, terminal events, `CallbackRequest`, `Cron10`). There is no seeded or sample order data. Primary screens show pending steps as "Awaiting this leg" / "Settlement in progress"; literal "Not observed yet" debug states live on `/dev`.
 
-The terms-hash preflight uses `keccak256(abi.encode(buyer, seller, paymentToken, paymentAmount, assetToken, assetAmount, deadline))` from Lasna's `getOrder(id)`. Confirm the canonical encoding matches the deployed contracts before a demo.
+The terms-hash preflight uses `keccak256(abi.encode(buyer, seller, paymentToken, paymentAmount, assetToken, assetAmount, deadline))` from Reactive Lasna's `getOrder(id)`. Confirm the canonical encoding matches the deployed contracts before a demo.
 
 ## Multicall
 
-Lasna has no Multicall3 at viem's canonical address. wagmi is configured with `batch: { multicall: false }` and the order board issues plain `readContract` calls in parallel, so no read path requires Multicall3.
+Reactive Lasna has no Multicall3 at viem's canonical address. wagmi is configured with `batch: { multicall: false }` and the order board issues plain `readContract` calls in parallel, so no read path requires Multicall3.
 
 ## Chain logo assets
 
@@ -60,7 +60,7 @@ These are third-party brand assets used purely to identify the chains; no logo i
 
 ## Handshake mark and favicon
 
-`public/favicon.svg` is Handshake's own mark, drawn in code — not a third-party asset: two lines (the payment leg on Base and the asset leg on Unichain) converge into one reactive decision on Lasna, and the line continues out to the two settlement callbacks. The convergence point is picked out in the product accent on a dark rounded square. The same two-lines-to-one signature is used in the in-app logo and the decision node of the settlement trail.
+Handshake's mark is the two legs converging into one decision — drawn in code, not a third-party asset. The sidebar logo (`ConvergenceMark` in `src/components/ui.tsx`) and `public/favicon.svg` draw that signature in the pink/coral product accent (`accent`, `#e11d62`) on a dark square; the favicon picks out the convergence point in white for contrast. The same signature appears quietly (ink, not accent) in the settlement diagram and decision node of the settlement trail, so the accent stays reserved for the brand mark, primary actions and active states.
 
 ## Stack
 
