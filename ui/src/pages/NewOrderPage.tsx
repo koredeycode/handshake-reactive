@@ -1,7 +1,8 @@
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
+import FlowExplainer from '../components/FlowExplainer'
 import NewOrderForm from '../components/NewOrderForm'
-import { ChainPill, Button, icon } from '../components/ui'
+import { Button, RouteStrip, icon } from '../components/ui'
 
 export default function NewOrderPage() {
   const navigate = useNavigate()
@@ -15,12 +16,9 @@ export default function NewOrderPage() {
           <h1 className="mt-4 text-xl font-medium text-ink-900">New trade</h1>
           <p className="mt-1 text-xs text-ink-500">Define the terms. Both legs lock before settlement begins.</p>
         </div>
-        <div className="flex items-center gap-2 text-[11px] text-ink-400">
-          <ChainPill chain="base" />
-          <ChainPill chain="lasna" />
-          <ChainPill chain="unichain" />
-        </div>
+        <RouteStrip />
       </div>
+      <FlowExplainer />
       <NewOrderForm />
     </div>
   )

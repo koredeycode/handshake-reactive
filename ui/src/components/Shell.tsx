@@ -2,9 +2,10 @@ import type { ReactNode } from 'react'
 import { Link, NavLink, useLocation } from 'react-router-dom'
 import { useAccount, useConnect, useDisconnect } from 'wagmi'
 import { ClipboardList, Droplets, LogOut, Plus, Search, Wallet } from 'lucide-react'
+import { useWalletBalances } from '../lib/balances'
 import { copyText, truncate } from '../lib/format'
 import { useCopyFeedback } from '../lib/proofs'
-import { Button, ConvergenceMark, icon } from './ui'
+import { Button, ChainMark, ConvergenceMark, icon } from './ui'
 
 const NAV = [
   { to: '/orders', label: 'Trade', Icon: ClipboardList },
@@ -26,6 +27,31 @@ function Logo() {
         <span className="block text-[11px] text-ink-400">Cross-chain OTC</span>
       </span>
     </Link>
+  )
+}
+
+/** Compact per-chain chips. Reads are chain-scoped, so no wrong-chain banner. */
+function WalletBalances() {
+  const { address, isConnected } = useAccount()
+  const chips = useWalletBalances(isConnected ? address : null)
+
+  if (!isConnected || !address) return null
+  return (
+    <div
+      aria-label="Wallet balances"
+      className="hidden max-w-[54vw] items-center gap-1.5 overflow-x-auto sm:flex"
+    >
+      {chips.map((chip) => (
+        <span
+          key={chip.key}
+          title={chip.title}
+          className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-line bg-paper-0 px-2 py-1 text-[11px] text-ink-400"
+        >
+          <ChainMark chain={chip.chain} className="h-3 w-3" />
+          <span className="tnum font-mono text-ink-700">{chip.label}</span>
+        </span>
+      ))}
+    </div>
   )
 }
 
@@ -158,7 +184,10 @@ export default function Shell({ children }: { children: ReactNode }) {
                 Internal
               </span>
             ) : (
-              <WalletControl />
+              <>
+                <WalletBalances />
+                <WalletControl />
+              </>
             )}
           </div>
         </header>

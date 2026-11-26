@@ -1,6 +1,6 @@
 import type { ButtonHTMLAttributes, ReactNode } from 'react'
-import { ArrowUpRight, Copy, Inbox } from 'lucide-react'
-import { CHAIN_SHORT, txUrl } from '../lib/chains'
+import { ArrowRight, ArrowUpRight, Copy, Inbox } from 'lucide-react'
+import { CHAIN_LABELS, CHAIN_SHORT, txUrl } from '../lib/chains'
 import { copyText, truncate } from '../lib/format'
 import { useCopyFeedback } from '../lib/proofs'
 import { STATUS_DOT, STATUS_LABEL, STATUS_STYLES } from '../lib/status'
@@ -122,6 +122,78 @@ export function Metric({
   )
 }
 
+/**
+ * Small inline chain marks. Monochrome (currentColor) so they inherit the quiet
+ * ink tone of a pill and the accent only where the pill is already active.
+ * No external images, no image CDN, no chain-brand colors.
+ */
+export function ChainMark({
+  chain,
+  className = 'h-3.5 w-3.5',
+}: {
+  chain: ChainKey
+  className?: string
+}) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      className={`${className} shrink-0`}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.3}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      role="img"
+      aria-label={`${CHAIN_LABELS[chain]} mark`}
+    >
+      {chain === 'base' && (
+        <>
+          <circle cx="8" cy="8" r="6.1" />
+          <path d="M10.4 5.2a3.5 3.5 0 1 0 0 5.6" />
+        </>
+      )}
+      {chain === 'unichain' && (
+        <>
+          <path d="M8 1.9 13.4 5v6L8 14.1 2.6 11V5z" />
+          <path d="M2.6 5 8 8l5.4-3M8 8v6.1" />
+        </>
+      )}
+      {chain === 'lasna' && (
+        <>
+          <circle cx="8" cy="2.7" r="1" />
+          <circle cx="13.1" cy="11.1" r="1" />
+          <circle cx="2.9" cy="11.1" r="1" />
+          <path d="M8 3.7v3.1m-1.2 1.4-3 2.2m6-2.2 3 2.2" />
+          <circle cx="8" cy="8" r="1.2" />
+        </>
+      )}
+    </svg>
+  )
+}
+
+/** The route: Base Sepolia → Reactive Lasna → Unichain Sepolia. */
+export function RouteStrip({ className = '' }: { className?: string }) {
+  return (
+    <div className={`flex flex-wrap items-center gap-1.5 text-[11px] text-ink-400 ${className}`}>
+      <ChainPill chain="base" />
+      <ArrowRight {...icon} />
+      <ChainPill chain="lasna" />
+      <ArrowRight {...icon} />
+      <ChainPill chain="unichain" />
+    </div>
+  )
+}
+
+/** Chain name paired with its inline mark, for compact copy. */
+export function ChainName({ chain, className = '' }: { chain: ChainKey; className?: string }) {
+  return (
+    <span className={`inline-flex items-center gap-1 whitespace-nowrap ${className}`}>
+      <ChainMark chain={chain} className="h-3 w-3" />
+      {CHAIN_LABELS[chain]}
+    </span>
+  )
+}
+
 /** Inline SVG circle mark with one or two letters. No external images, no gradients. */
 export function TokenMark({
   symbol,
@@ -170,11 +242,9 @@ export function TokenMark({
   )
 }
 
+/** A mark is just the first two letters of the real symbol, never a made-up logo. */
 function tokenLetters(symbol?: string | null): string {
-  const value = (symbol ?? '').trim()
-  if (/^testusd$/i.test(value)) return 'US'
-  if (/^test$/i.test(value)) return 'TS'
-  const clean = value.replace(/[^a-zA-Z0-9]/g, '')
+  const clean = (symbol ?? '').replace(/[^a-zA-Z0-9]/g, '')
   return clean.slice(0, 2).toUpperCase() || '??'
 }
 
@@ -194,7 +264,7 @@ export function ChainPill({
         active ? 'border-accent/25 bg-accent-soft text-accent-ink' : 'border-line bg-paper-50 text-ink-500'
       } ${className}`}
     >
-      <span className={`h-1.5 w-1.5 rounded-full ${active ? 'bg-accent' : 'bg-ink-400'}`} />
+      <ChainMark chain={chain} />
       {CHAIN_SHORT[chain]}
     </span>
   )

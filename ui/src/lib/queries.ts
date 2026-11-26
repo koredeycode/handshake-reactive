@@ -168,7 +168,8 @@ export function useTokenMeta(kind: LegKind) {
     enabled: !!client && !!token,
     staleTime: Infinity,
     queryFn: async (): Promise<{ decimals: number; symbol: string }> => {
-      const fallback = kind === 'payment' ? { decimals: 6, symbol: 'TestUSD' } : { decimals: 18, symbol: 'TEST' }
+      // Mirrors the deployed ERC-20s; never a stand-in brand if the read fails.
+      const fallback = kind === 'payment' ? { decimals: 6, symbol: 'tUSD' } : { decimals: 18, symbol: 'tASSET' }
       try {
         const [decimals, symbol] = await Promise.all([
           client!.readContract({ address: token, abi: erc20Abi, functionName: 'decimals' }),

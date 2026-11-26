@@ -13,6 +13,7 @@ import { useLeg, useOrder } from '../lib/queries'
 import { deriveStatus } from '../lib/status'
 import { useTokenDisplay } from '../lib/tokenDisplay'
 import { useNow } from '../lib/useNow'
+import FlowExplainer from './FlowExplainer'
 import HopTimeline from './HopTimeline'
 import LegCard from './LegCard'
 import TradeTicket from './TradeTicket'
@@ -138,6 +139,10 @@ export default function OrderDetail({ orderId }: { orderId: Hex }) {
             hint: `${assetToken.name} · asset leg on Unichain Sepolia`,
           }}
         />
+
+        <div className="mt-5">
+          <FlowExplainer />
+        </div>
 
         <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <Metric

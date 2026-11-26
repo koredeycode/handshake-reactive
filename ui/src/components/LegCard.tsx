@@ -82,6 +82,7 @@ export default function LegCard({
   }
 
   const locked = !!leg && leg.state > 0n
+  const lockLabel = `Lock ${symbol}`
   const lockDisabled = !canLockByMe || insufficient || !escrow || !token || locked
   const lockTitle = !canLockByMe
     ? `Only the ${isPayment ? 'buyer' : 'seller'} can lock this leg`
@@ -115,7 +116,22 @@ export default function LegCard({
         </span>
       </div>
 
-      <div className="mt-6 flex flex-wrap items-end justify-between gap-3">
+      <div className="mt-5 flex flex-wrap items-center gap-2 text-[11px]">
+        <span className="rounded-md border border-line bg-paper-50 px-2 py-0.5 font-medium text-ink-700">
+          {isPayment ? 'Buyer' : 'Seller'}
+        </span>
+        <span className="text-ink-500">
+          {canLockByMe
+            ? isPayment
+              ? `You pay ${symbol}`
+              : `You deliver ${symbol}`
+            : isPayment
+              ? `Buyer pays ${symbol}`
+              : `Seller delivers ${symbol}`}
+        </span>
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-end justify-between gap-3">
         <div className="tnum font-mono text-[28px] font-medium leading-none text-ink-900">
           {formatAmount(leg ? leg.amount : amount, decimals, symbol)}
         </div>
@@ -182,12 +198,12 @@ export default function LegCard({
         ) : (
           <WriteButton
             targetChain={chainKey}
-            onClick={() => void write(isPayment ? 'Lock payment' : 'Lock asset', () => writeContractAsync(lockArgs))}
+            onClick={() => void write(lockLabel, () => writeContractAsync(lockArgs))}
             disabled={lockDisabled || isPending}
             title={lockTitle}
             primary
           >
-            {isPending ? 'Confirming' : locked ? 'Locked' : isPayment ? 'Lock payment' : 'Lock asset'}
+            {isPending ? 'Confirming' : locked ? 'Locked' : lockLabel}
           </WriteButton>
         )}
         {lockTitle && <span className="text-[11px] text-ink-500">{lockTitle}</span>}

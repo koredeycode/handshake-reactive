@@ -6,7 +6,7 @@ import { useOrders } from '../lib/queries'
 import { deriveStatus } from '../lib/status'
 import { useTokenDisplay } from '../lib/tokenDisplay'
 import { useNow } from '../lib/useNow'
-import { Button, ChainPill, EmptyState, Panel, Spinner, StatusPill, TokenMark, icon } from './ui'
+import { Button, ChainMark, ChainPill, EmptyState, Panel, Spinner, StatusPill, TokenMark, icon } from './ui'
 
 export default function OrderBoard() {
   const navigate = useNavigate()
@@ -91,14 +91,18 @@ export default function OrderBoard() {
                   <div className="mt-3 flex flex-wrap items-end justify-between gap-4">
                     <div className="flex flex-wrap items-end gap-x-6 gap-y-2">
                       <div>
-                        <div className="text-[11px] text-ink-400">You pay · Base</div>
+                        <div className="flex items-center gap-1 text-[11px] text-ink-400">
+                          <ChainMark chain="base" className="h-3 w-3" /> You pay · Base
+                        </div>
                         <div className="tnum font-mono text-[15px] font-medium text-ink-900">
                           {formatAmount(order.paymentAmount, paymentDecimals, paymentSymbol)}
                         </div>
                       </div>
                       <ArrowRight {...icon} className="mb-1 text-ink-400" />
                       <div>
-                        <div className="text-[11px] text-ink-400">You receive · Unichain</div>
+                        <div className="flex items-center gap-1 text-[11px] text-ink-400">
+                          <ChainMark chain="unichain" className="h-3 w-3" /> You receive · Unichain
+                        </div>
                         <div className="tnum font-mono text-[15px] font-medium text-ink-900">
                           {formatAmount(order.assetAmount, assetDecimals, assetSymbol)}
                         </div>

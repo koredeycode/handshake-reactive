@@ -120,14 +120,14 @@ export default function HealthPanel() {
           row={byKey('base')}
           title="Payment escrow"
           symbol="ETH"
-          tokenLabel="Pooled TestUSD"
+          tokenLabel="Pooled tUSD"
           tokenAmount={byKey('base')?.tokenBalance}
         />
         <ContractCard
           row={byKey('unichain')}
           title="Asset escrow"
           symbol="ETH"
-          tokenLabel="Pooled TEST"
+          tokenLabel="Pooled tASSET"
           tokenAmount={byKey('unichain')?.tokenBalance}
         />
         <div className="rounded-xl border border-line bg-paper-50 p-4">
