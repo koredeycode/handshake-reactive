@@ -8,7 +8,7 @@ import { useTokenDisplay } from '../lib/tokenDisplay'
 import { useNow } from '../lib/useNow'
 import { Button, ChainMark, ChainPill, EmptyState, Panel, Spinner, StatusPill, TokenMark, icon } from './ui'
 
-export default function OrderBoard() {
+export default function OrderBoard({ scrollable = false }: { scrollable?: boolean }) {
   const navigate = useNavigate()
   const { data: orders, isLoading, isError, error, refetch, isFetching } = useOrders()
   const config = useConfig()
@@ -35,7 +35,8 @@ export default function OrderBoard() {
           </Button>
         </div>
       }
-      bodyClass=""
+      bodyClass={scrollable ? 'min-h-0 flex-1 overflow-y-auto' : ''}
+      className={scrollable ? 'flex h-full min-h-0 flex-col overflow-hidden' : ''}
     >
       {!configured ? (
         <div className="p-6">

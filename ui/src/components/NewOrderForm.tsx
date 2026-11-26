@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAccount, usePublicClient, useWriteContract } from 'wagmi'
 import { parseUnits, type Address, type Hex } from 'viem'
-import { AlertCircle, RefreshCw } from 'lucide-react'
+import { AlertCircle, Check, ChevronDown, RefreshCw } from 'lucide-react'
 import { configuredAddress, useConfig } from '../lib/config'
 import { reactiveAbi } from '../lib/contracts'
 import { formatAmount, formatDeadline, normalizeAddress, randomOrderId, toUnitString, truncate } from '../lib/format'
@@ -56,6 +56,7 @@ export default function NewOrderForm() {
   const [assetAmount, setAssetAmount] = useState(params.get('get') ?? '1')
   const [customValue, setCustomValue] = useState('120')
   const [unit, setUnit] = useState<(typeof UNITS)[number]['seconds']>(1)
+  const [unitOpen, setUnitOpen] = useState(false)
   const [preset, setPreset] = useState<number | null>(120)
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
@@ -219,21 +220,47 @@ export default function NewOrderForm() {
                     setCustomValue(event.target.value)
                   }}
                 />
-                <select
-                  aria-label="Settlement window unit"
-                  className={`${inputClass} w-auto min-w-[112px]`}
-                  value={unit}
-                  onChange={(event) => {
-                    setPreset(null)
-                    setUnit(Number(event.target.value) as (typeof UNITS)[number]['seconds'])
-                  }}
-                >
-                  {UNITS.map((option) => (
-                    <option key={option.seconds} value={option.seconds}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
+                <div className="relative w-auto min-w-[124px]">
+                  <button
+                    type="button"
+                    aria-label="Settlement window unit"
+                    aria-expanded={unitOpen}
+                    aria-haspopup="listbox"
+                    onClick={() => setUnitOpen((open) => !open)}
+                    className={`${inputClass} flex w-full items-center justify-between gap-2 pr-3 text-left`}
+                  >
+                    <span>{UNITS.find((option) => option.seconds === unit)?.label ?? 'seconds'}</span>
+                    <ChevronDown
+                      {...icon}
+                      className={`shrink-0 text-ink-400 transition-transform ${unitOpen ? 'rotate-180' : ''}`}
+                    />
+                  </button>
+                  {unitOpen && (
+                    <ul
+                      role="listbox"
+                      className="absolute left-0 right-0 top-[calc(100%+4px)] z-20 overflow-hidden rounded-xl border border-line bg-paper-0 py-1 shadow-lg"
+                    >
+                      {UNITS.map((option) => (
+                        <li key={option.seconds} role="option" aria-selected={option.seconds === unit}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setPreset(null)
+                              setUnit(option.seconds)
+                              setUnitOpen(false)
+                            }}
+                            className={`flex w-full items-center justify-between px-3 py-2 text-left text-[12px] transition-colors hover:bg-paper-100 ${
+                              option.seconds === unit ? 'font-medium text-accent' : 'text-ink-700'
+                            }`}
+                          >
+                            <span>{option.label}</span>
+                            {option.seconds === unit ? <Check {...icon} /> : null}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
               </div>
               <p className="mt-2 text-[11px] text-ink-400">
                 {durationError ? <span className="text-warn">{durationError}</span> : 'The deadline is set when the trade is created.'}

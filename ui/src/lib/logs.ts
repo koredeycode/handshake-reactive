@@ -12,6 +12,7 @@ import {
   assetLockedEvent,
   assetReleasedEvent,
   assetRefundedEvent,
+  callbackConfigTuple,
   callbackPayloadAbi,
   callbackRequestEvent,
   cron10Event,
@@ -55,8 +56,11 @@ interface FetchLogsArgs {
  * silently truncate an order's history. Recent events are found first.
  */
 export async function fetchLogs(client: LogClient, params: FetchLogsArgs): Promise<ChainLog[]> {
-  const chunk = params.chunkSize ?? 10_000n
-  const maxChunks = params.maxChunks ?? 12
+  // Public Sepolia RPCs (Unichain, Base) reject eth_getLogs ranges above ~1000
+  // blocks with HTTP 400. Smaller chunks make the walk reliable; 64 chunks
+  // covers ~64k blocks, enough for the configured fromBlock values.
+  const chunk = params.chunkSize ?? 1_000n
+  const maxChunks = params.maxChunks ?? 64
   const out: ChainLog[] = []
   let end = params.toBlock
   let chunks = 0
@@ -249,15 +253,8 @@ export async function resolveProof(
             })
             const configBytes = (decoded.args as { configuration?: Hex }).configuration
             if (!configBytes) continue
-            const [destChain, recipient, gasLimit, payload] = decodeAbiParameters(
-              [
-                { type: 'uint256' },
-                { type: 'address' },
-                { type: 'uint64' },
-                { type: 'bytes' },
-              ],
-              configBytes,
-            )
+            const [cfg] = decodeAbiParameters(callbackConfigTuple, configBytes)
+            const { chainId: destChain, recipient, gasLimit, payload } = cfg
             let call: { functionName?: string; args?: readonly unknown[] } = {}
             try {
               call = decodeFunctionData({ abi: callbackPayloadAbi, data: payload })
@@ -280,9 +277,9 @@ export async function resolveProof(
                 recipient,
                 gasLimit: gasLimit.toString(),
                 orderId: callOrderId ?? '',
-                nonce: call.args?.[call.functionName === 'release' ? 4 : 2]?.toString() ?? '',
+                nonce: call.args?.[call.args.length - 1]?.toString() ?? '',
               },
-              nonce: BigInt((call.args?.[call.functionName === 'release' ? 4 : 2] as bigint) ?? 0n),
+              nonce: BigInt((call.args?.[call.args.length - 1] as bigint) ?? 0n),
             })
           } catch {
             // Skip logs that do not match the documented CallbackRequest shape.
@@ -356,7 +353,8 @@ export async function fetchEventFeed(config: AppConfig, clients: ProofClients): 
         for (const log of logs) {
           try {
             const decoded = decodeEventLog({ abi: [callbackRequestEvent] as unknown as Abi, data: log.data, topics: [...log.topics] as [Hex, ...Hex[]] })
-            const args = decoded.args as unknown as { chainId: bigint; recipient: Hex }
+            const args = decoded.args as unknown as { configuration: Hex }
+            const [cfg] = decodeAbiParameters(callbackConfigTuple, args.configuration)
             out.push({
               id: `lasna:${log.transactionHash}:${log.logIndex}:callbackRequest`,
               kind: 'callbackRequest',
@@ -366,8 +364,8 @@ export async function fetchEventFeed(config: AppConfig, clients: ProofClients): 
               logIndex: log.logIndex ?? 0,
               timestamp: await resolveTimestamp('lasna', log.blockNumber),
               fields: {
-                destinationChainId: args.chainId.toString(),
-                recipient: args.recipient,
+                destinationChainId: cfg.chainId.toString(),
+                recipient: cfg.recipient,
               },
             })
           } catch {
