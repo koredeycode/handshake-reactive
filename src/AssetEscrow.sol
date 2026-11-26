@@ -55,7 +55,7 @@ contract AssetEscrow is AbstractCallback {
     error WrongRecipient();
     error WrongAmount();
 
-    IERC20 public immutable assetToken;
+    IERC20 public immutable ASSET_TOKEN;
     mapping(bytes32 => mapping(address => Leg)) public legs;
     mapping(bytes32 => address[]) private _sellers;
 
@@ -64,7 +64,7 @@ contract AssetEscrow is AbstractCallback {
         AbstractCallback(proxy_, reactiveSender_)
     {
         require(assetToken_ != address(0), "zero token");
-        assetToken = IERC20(assetToken_);
+        ASSET_TOKEN = IERC20(assetToken_);
     }
 
     /// @notice Locks the asset against an order. The seller is `msg.sender`, so multiple
@@ -79,7 +79,7 @@ contract AssetEscrow is AbstractCallback {
     ) external {
         Leg storage leg = legs[orderId_][msg.sender];
         if (leg.state != LegState.NONE) revert LegAlreadyExists();
-        if (token_ != address(assetToken)) revert WrongToken();
+        if (token_ != address(ASSET_TOKEN)) revert WrongToken();
         if (amount_ == 0) revert ZeroAmount();
         if (deadline_ <= block.timestamp) revert DeadlinePassed();
         if (counterparty_ == address(0)) revert WrongRecipient();
@@ -93,7 +93,7 @@ contract AssetEscrow is AbstractCallback {
         leg.state = LegState.LOCKED;
         _sellers[orderId_].push(msg.sender);
 
-        assetToken.safeTransferFrom(msg.sender, address(this), amount_);
+        ASSET_TOKEN.safeTransferFrom(msg.sender, address(this), amount_);
         emit AssetLocked(orderId_, msg.sender, counterparty_, token_, amount_, termsHash_, deadline_);
     }
 
@@ -115,7 +115,7 @@ contract AssetEscrow is AbstractCallback {
 
         leg.state = LegState.RELEASED;
         leg.nonce = nonce_;
-        assetToken.safeTransfer(recipient_, amount_);
+        ASSET_TOKEN.safeTransfer(recipient_, amount_);
         emit AssetReleased(orderId_, recipient_, amount_, nonce_);
     }
 
@@ -131,7 +131,7 @@ contract AssetEscrow is AbstractCallback {
 
         leg.state = LegState.REFUNDED;
         leg.nonce = nonce_;
-        assetToken.safeTransfer(leg.depositor, leg.amount);
+        ASSET_TOKEN.safeTransfer(leg.depositor, leg.amount);
         emit AssetRefunded(orderId_, leg.depositor, leg.amount, nonce_);
     }
 

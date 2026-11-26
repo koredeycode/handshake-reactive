@@ -40,6 +40,7 @@ contract MockSystemContract {
         debts[contract_] = amount_;
     }
 
+    // forge-lint: disable-next-line(mixed-case-function) — name mirrors the real system contract interface
     function requestCallbackV_1_0(ISystemContract.CallbackConfiguration_V_1_0 memory config_) external {
         callbacks.push(CallbackCall(config_.chainId, config_.recipient, config_.gasLimit, config_.payload));
     }

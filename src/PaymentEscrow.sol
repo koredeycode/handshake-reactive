@@ -52,7 +52,7 @@ contract PaymentEscrow is AbstractCallback {
     error WrongRecipient();
     error WrongAmount();
 
-    IERC20 public immutable paymentToken;
+    IERC20 public immutable PAYMENT_TOKEN;
     mapping(bytes32 => Leg) public legs;
 
     constructor(IPayable proxy_, address reactiveSender_, address paymentToken_)
@@ -60,7 +60,7 @@ contract PaymentEscrow is AbstractCallback {
         AbstractCallback(proxy_, reactiveSender_)
     {
         require(paymentToken_ != address(0), "zero token");
-        paymentToken = IERC20(paymentToken_);
+        PAYMENT_TOKEN = IERC20(paymentToken_);
     }
 
     /// @notice Locks payment for an order. Anyone may lock, but the reactive contract
@@ -75,7 +75,7 @@ contract PaymentEscrow is AbstractCallback {
     ) external {
         Leg storage leg = legs[orderId_];
         if (leg.state != LegState.NONE) revert LegAlreadyExists();
-        if (token_ != address(paymentToken)) revert WrongToken();
+        if (token_ != address(PAYMENT_TOKEN)) revert WrongToken();
         if (amount_ == 0) revert ZeroAmount();
         if (deadline_ <= block.timestamp) revert DeadlinePassed();
         if (counterparty_ == address(0)) revert WrongRecipient();
@@ -88,7 +88,7 @@ contract PaymentEscrow is AbstractCallback {
         leg.deadline = deadline_;
         leg.state = LegState.LOCKED;
 
-        paymentToken.safeTransferFrom(msg.sender, address(this), amount_);
+        PAYMENT_TOKEN.safeTransferFrom(msg.sender, address(this), amount_);
         emit PaymentLocked(orderId_, msg.sender, counterparty_, token_, amount_, termsHash_, deadline_);
     }
 
@@ -107,7 +107,7 @@ contract PaymentEscrow is AbstractCallback {
 
         leg.state = LegState.RELEASED;
         leg.nonce = nonce_;
-        paymentToken.safeTransfer(recipient_, amount_);
+        PAYMENT_TOKEN.safeTransfer(recipient_, amount_);
         emit PaymentReleased(orderId_, recipient_, amount_, nonce_);
     }
 
@@ -123,7 +123,7 @@ contract PaymentEscrow is AbstractCallback {
 
         leg.state = LegState.REFUNDED;
         leg.nonce = nonce_;
-        paymentToken.safeTransfer(leg.depositor, leg.amount);
+        PAYMENT_TOKEN.safeTransfer(leg.depositor, leg.amount);
         emit PaymentRefunded(orderId_, leg.depositor, leg.amount, nonce_);
     }
 
