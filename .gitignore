@@ -2,4 +2,12 @@ personal/
 out/
 cache/
 broadcast/
+node_modules/
 .env
+.env.*
+!.env.example
+deployments.json
+latency.json
+latency.csv
+proof.md
+*.tsbuildinfo
