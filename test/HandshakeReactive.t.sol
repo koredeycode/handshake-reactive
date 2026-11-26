@@ -633,4 +633,384 @@ contract HandshakeReactiveTest is Test {
         assertFalse(rc.venuesSet());
         assertEq(sys.unsubscriptionCount(), 7);
     }
+
+    // --------------------------------------------------------------- open orders
+
+    function _createOpenOrder(bytes32 orderId_, uint256 duration_) internal {
+        vm.prank(BUYER);
+        rc.createOrder(orderId_, address(0), PAYMENT_TOKEN, PAYMENT_AMOUNT, ASSET_TOKEN, ASSET_AMOUNT, duration_);
+    }
+
+    function _openPaymentLock() internal {
+        _useOrder(id);
+        _react(_lockedLog(true, BUYER, address(0)));
+    }
+
+    function _openAssetLock(address seller_) internal {
+        _useOrder(id);
+        _react(_lockedLog(false, seller_, BUYER));
+    }
+
+    function testOpenOrderCreationWithZeroSellerKeepsTermsHashEncoding() public {
+        bytes32 openId = keccak256("open-create");
+        _createOpenOrder(openId, 120);
+        _useOrder(openId);
+
+        HandshakeReactive.Order memory o = rc.getOrder(id);
+        assertEq(o.buyer, BUYER);
+        assertEq(o.seller, address(0));
+        assertEq(
+            terms,
+            keccak256(
+                abi.encode(BUYER, address(0), PAYMENT_TOKEN, PAYMENT_AMOUNT, ASSET_TOKEN, ASSET_AMOUNT, o.deadline)
+            )
+        );
+
+        // Self-dealing is still rejected for open orders too.
+        vm.expectRevert(abi.encodeWithSignature("InvalidSeller()"));
+        vm.prank(BUYER);
+        rc.createOrder(keccak256("open-self"), BUYER, PAYMENT_TOKEN, PAYMENT_AMOUNT, ASSET_TOKEN, ASSET_AMOUNT, 120);
+        assertEq(rc.orderCount(), 2);
+    }
+
+    function testOpenOrderPaymentFirstSettlesToWinningSeller() public {
+        bytes32 openId = keccak256("open-payment-first");
+        _createOpenOrder(openId, 120);
+        _useOrder(openId);
+
+        _openPaymentLock();
+        assertTrue(rc.getOrder(id).paymentSeen);
+        assertFalse(rc.getOrder(id).assetSeen);
+        assertEq(sys.callbackCount(), 0);
+
+        _openAssetLock(SELLER);
+        HandshakeReactive.Order memory o = rc.getOrder(id);
+        assertTrue(o.paymentSeen);
+        assertTrue(o.assetSeen);
+        assertTrue(o.settleRequested);
+        assertEq(o.winner, SELLER);
+        assertEq(o.nonce, 1);
+        assertEq(sys.callbackCount(), 2); // both callbacks in one react tx
+
+        CallbackRecord memory p = _callback(0);
+        assertEq(p.chainId, 84532);
+        assertEq(p.recipient, BASE_ESCROW);
+        assertEq(bytes4(p.payload), RELEASE_PAYMENT_SELECTOR);
+        (address injected, bytes32 cbOrder, address recipient, uint256 amount, uint64 nonce) =
+            abi.decode(_args(p.payload), (address, bytes32, address, uint256, uint64));
+        assertEq(injected, address(0));
+        assertEq(cbOrder, id);
+        assertEq(recipient, SELLER); // NEVER address(0) for an open order
+        assertEq(amount, PAYMENT_AMOUNT);
+        assertEq(nonce, 1);
+
+        CallbackRecord memory a = _callback(1);
+        assertEq(a.chainId, 1301);
+        assertEq(a.recipient, UNICHAIN_ESCROW);
+        assertEq(bytes4(a.payload), RELEASE_ASSET_SELECTOR);
+        (address injectedA, bytes32 cbOrderA, address seller, address buyer, uint256 assetAmount, uint64 nonceA) =
+            abi.decode(_args(a.payload), (address, bytes32, address, address, uint256, uint64));
+        assertEq(injectedA, address(0));
+        assertEq(cbOrderA, id);
+        assertEq(seller, SELLER);
+        assertEq(buyer, BUYER);
+        assertEq(assetAmount, ASSET_AMOUNT);
+        assertEq(nonceA, 1);
+
+        _react(_terminalLog(true, true, SELLER, PAYMENT_AMOUNT, 1));
+        assertTrue(rc.getOrder(id).paymentClosed);
+        assertFalse(rc.getOrder(id).assetClosed);
+        _react(_terminalLog(false, true, BUYER, ASSET_AMOUNT, 1));
+        assertTrue(rc.isClosed(id));
+    }
+
+    function testOpenOrderAssetFirstRaceWinnerPaidLoserRefunded() public {
+        bytes32 openId = keccak256("open-asset-first-race");
+        _createOpenOrder(openId, 120);
+        _useOrder(openId);
+
+        _openAssetLock(SELLER);
+        assertEq(rc.getOrder(id).winner, SELLER);
+        assertEq(sys.callbackCount(), 0);
+
+        // A second seller races and loses.
+        _openAssetLock(SELLER_TWO);
+        HandshakeReactive.Order memory o = rc.getOrder(id);
+        assertEq(o.winner, SELLER);
+        assertEq(o.assetLockCount, 2);
+        assertEq(o.nonce, 1);
+        assertEq(sys.callbackCount(), 1);
+        assertEq(bytes4(_callback(0).payload), REFUND_ASSET_SELECTOR);
+        (,, address loser, uint64 loserNonce) =
+            abi.decode(_args(_callback(0).payload), (address, bytes32, address, uint64));
+        assertEq(loser, SELLER_TWO);
+        assertEq(loserNonce, 1);
+
+        // The payment lock now releases to the winner, not the first/losing depositor.
+        _openPaymentLock();
+        o = rc.getOrder(id);
+        assertTrue(o.settleRequested);
+        assertEq(o.nonce, 2);
+        assertEq(o.paymentRequestNonce, 2);
+        assertEq(o.assetRequestNonce, 2);
+        assertEq(sys.callbackCount(), 3);
+
+        (,, address paymentRecipient,, uint64 paymentNonce) =
+            abi.decode(_args(_callback(1).payload), (address, bytes32, address, uint256, uint64));
+        assertEq(paymentRecipient, SELLER);
+        assertEq(paymentNonce, 2);
+        (,,,,, uint64 assetNonce) =
+            abi.decode(_args(_callback(2).payload), (address, bytes32, address, address, uint256, uint64));
+        assertEq(bytes4(_callback(2).payload), RELEASE_ASSET_SELECTOR);
+        assertEq(assetNonce, 2);
+
+        // The race-loser refund must not close the winner's asset leg.
+        _react(_terminalLog(false, false, SELLER_TWO, ASSET_AMOUNT, 1));
+        assertFalse(rc.getOrder(id).assetClosed);
+
+        _react(_terminalLog(true, true, SELLER, PAYMENT_AMOUNT, 2));
+        _react(_terminalLog(false, true, BUYER, ASSET_AMOUNT, 2));
+        assertTrue(rc.isClosed(id));
+    }
+
+    function testOpenOrderTermsHashMismatchIsRefunded() public {
+        bytes32 openId = keccak256("open-bad-terms");
+        _createOpenOrder(openId, 120);
+        _useOrder(openId);
+        _openPaymentLock();
+
+        IReactive.LogRecord memory assetLog = _lockedLog(false, SELLER, BUYER);
+        assetLog.data = abi.encode(ASSET_TOKEN, ASSET_AMOUNT, bytes32("wrong-terms"), deadline);
+        _react(assetLog);
+
+        HandshakeReactive.Order memory o = rc.getOrder(id);
+        assertTrue(o.invalid);
+        assertTrue(o.refundRequested);
+        assertFalse(o.settleRequested);
+        assertEq(sys.callbackCount(), 2);
+        assertEq(bytes4(_callback(0).payload), REFUND_PAYMENT_SELECTOR);
+        assertEq(bytes4(_callback(1).payload), REFUND_ASSET_SELECTOR);
+    }
+
+    function testOpenOrderWrongTokenIsRefunded() public {
+        bytes32 openId = keccak256("open-bad-token");
+        _createOpenOrder(openId, 120);
+        _useOrder(openId);
+        _openPaymentLock();
+
+        IReactive.LogRecord memory assetLog = _lockedLog(false, SELLER, BUYER);
+        assetLog.data = abi.encode(STRANGER, ASSET_AMOUNT, terms, deadline);
+        _react(assetLog);
+
+        HandshakeReactive.Order memory o = rc.getOrder(id);
+        assertTrue(o.invalid);
+        assertTrue(o.refundRequested);
+        assertFalse(o.settleRequested);
+        assertEq(sys.callbackCount(), 2);
+        assertEq(bytes4(_callback(0).payload), REFUND_PAYMENT_SELECTOR);
+        assertEq(bytes4(_callback(1).payload), REFUND_ASSET_SELECTOR);
+    }
+
+    function testOpenOrderExpiredDeadlineIsRefunded() public {
+        bytes32 openId = keccak256("open-expired");
+        _createOpenOrder(openId, 120);
+        _useOrder(openId);
+        _openPaymentLock();
+        vm.warp(deadline + 1);
+        _openAssetLock(SELLER);
+
+        HandshakeReactive.Order memory o = rc.getOrder(id);
+        assertFalse(o.invalid); // terms were fine; the clock was not
+        assertTrue(o.refundRequested);
+        assertFalse(o.settleRequested);
+        assertEq(sys.callbackCount(), 2);
+        assertEq(bytes4(_callback(0).payload), REFUND_PAYMENT_SELECTOR);
+        assertEq(bytes4(_callback(1).payload), REFUND_ASSET_SELECTOR);
+    }
+
+    function testOpenOrderLateRaceLoserKeepsWinnerCallbacksConfirmable() public {
+        bytes32 openId = keccak256("open-late-loser");
+        _createOpenOrder(openId, 120);
+        _useOrder(openId);
+        _openPaymentLock();
+        _openAssetLock(SELLER); // settlement requested with nonce 1
+
+        _openAssetLock(SELLER_TWO); // loser refund bumps the global nonce to 2
+        HandshakeReactive.Order memory o = rc.getOrder(id);
+        assertEq(o.nonce, 2);
+        assertEq(o.paymentRequestNonce, 1);
+        assertEq(o.assetRequestNonce, 1);
+        assertEq(o.winner, SELLER);
+        assertEq(sys.callbackCount(), 3);
+
+        _react(_terminalLog(false, false, SELLER_TWO, ASSET_AMOUNT, 2));
+        assertFalse(rc.getOrder(id).assetClosed);
+
+        _react(_terminalLog(true, true, SELLER, PAYMENT_AMOUNT, 1));
+        _react(_terminalLog(false, true, BUYER, ASSET_AMOUNT, 1));
+        assertTrue(rc.isClosed(id));
+    }
+
+    // ------------------------------------------------------------ buyer cancellation
+
+    function testCancelOrderBuyerOnlyBeforeAssetLock() public {
+        bytes32 openId = keccak256("open-cancel");
+        _createOpenOrder(openId, 120);
+        _useOrder(openId);
+
+        vm.expectEmit(true, false, false, true);
+        emit HandshakeReactive.OrderStateChanged(id, "CANCELLED", 1);
+        vm.prank(BUYER);
+        rc.cancelOrder(id);
+
+        HandshakeReactive.Order memory o = rc.getOrder(id);
+        assertTrue(o.invalid);
+        assertTrue(o.refundRequested);
+        assertFalse(o.settleRequested);
+        assertEq(o.winner, address(0));
+        assertEq(o.nonce, 1);
+        assertEq(o.lastActionTimestamp, block.timestamp);
+
+        // Repeated cancellation is a no-op: nonce semantics stay intact.
+        vm.prank(BUYER);
+        rc.cancelOrder(id);
+        assertEq(rc.getOrder(id).nonce, 1);
+
+        vm.expectRevert(abi.encodeWithSignature("NotBuyer()"));
+        vm.prank(STRANGER);
+        rc.cancelOrder(id);
+    }
+
+    function testCancelOrderRejectsNamedOrder() public {
+        vm.expectRevert(abi.encodeWithSignature("NotOpenOrder()"));
+        vm.prank(BUYER);
+        rc.cancelOrder(id); // named order created in setUp()
+    }
+
+    function testCancelOrderRejectsAfterAssetLock() public {
+        bytes32 openId = keccak256("open-cancel-matched");
+        _createOpenOrder(openId, 120);
+        _useOrder(openId);
+        _openAssetLock(SELLER);
+
+        vm.expectRevert(abi.encodeWithSignature("OrderMatched()"));
+        vm.prank(BUYER);
+        rc.cancelOrder(id);
+    }
+
+    function testCancelOrderRejectsAfterDeadline() public {
+        bytes32 openId = keccak256("open-cancel-late");
+        _createOpenOrder(openId, 120);
+        _useOrder(openId);
+        vm.warp(deadline);
+
+        vm.expectRevert(abi.encodeWithSignature("DeadlineReached()"));
+        vm.prank(BUYER);
+        rc.cancelOrder(id);
+    }
+
+    function testLatePaymentAfterCancellationIsRefunded() public {
+        bytes32 openId = keccak256("open-cancel-late-payment");
+        _createOpenOrder(openId, 120);
+        _useOrder(openId);
+        vm.prank(BUYER);
+        rc.cancelOrder(id);
+
+        _openPaymentLock(); // arrives after the cancellation decision
+        HandshakeReactive.Order memory o = rc.getOrder(id);
+        assertEq(sys.callbackCount(), 1);
+        assertEq(o.nonce, 2);
+        assertEq(o.paymentRequestNonce, 2);
+        assertTrue(o.paymentRefundRequested);
+        assertFalse(o.settleRequested);
+        assertEq(bytes4(_callback(0).payload), REFUND_PAYMENT_SELECTOR);
+        (address injected, bytes32 cbOrder, uint64 refundNonce) =
+            abi.decode(_args(_callback(0).payload), (address, bytes32, uint64));
+        assertEq(injected, address(0));
+        assertEq(cbOrder, id);
+        assertEq(refundNonce, 2);
+    }
+
+    function testSellerAssetLockAfterCancellationIsRefunded() public {
+        bytes32 openId = keccak256("open-cancel-late-asset");
+        _createOpenOrder(openId, 120);
+        _useOrder(openId);
+        vm.prank(BUYER);
+        rc.cancelOrder(id);
+
+        _openAssetLock(SELLER);
+        HandshakeReactive.Order memory o = rc.getOrder(id);
+        assertEq(o.winner, address(0)); // never matched
+        assertFalse(o.assetSeen);
+        assertTrue(o.invalid);
+        assertFalse(o.settleRequested);
+        assertEq(o.nonce, 2);
+        assertEq(sys.callbackCount(), 1);
+        assertEq(bytes4(_callback(0).payload), REFUND_ASSET_SELECTOR);
+        (,, address depositor, uint64 refundNonce) =
+            abi.decode(_args(_callback(0).payload), (address, bytes32, address, uint64));
+        assertEq(depositor, SELLER);
+        assertEq(refundNonce, 2);
+
+        _react(_lockedLog(true, BUYER, address(0)));
+        assertEq(sys.callbackCount(), 2);
+        assertEq(bytes4(_callback(1).payload), REFUND_PAYMENT_SELECTOR);
+        assertFalse(rc.getOrder(id).settleRequested);
+    }
+
+    function testCancelledOrderCronAndRetryNeverSettle() public {
+        bytes32 openId = keccak256("open-cancel-cron");
+        _createOpenOrder(openId, 120);
+        _useOrder(openId);
+        _openPaymentLock(); // buyer locked before cancelling
+        vm.prank(BUYER);
+        rc.cancelOrder(id);
+        assertEq(rc.getOrder(id).nonce, 1);
+
+        vm.warp(deadline + 1);
+        _react(_cronLog());
+        assertEq(sys.callbackCount(), 1);
+        assertEq(bytes4(_callback(0).payload), REFUND_PAYMENT_SELECTOR);
+
+        vm.warp(block.timestamp + 31);
+        vm.prank(STRANGER);
+        rc.retry(id);
+        assertEq(sys.callbackCount(), 2);
+        assertEq(bytes4(_callback(1).payload), REFUND_PAYMENT_SELECTOR);
+        assertTrue(rc.getOrder(id).invalid);
+        assertFalse(rc.getOrder(id).settleRequested);
+    }
+
+    // ------------------------------------------------------- named-seller regression
+
+    function testNamedSellerBehaviourUnchanged() public {
+        _useOrder(id);
+        _paymentLock();
+        _assetLock();
+        assertEq(sys.callbackCount(), 2);
+
+        (,, address recipient,,) = abi.decode(_args(_callback(0).payload), (address, bytes32, address, uint256, uint64));
+        assertEq(recipient, SELLER); // named seller is always paid directly
+
+        // A wrong depositor for a named order (before any winner) is still invalid.
+        bytes32 wrongSellerId = keccak256("named-wrong-seller");
+        _createOrder(wrongSellerId, 120);
+        _useOrder(wrongSellerId);
+        _react(_lockedLog(false, SELLER_TWO, BUYER));
+        HandshakeReactive.Order memory bad = rc.getOrder(id);
+        assertTrue(bad.invalid);
+        assertTrue(bad.refundRequested);
+        assertEq(bad.winner, SELLER_TWO);
+        assertEq(sys.callbackCount(), 3);
+        assertEq(bytes4(_callback(2).payload), REFUND_ASSET_SELECTOR);
+
+        // The open marker on a named order's payment leg is still rejected.
+        bytes32 namedId = keccak256("named-open-marker");
+        _createOrder(namedId, 120);
+        _useOrder(namedId);
+        _react(_lockedLog(true, BUYER, address(0)));
+        assertTrue(rc.getOrder(id).invalid);
+        assertEq(sys.callbackCount(), 4);
+        assertEq(bytes4(_callback(3).payload), REFUND_PAYMENT_SELECTOR);
+    }
 }

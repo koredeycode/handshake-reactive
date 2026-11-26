@@ -88,6 +88,11 @@ contract HandshakeReactive is AbstractReactive, Ownable {
     error UnknownOrder();
     error InvalidVenue();
     error CooldownActive();
+    error NotBuyer();
+    error NotOpenOrder();
+    error OrderMatched();
+    error DeadlineReached();
+    error NoWinner();
 
     // --------------------------------------------------------------------- state
 
@@ -115,7 +120,8 @@ contract HandshakeReactive is AbstractReactive, Ownable {
         uint256 durationSeconds_
     ) external {
         if (orders[orderId_].buyer != address(0)) revert DuplicateOrder();
-        if (seller_ == address(0) || seller_ == msg.sender) revert InvalidSeller();
+        // address(0) publishes an open order any seller can match; self-dealing stays banned.
+        if (seller_ == msg.sender) revert InvalidSeller();
         if (paymentToken_ == address(0) || assetToken_ == address(0)) revert InvalidToken();
         if (paymentAmount_ == 0 || assetAmount_ == 0) revert ZeroAmount();
         if (durationSeconds_ < MIN_DURATION || durationSeconds_ > MAX_DURATION) revert InvalidDuration();
@@ -131,6 +137,26 @@ contract HandshakeReactive is AbstractReactive, Ownable {
         _orderIds.push(orderId_);
 
         emit OrderStateChanged(orderId_, "CREATED", 0);
+    }
+
+    /// @notice Buyer-only cancellation of an open order before any seller matches it.
+    ///         Reuses `invalid` (so cron never settles) and `refundRequested` (so a late
+    ///         PaymentLocked log goes through _refundLateLeg) without touching the 22-field
+    ///         Order tuple the UI decodes.
+    function cancelOrder(bytes32 orderId_) external {
+        Order storage o = orders[orderId_];
+        if (o.buyer == address(0)) revert UnknownOrder();
+        if (msg.sender != o.buyer) revert NotBuyer();
+        if (o.seller != address(0)) revert NotOpenOrder();
+        if (o.winner != address(0)) revert OrderMatched();
+        if (block.timestamp >= o.deadline) revert DeadlineReached();
+        if (o.invalid || o.refundRequested) return; // already cancelled / refund-pending
+
+        o.invalid = true;
+        o.refundRequested = true;
+        o.nonce += 1;
+        o.lastActionTimestamp = block.timestamp;
+        emit OrderStateChanged(orderId_, "CANCELLED", o.nonce);
     }
 
     /// @notice Canonical terms hash both escrow legs must carry. The UI computes this
@@ -254,11 +280,28 @@ contract HandshakeReactive is AbstractReactive, Ownable {
             return;
         }
 
-        bool termsOk = isPayment_
-            ? depositor == o.buyer && counterparty == o.seller && token == o.paymentToken && amount == o.paymentAmount
-                && deadline == o.deadline && receivedTermsHash == termsHash(id)
-            : depositor == o.seller && counterparty == o.buyer && token == o.assetToken && amount == o.assetAmount
-                && deadline == o.deadline && receivedTermsHash == termsHash(id);
+        // Token / amount / deadline / terms hash are identical for both market styles.
+        // Only the party checks differ. For an open order the seller field is address(0)
+        // in the terms hash itself (the UI encodes it that way), so no encoding changes.
+        bool termsMatch = token == (isPayment_ ? o.paymentToken : o.assetToken)
+            && amount == (isPayment_ ? o.paymentAmount : o.assetAmount) && deadline == o.deadline
+            && receivedTermsHash == termsHash(id);
+
+        bool partiesMatch;
+        if (o.seller == address(0)) {
+            // Open order: payment must come from the buyer with counterparty 0 (the
+            // escrow's open marker); the asset may come from ANY nonzero seller as long
+            // as it is addressed to the buyer.
+            partiesMatch = isPayment_
+                ? depositor == o.buyer && counterparty == address(0)
+                : depositor != address(0) && counterparty == o.buyer;
+        } else {
+            // Named-seller orders: unchanged.
+            partiesMatch = isPayment_
+                ? depositor == o.buyer && counterparty == o.seller
+                : depositor == o.seller && counterparty == o.buyer;
+        }
+        bool termsOk = termsMatch && partiesMatch;
 
         if (!termsOk || block.timestamp >= o.deadline) {
             // The incoming leg is provably locked on its escrow, so mark it seen
@@ -340,6 +383,10 @@ contract HandshakeReactive is AbstractReactive, Ownable {
         uint64 nonce = o_.nonce;
 
         if (payment_ && !o_.paymentClosed) {
+            // A named seller receives payment directly. An open order's seller field is
+            // zero, so pay the winning seller instead — never address(0).
+            address paymentRecipient = o_.seller != address(0) ? o_.seller : o_.winner;
+            if (paymentRecipient == address(0)) revert NoWinner();
             o_.paymentRequestNonce = nonce;
             SYSTEM.requestCallbackV_1_0(
                 ISystemContract.CallbackConfiguration_V_1_0({
@@ -350,7 +397,7 @@ contract HandshakeReactive is AbstractReactive, Ownable {
                         "release(address,bytes32,address,uint256,uint64)",
                         address(0),
                         id_,
-                        o_.seller,
+                        paymentRecipient,
                         o_.paymentAmount,
                         nonce
                     )
@@ -468,7 +515,8 @@ contract HandshakeReactive is AbstractReactive, Ownable {
             }
             return;
         }
-        if (o.settleRequested) {
+        // Cancelled orders carry invalid = true; never re-request settlement for them.
+        if (o.settleRequested && !o.invalid) {
             _requestSettle(orderId_, o, o.paymentSeen && !o.paymentClosed, o.assetSeen && !o.assetClosed);
             // neither requested yet: deliberate no-op
         }
