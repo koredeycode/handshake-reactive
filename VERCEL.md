@@ -40,3 +40,7 @@ Only a chunk-size advisory was emitted (main JS bundle > 500 kB); no build error
 ## Contract configuration is runtime-editable
 
 `ui/public/contracts.json` holds the live addresses (Reactive Contract `0x6d1Da6e…`, escrows `0xc5ca1b…`). The app fetches `/contracts.json` at runtime with `cache: 'no-cache'` (`ui/src/lib/config.ts`), so address or scan-window changes can be picked up by updating that single static JSON asset — **no JS rebuild is required** for address changes. `VITE_*` env overrides take precedence over the JSON and do require a new build. No private keys are present in the repo or in this deployment.
+
+## Public access
+
+Vercel SSO deployment protection was disabled on 2026-11-26 so judges can open the console without a Vercel account: `vercel project protection disable ui --sso`. The production URL is public.
