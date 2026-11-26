@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, NavLink, useLocation } from 'react-router-dom'
-import { useAccount, useConnect, useDisconnect } from 'wagmi'
+import { useAccount, useConnect, useDisconnect, type Connector } from 'wagmi'
 import { ChevronDown, ClipboardList, Droplets, House, LogOut, Plus, Search, Wallet } from 'lucide-react'
 import { useWalletBalances } from '../lib/balances'
 import { CHAIN_LABELS } from '../lib/chains'
@@ -47,6 +47,13 @@ function useBalanceGroups(): Array<{ chain: ChainKey; keys: string[] }> {
   )
 }
 
+/** Friendly connector names for the small connect menu. */
+function connectorLabel(connector: Connector): string {
+  if (connector.id === 'walletConnect') return 'WalletConnect'
+  if (connector.id === 'injected' || connector.id === 'metaMask') return 'Browser wallet'
+  return connector.name || 'Browser wallet'
+}
+
 /** Connected wallet: truncated address + chevron. Balances live in the panel. */
 function WalletControl() {
   const { address, isConnected } = useAccount()
@@ -56,7 +63,9 @@ function WalletControl() {
   const chips = useWalletBalances(isConnected ? address : null)
   const groups = useBalanceGroups()
   const [open, setOpen] = useState(false)
+  const [connectMenuOpen, setConnectMenuOpen] = useState(false)
   const root = useRef<HTMLDivElement>(null)
+  const connectRoot = useRef<HTMLDivElement>(null)
   const connector = connectors[0]
 
   useEffect(() => {
@@ -75,18 +84,82 @@ function WalletControl() {
     }
   }, [open])
 
+  useEffect(() => {
+    if (!connectMenuOpen) return
+    const onPointerDown = (event: PointerEvent) => {
+      if (connectRoot.current && !connectRoot.current.contains(event.target as Node)) setConnectMenuOpen(false)
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setConnectMenuOpen(false)
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [connectMenuOpen])
+
   if (!isConnected || !address) {
-    return (
-      <Button
-        variant="primary"
-        size="sm"
-        icon={<Wallet {...icon} />}
-        disabled={!connector || isPending}
-        onClick={() => connector && connect({ connector })}
-      >
+    const connectLabel = (
+      <>
         <span className="hidden sm:inline">{isPending ? 'Connecting' : 'Connect wallet'}</span>
         <span className="sm:hidden">{isPending ? '…' : 'Connect'}</span>
-      </Button>
+      </>
+    )
+    // One connector (the default injected-only build): keep the one-click path.
+    if (connectors.length <= 1) {
+      return (
+        <Button
+          variant="primary"
+          size="sm"
+          icon={<Wallet {...icon} />}
+          disabled={!connector || isPending}
+          onClick={() => connector && connect({ connector })}
+        >
+          {connectLabel}
+        </Button>
+      )
+    }
+
+    return (
+      <div className="relative" ref={connectRoot}>
+        <Button
+          variant="primary"
+          size="sm"
+          icon={<Wallet {...icon} />}
+          aria-haspopup="menu"
+          aria-expanded={connectMenuOpen}
+          aria-label="Choose a wallet connector"
+          disabled={isPending}
+          onClick={() => setConnectMenuOpen((value) => !value)}
+        >
+          {connectLabel}
+        </Button>
+        {connectMenuOpen && (
+          <div
+            role="menu"
+            aria-label="Choose a wallet connector"
+            className="absolute right-0 top-full z-40 mt-2 w-[220px] max-w-[calc(100vw-2rem)] rounded-2xl border border-line bg-paper-0 p-2 shadow-[0_18px_45px_rgba(24,24,27,0.12)]"
+          >
+            <p className="px-2 py-1.5 text-[10px] uppercase tracking-wide text-ink-400">Connect with</p>
+            {connectors.map((item) => (
+              <button
+                key={item.uid}
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setConnectMenuOpen(false)
+                  connect({ connector: item })
+                }}
+                className="flex min-h-10 w-full items-center rounded-xl px-2 text-left text-[12px] text-ink-700 transition-colors hover:bg-paper-100"
+              >
+                {connectorLabel(item)}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
     )
   }
 

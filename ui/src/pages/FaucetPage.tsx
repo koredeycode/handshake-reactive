@@ -1,39 +1,17 @@
 import { useState } from 'react'
-import { useAccount, usePublicClient, useWriteContract } from 'wagmi'
+import { useAccount, useChainId, useConnect, usePublicClient, useSwitchChain, useWriteContract } from 'wagmi'
 import { parseUnits, type Address, type Hex } from 'viem'
-import WriteButton, { type TxNotice } from '../components/WriteButton'
-import { Button, ChainMark, ChainPill, ExternalLink, TokenMark, TxLink, inputClass } from '../components/ui'
+import type { TxNotice } from '../components/WriteButton'
+import { Button, ChainMark, ExternalLink, TokenMark, TxLink, inputClass } from '../components/ui'
 import { CHAIN_IDS, CHAIN_LABELS } from '../lib/chains'
 import { mintAbi } from '../lib/contracts'
 import { formatAmount } from '../lib/format'
 import { logClient } from '../lib/logs'
-import {
-  FORWARD_MARKET_ID,
-  REVERSE_MARKET_ID,
-  chainKeyFromId,
-  useMarkets,
-} from '../lib/markets'
+import { useChainTokens } from '../lib/tokenDisplay'
 import { useErc20Balance } from '../lib/queries'
-import { findTokenEntry, useTokenRegistry } from '../lib/tokenDisplay'
 import type { ChainKey } from '../lib/chains'
-import type { Market } from '../lib/markets'
 
-interface FaucetToken {
-  chain: ChainKey
-  address: string
-  role: 'payment' | 'asset'
-}
-
-function tokensForMarket(market: Market): FaucetToken[] {
-  return (['payment', 'asset'] as const).map((role) => {
-    const leg = market[role]
-    return {
-      chain: chainKeyFromId(leg.chainId, leg.chainKey),
-      address: leg.token,
-      role,
-    }
-  })
-}
+const CHAIN_TABS: ChainKey[] = ['base', 'unichain']
 
 function GasLinks({ chain }: { chain: ChainKey }) {
   const links = [
@@ -42,9 +20,9 @@ function GasLinks({ chain }: { chain: ChainKey }) {
     { label: 'Superchain', href: 'https://app.optimism.io/faucet' },
   ]
   return (
-    <div className="flex flex-wrap gap-x-4 gap-y-2">
+    <div className="flex flex-wrap gap-x-4 gap-y-1">
       {links.map((link) => (
-        <ExternalLink key={link.label} href={link.href} className="inline-flex min-h-10 items-center text-[12px]">
+        <ExternalLink key={link.label} href={link.href} className="inline-flex min-h-8 items-center text-[11px]">
           {link.label}
         </ExternalLink>
       ))}
@@ -52,34 +30,45 @@ function GasLinks({ chain }: { chain: ChainKey }) {
   )
 }
 
-function FaucetCard({ token }: { token: FaucetToken }) {
-  const registry = useTokenRegistry()
-  const { address } = useAccount()
+/** One card: chain, asset, amount, then switch / mint. */
+export default function FaucetPage() {
+  const [chain, setChain] = useState<ChainKey>('base')
+  const [tokenAddress, setTokenAddress] = useState<string | null>(null)
+  const [amount, setAmount] = useState('1000')
+  const [notice, setNotice] = useState<TxNotice | null>(null)
+  const tokens = useChainTokens(chain)
+  const token = tokens.find((entry) => entry.address === tokenAddress) ?? tokens[0]
+
+  const { address, isConnected } = useAccount()
+  const connectedChainId = useChainId()
+  const { connectors, connect, isPending: isConnecting } = useConnect()
+  const { switchChainAsync, isPending: isSwitching } = useSwitchChain()
   const { writeContractAsync, isPending } = useWriteContract()
-  const client = logClient(usePublicClient({ chainId: CHAIN_IDS[token.chain] })) as unknown as {
+  const client = logClient(usePublicClient({ chainId: CHAIN_IDS[chain] })) as unknown as {
     waitForTransactionReceipt: (args: { hash: Hex }) => Promise<unknown>
   } | null
-  const balance = useErc20Balance(token.chain, token.address, address)
-  const entry = findTokenEntry(registry.data, token.chain, token.address)
-  const symbol = entry?.symbol ?? (token.role === 'payment' ? 'tUSD' : 'tASSET')
-  const decimals = entry?.decimals ?? (token.role === 'payment' ? 6 : 18)
-  const [amount, setAmount] = useState(token.role === 'payment' ? '1000' : '100')
-  const [notice, setNotice] = useState<TxNotice | null>(null)
+  const balance = useErc20Balance(chain, token?.address, address)
 
+  const wrongChain = isConnected && connectedChainId !== CHAIN_IDS[chain]
   let parsed: bigint | null = null
-  try {
-    const candidate = parseUnits(amount.trim(), decimals)
-    if (candidate > 0n) parsed = candidate
-  } catch {
-    parsed = null
+  if (token) {
+    try {
+      const candidate = parseUnits(amount.trim(), token.decimals)
+      if (candidate > 0n) parsed = candidate
+    } catch {
+      parsed = null
+    }
+  }
+
+  function chooseChain(next: ChainKey) {
+    if (next === chain) return
+    setChain(next)
+    setTokenAddress(null)
+    setNotice(null)
   }
 
   async function mint() {
-    if (!address || !parsed) {
-      setNotice({ label: 'Mint', hash: '0x', chain: token.chain, status: 'error' })
-      return
-    }
-    const label = `Mint ${symbol}`
+    if (!token || !address || !parsed) return
     try {
       const hash = await writeContractAsync({
         address: token.address as Address,
@@ -87,150 +76,192 @@ function FaucetCard({ token }: { token: FaucetToken }) {
         functionName: 'mint',
         args: [address, parsed],
       })
-      setNotice({ label, hash, chain: token.chain, status: 'pending' })
+      setNotice({ label: `Mint ${token.symbol}`, hash, chain, status: 'pending' })
       await client?.waitForTransactionReceipt({ hash })
-      setNotice({ label, hash, chain: token.chain, status: 'confirmed' })
+      setNotice({ label: `Mint ${token.symbol}`, hash, chain, status: 'confirmed' })
       void balance.refetch()
     } catch {
-      setNotice({ label, hash: '0x', chain: token.chain, status: 'error' })
+      setNotice({ label: 'Mint', hash: '0x', chain, status: 'error' })
     }
   }
 
   return (
-    <section className="rounded-2xl border border-line bg-paper-0 p-5">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3">
-          <TokenMark
-            symbol={symbol}
-            kind={token.role === 'payment' ? 'payment' : 'asset'}
-            mark={entry?.mark}
-            color={entry?.color}
-            size="lg"
-          />
-          <div className="min-w-0">
-            <h3 className="truncate text-sm font-medium text-ink-900">{entry?.name ?? symbol}</h3>
-            <p className="mt-0.5 text-[12px] text-ink-400">{symbol} · {decimals} decimals</p>
-          </div>
-        </div>
-        <ChainPill chain={token.chain} />
-      </div>
-
-      <div className="mt-6 flex flex-col items-start justify-between gap-2 sm:flex-row sm:items-end sm:gap-3">
-        <div>
-          <div className="text-[12px] text-ink-400">Your balance</div>
-          <div className="tnum mt-1 font-mono text-xl text-ink-900">
-            {formatAmount(balance.data, decimals, symbol)}
-          </div>
-        </div>
-        <span className="text-[12px] text-ink-400">{CHAIN_LABELS[token.chain]}</span>
-      </div>
-
-      <div className="mt-6 border-t border-line pt-5">
-        <label className="block">
-          <span className="mb-2 flex items-baseline justify-between text-xs font-medium text-ink-700">
-            <span>Amount to mint</span>
-            <span className="text-[11px] font-normal text-ink-400">{symbol}</span>
-          </span>
-          <input
-            className={inputClass}
-            inputMode="decimal"
-            value={amount}
-            onChange={(event) => setAmount(event.target.value)}
-            spellCheck={false}
-          />
-        </label>
-        <div className="mt-4 flex flex-wrap items-center gap-3">
-          <WriteButton targetChain={token.chain} onClick={mint} disabled={!parsed || isPending} primary>
-            {isPending ? 'Minting' : `Mint ${symbol}`}
-          </WriteButton>
-          {!parsed && <span className="text-[11px] text-ink-500">Enter an amount greater than zero.</span>}
-          <Button size="sm" onClick={() => void balance.refetch()}>Refresh balance</Button>
-        </div>
-        {notice && (
-          <p className="mt-4 text-[11px]">
-            {notice.status === 'error' ? (
-              <span className="text-bad">The mint did not complete. Try again.</span>
-            ) : (
-              <>
-                <span className={notice.status === 'confirmed' ? 'text-good' : 'text-ink-500'}>
-                  {notice.label} {notice.status === 'confirmed' ? 'confirmed' : 'submitted'}
-                </span>
-                {notice.hash !== '0x' && (
-                  <span className="ml-2"><TxLink chain={notice.chain} hash={notice.hash} /></span>
-                )}
-              </>
-            )}
-          </p>
-        )}
-      </div>
-    </section>
-  )
-}
-
-export default function FaucetPage() {
-  const markets = useMarkets()
-  const forward = markets.find((market) => market.id === FORWARD_MARKET_ID)
-  const reverse = markets.find((market) => market.id === REVERSE_MARKET_ID)
-  const groups = [
-    forward && {
-      id: FORWARD_MARKET_ID,
-      label: 'Base Sepolia → Unichain Sepolia',
-      tokens: tokensForMarket(forward),
-    },
-    reverse && {
-      id: REVERSE_MARKET_ID,
-      label: 'Unichain Sepolia → Base Sepolia',
-      tokens: tokensForMarket(reverse),
-    },
-  ].filter((group): group is { id: string; label: string; tokens: FaucetToken[] } => !!group)
-
-  return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <div>
         <h1 className="text-xl font-medium text-ink-900">Faucet</h1>
         <p className="mt-1 max-w-2xl text-xs leading-relaxed text-ink-500">
-          Test tokens for both trade directions, on their native chains. Each token is local to its chain; these are testnet tokens with no value.
+          Mint test tokens on the chain you select. Each token is local to its chain.
         </p>
       </div>
 
-      {!groups.length && (
-        <p className="text-xs text-ink-500">Token configuration is unavailable in this workspace.</p>
-      )}
+      <section className="rounded-2xl border border-line bg-paper-0 p-5 sm:p-6">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-accent-soft text-[12px] font-medium text-accent-ink">
+            1
+          </span>
+          <div className="min-w-0">
+            <h2 className="text-sm font-medium text-ink-900">Choose a chain</h2>
+            <p className="text-[11px] text-ink-400">Where the tokens will be minted</p>
+          </div>
+        </div>
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          {CHAIN_TABS.map((option) => (
+            <button
+              key={option}
+              type="button"
+              aria-pressed={option === chain}
+              onClick={() => chooseChain(option)}
+              className={`flex min-h-11 min-w-0 items-center justify-center gap-2 rounded-xl border px-2 text-[12px] transition-colors ${
+                option === chain
+                  ? 'border-accent/25 bg-accent-soft font-medium text-accent-ink'
+                  : 'border-line bg-paper-0 text-ink-500 hover:bg-paper-100'
+              }`}
+            >
+              <ChainMark chain={option} />
+              <span className="truncate">{CHAIN_LABELS[option]}</span>
+            </button>
+          ))}
+        </div>
 
-      {groups.map((group) => {
-        const chains = Array.from(new Set(group.tokens.map((token) => token.chain)))
-        return (
-          <section key={group.id} className="space-y-4">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="flex items-center gap-1.5 text-sm font-medium text-ink-900">
-                <ChainMark chain={chains[0]} /> {CHAIN_LABELS[chains[0]]}
-              </span>
-              <span className="text-ink-400">→</span>
-              <span className="flex items-center gap-1.5 text-sm font-medium text-ink-900">
-                <ChainMark chain={chains[1]} /> {CHAIN_LABELS[chains[1]]}
-              </span>
+        <div className="mt-6 border-t border-line pt-5">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-accent-soft text-[12px] font-medium text-accent-ink">
+              2
+            </span>
+            <div className="min-w-0">
+              <h2 className="text-sm font-medium text-ink-900">Choose an asset</h2>
+              <p className="text-[11px] text-ink-400">Tokens available on {CHAIN_LABELS[chain]}</p>
             </div>
-            <div className="grid gap-4 md:grid-cols-2">
-              {group.tokens.map((token) => (
-                <FaucetCard key={`${token.chain}:${token.address}`} token={token} />
-              ))}
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              {chains.map((chain) => (
-                <div key={chain} className="rounded-xl border border-line bg-paper-50 p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="text-xs font-medium text-ink-900">
-                      Native gas · {CHAIN_LABELS[chain]}
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {tokens.map((entry) => {
+              const active = entry.address === token?.address
+              return (
+                <button
+                  key={entry.address}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => {
+                    setTokenAddress(entry.address)
+                    setNotice(null)
+                  }}
+                  className={`flex min-h-12 min-w-0 max-w-full items-center gap-2 rounded-xl border px-2.5 py-2 text-left transition-colors ${
+                    active
+                      ? 'border-accent/25 bg-accent-soft'
+                      : 'border-line bg-paper-0 hover:bg-paper-100'
+                  }`}
+                >
+                  <TokenMark symbol={entry.symbol} mark={entry.mark} color={entry.color} size="sm" />
+                  <span className="min-w-0">
+                    <span className="block truncate text-[12px] font-medium text-ink-900">
+                      {entry.symbol}
                     </span>
-                    <ChainPill chain={chain} />
-                  </div>
-                  <div className="mt-3"><GasLinks chain={chain} /></div>
-                </div>
-              ))}
+                    <span className="block truncate text-[10px] text-ink-400">
+                      {entry.name} · {entry.decimals} decimals
+                    </span>
+                  </span>
+                </button>
+              )
+            })}
+            {tokens.length === 0 && (
+              <p className="text-[11px] text-ink-500">Token metadata is unavailable.</p>
+            )}
+          </div>
+        </div>
+
+        <div className="mt-6 border-t border-line pt-5">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-accent-soft text-[12px] font-medium text-accent-ink">
+              3
+            </span>
+            <div className="min-w-0">
+              <h2 className="text-sm font-medium text-ink-900">Mint tokens</h2>
+              <p className="text-[11px] text-ink-400">Amount and balance on {CHAIN_LABELS[chain]}</p>
             </div>
-          </section>
-        )
-      })}
+          </div>
+
+          <div className="mt-4 flex flex-wrap items-end justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-[11px] text-ink-400">Your balance</div>
+              <div className="tnum mt-1 font-mono text-lg text-ink-900">
+                {token ? formatAmount(balance.data, token.decimals, token.symbol) : '—'}
+              </div>
+            </div>
+            {token && (
+              <span className="text-[11px] text-ink-400">
+                {token.name} · {token.symbol}
+              </span>
+            )}
+          </div>
+
+          <label className="mt-4 block">
+            <span className="mb-2 flex items-baseline justify-between text-xs font-medium text-ink-700">
+              <span>Amount to mint</span>
+              <span className="text-[11px] font-normal text-ink-400">{token?.symbol ?? '—'}</span>
+            </span>
+            <input
+              className={inputClass}
+              inputMode="decimal"
+              value={amount}
+              onChange={(event) => setAmount(event.target.value)}
+              spellCheck={false}
+              aria-label="Amount to mint"
+            />
+          </label>
+
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => void mint()}
+              disabled={!isConnected || wrongChain || !parsed || !token || isPending}
+            >
+              {isPending ? 'Minting' : `Mint ${token?.symbol ?? ''}`}
+            </Button>
+            {!isConnected && (
+              <Button
+                size="sm"
+                onClick={() => connectors[0] && connect({ connector: connectors[0] })}
+                disabled={!connectors[0] || isConnecting}
+              >
+                {isConnecting ? 'Connecting' : 'Connect wallet'}
+              </Button>
+            )}
+            {wrongChain && (
+              <Button
+                size="sm"
+                onClick={() => void switchChainAsync({ chainId: CHAIN_IDS[chain] })}
+                disabled={isSwitching}
+              >
+                {isSwitching ? 'Switching chain' : `Switch to ${CHAIN_LABELS[chain]}`}
+              </Button>
+            )}
+            {!parsed && <span className="text-[11px] text-ink-500">Enter an amount greater than zero.</span>}
+          </div>
+
+          {notice && (
+            <p className="mt-4 text-[11px]">
+              {notice.status === 'error' ? (
+                <span className="text-bad">The mint did not complete. Try again.</span>
+              ) : (
+                <>
+                  <span className={notice.status === 'confirmed' ? 'text-good' : 'text-ink-500'}>
+                    {notice.label} {notice.status === 'confirmed' ? 'confirmed' : 'submitted'}
+                  </span>
+                  {notice.hash !== '0x' && (
+                    <span className="ml-2"><TxLink chain={notice.chain} hash={notice.hash} /></span>
+                  )}
+                </>
+              )}
+            </p>
+          )}
+
+          <div className="mt-5 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-line pt-4">
+            <span className="text-[11px] text-ink-400">Need gas?</span>
+            <GasLinks chain={chain} />
+          </div>
+        </div>
+      </section>
     </div>
   )
 }

@@ -1,6 +1,8 @@
 import type { ReactNode } from 'react'
 import { ArrowDown, ArrowUpDown } from 'lucide-react'
 import type { ChainKey } from '../lib/chains'
+import type { AssetOption } from '../lib/assetPairs'
+import AssetPicker from './AssetPicker'
 import { ChainPill, TokenMark, icon } from './ui'
 
 export interface TicketSide {
@@ -12,6 +14,10 @@ export interface TicketSide {
   kind?: 'payment' | 'asset'
   mark?: string | null
   color?: string | null
+  /** Optional compact selector; shown only on trade entry screens. */
+  assetOptions?: AssetOption[]
+  selectedAsset?: string | null
+  onAssetChange?: (address: string) => void
 }
 
 function AmountTile({ side, direction }: { side: TicketSide; direction: 'pay' | 'receive' }) {
@@ -35,10 +41,20 @@ function AmountTile({ side, direction }: { side: TicketSide; direction: 'pay' | 
       </div>
       <div className="mt-3 flex items-center gap-4">
         {amount}
-        <span className="flex shrink-0 items-center gap-2 rounded-full border border-line bg-paper-0 py-1.5 pl-1.5 pr-3">
-          <TokenMark symbol={side.symbol} kind={side.kind} mark={side.mark} color={side.color} />
-          <span className="text-[13px] font-medium text-ink-900">{side.symbol ?? '—'}</span>
-        </span>
+        {side.onAssetChange && side.assetOptions ? (
+          <AssetPicker
+            chain={side.chain}
+            label={direction === 'pay' ? 'Pay' : 'Receive'}
+            options={side.assetOptions}
+            selectedAddress={side.selectedAsset}
+            onSelect={side.onAssetChange}
+          />
+        ) : (
+          <span className="flex shrink-0 items-center gap-2 rounded-full border border-line bg-paper-0 py-1.5 pl-1.5 pr-3">
+            <TokenMark symbol={side.symbol} kind={side.kind} mark={side.mark} color={side.color} />
+            <span className="text-[13px] font-medium text-ink-900">{side.symbol ?? '—'}</span>
+          </span>
+        )}
       </div>
       <div className="mt-3 min-h-4 text-[11px] text-ink-400">{side.hint}</div>
     </div>

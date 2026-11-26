@@ -1,4 +1,5 @@
-import { createConfig, fallback, http, injected } from 'wagmi'
+import { walletConnect } from '@wagmi/connectors'
+import { createConfig, fallback, http, injected, type CreateConnectorFn } from 'wagmi'
 import { shouldThrow as viemShouldThrow } from 'viem'
 import { baseSepolia } from 'viem/chains'
 import { lasna, unichainSepolia } from './lib/chains'
@@ -34,6 +35,30 @@ function failoverFast(error: Error): boolean {
 
 const RPC_TIMEOUT = 12_000
 
+/**
+ * Injected stays first so browser extensions and desktop wallets keep the
+ * existing one-click path. Many mobile in-app browsers (including Zerion's)
+ * expose no `window.ethereum`, so WalletConnect is added only when a free
+ * WalletConnect Cloud project id is configured at build time. Without the
+ * env var the bundle builds and behaves exactly as before.
+ */
+function buildConnectors(): CreateConnectorFn[] {
+  const connectors: CreateConnectorFn[] = [injected({ shimDisconnect: true })]
+  const projectId = import.meta.env.VITE_WALLETCONNECT_PROJECT_ID
+  if (projectId) {
+    connectors.push(
+      walletConnect({
+        projectId,
+        showQrModal: true,
+        // @wagmi/connectors v6 takes the supported chains from wagmiConfig
+        // below (lasna, baseSepolia, unichainSepolia) instead of a `chains`
+        // option, so the session always matches the configured app chains.
+      }),
+    )
+  }
+  return connectors
+}
+
 /** VITE_*_RPC lets a deployment use a private provider URL as the first hop. */
 function urls(override: string | undefined, defaults: readonly string[]): string[] {
   return override ? [override, ...defaults] : [...defaults]
@@ -51,7 +76,7 @@ export const wagmiConfig = createConfig({
     [baseSepolia.id]: { multicall: true },
     [unichainSepolia.id]: { multicall: true },
   },
-  connectors: [injected({ shimDisconnect: true })],
+  connectors: buildConnectors(),
   multiInjectedProviderDiscovery: true,
   transports: {
     // publicnode is first: sepolia.base.org intermittently enforces a 200-block

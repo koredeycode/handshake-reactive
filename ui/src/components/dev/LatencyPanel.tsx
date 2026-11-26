@@ -137,7 +137,7 @@ export default function LatencyPanel() {
               <p className="mb-1 font-mono text-[10px] text-ink-400">
                 {data?.observer ?? 'Observer metadata unavailable'}
               </p>
-              <ExternalLink href={`${REPO_URL}/blob/main/LATENCY.md`} className="text-[11px]">Read LATENCY.md</ExternalLink>
+              <ExternalLink href={`${REPO_URL}/blob/main/docs/LATENCY.md`} className="text-[11px]">Read LATENCY.md</ExternalLink>
             </div>
           </div>
         </Panel>
