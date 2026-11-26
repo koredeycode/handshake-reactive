@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {Script} from "forge-std/Script.sol";
+import {console2} from "forge-std/console2.sol";
 import {
     HandshakeSupport,
     IHandshakeReactive,
@@ -21,7 +22,7 @@ import {
 ///
 /// Run with Foundry's keystore account; no private key is read by this script:
 ///   forge script script/Deploy.s.sol:DeployScript --rpc-url $REACTIVE_RPC \
-///     --account handshake --broadcast --slow
+///     --account main --broadcast --slow
 contract DeployScript is Script {
     function run() external {
         string memory lazyRpc = HandshakeSupport.rpc("REACTIVE_RPC");
@@ -88,10 +89,17 @@ contract DeployScript is Script {
         require(paymentEscrow != address(0) && assetEscrow != address(0), "DeployScript: escrow is zero");
 
         // 4. Subscriptions — only now are both escrow addresses known.
+        //    setVenues is one-shot on the contracts branch, so skip it when reusing an RC.
         HandshakeSupport.selectFork(lazyRpc);
-        HandshakeSupport.VM.broadcast();
-        IHandshakeReactive(rc).setVenues(PAYMENT_CHAIN_ID, paymentEscrow, ASSET_CHAIN_ID, assetEscrow);
-        HandshakeSupport.VM.stopBroadcast();
+        if (!IHandshakeReactive(rc).venuesSet()) {
+            HandshakeSupport.VM.broadcast();
+            IHandshakeReactive(rc).setVenues(PAYMENT_CHAIN_ID, paymentEscrow, ASSET_CHAIN_ID, assetEscrow);
+            HandshakeSupport.VM.stopBroadcast();
+            emit VenuesInstalled(rc);
+        } else {
+            console2.log("DeployScript: venues already set on RC", rc, "- skipping setVenues (subscriptions already installed)");
+            emit VenuesAlreadySet(rc);
+        }
 
         // Persist addresses so Fund / TS utilities can pick them up.
         HandshakeSupport.VM.writeFile(
@@ -113,4 +121,6 @@ contract DeployScript is Script {
     }
 
     event Deployed(uint256 chainId, address contractAddress);
+    event VenuesInstalled(address rc);
+    event VenuesAlreadySet(address rc);
 }

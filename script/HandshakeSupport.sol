@@ -31,6 +31,7 @@ interface IHandshakeReactive {
 
     function retry(bytes32 orderId_) external;
     function coverDebt() external;
+    function venuesSet() external view returns (bool);
     function orderCount() external view returns (uint256);
 }
 
