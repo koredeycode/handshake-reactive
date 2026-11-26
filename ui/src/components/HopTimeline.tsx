@@ -1,85 +1,90 @@
-import { ChainBadge, ExternalLink, TxLink } from './ui'
-import { CHAIN_LABELS, EXPLORER_NAMES, txUrl } from '../lib/chains'
-import { deltaMs, formatAmount, formatTimestamp } from '../lib/format'
-import { runForOrder, useLatency } from '../lib/latency'
 import { buildHops } from '../lib/proofs'
+import { ChainBadge, ConvergenceMark, Panel, TxLink } from './ui'
 import type { Order, ProofData } from '../lib/types'
 
-function StepIcon({ observed }: { observed: boolean }) {
-  return observed ? (
-    <span className="flex h-6 w-6 items-center justify-center rounded-full border border-good/40 bg-good/15 text-[11px] text-good">
-      ✓
-    </span>
-  ) : (
-    <span className="flex h-6 w-6 items-center justify-center rounded-full border border-white/10 bg-white/[0.03] text-[11px] text-slate-500">
-      ·
-    </span>
+function pendingText(key: string): string {
+  if (key === 'paymentLocked' || key === 'assetLocked') return 'Awaiting this leg'
+  if (key === 'reactive') return 'Waiting for the other leg'
+  return 'Settlement in progress'
+}
+
+function ConvergenceDiagram() {
+  return (
+    <div className="mb-6 rounded-lg border border-line bg-paper-50 px-5 py-3">
+      <svg viewBox="0 0 480 64" className="h-16 w-full text-ink-400" fill="none" aria-hidden="true">
+        <g stroke="currentColor" strokeOpacity="0.4" strokeWidth="1.5" strokeLinecap="round">
+          <path d="M10 16 C 150 16, 170 32, 240 32" />
+          <path d="M10 48 C 150 48, 170 32, 240 32" />
+          <path d="M240 32 C 310 32, 330 16, 470 16" />
+          <path d="M240 32 C 310 32, 330 48, 470 48" />
+        </g>
+        <g className="font-mono text-[10px]" fill="currentColor" fillOpacity="0.65">
+          <text x="10" y="9">Payment</text>
+          <text x="10" y="61">Asset</text>
+          <text x="470" y="9" textAnchor="end">Payment out</text>
+          <text x="470" y="61" textAnchor="end">Asset out</text>
+        </g>
+        <circle cx="240" cy="32" r="6" className="fill-accent-soft stroke-accent" strokeWidth="1.5" />
+      </svg>
+    </div>
   )
 }
 
 export default function HopTimeline({
   order,
   proof,
-  orderId,
 }: {
   order?: Order | null
   proof?: ProofData | null
-  orderId?: string
 }) {
   const hops = buildHops(order, proof)
-  const latency = useLatency()
-  const run = runForOrder(latency.data, orderId)
-  let previousTimestamp: number | null = null
+  const done = hops.filter((hop) => hop.event).length
 
   return (
-    <section className="rounded-2xl border border-white/[0.07] bg-ink-900/80 p-5 shadow-panel">
-      <div className="mb-5 flex items-center justify-between gap-2">
-        <div>
-          <h2 className="text-sm font-semibold text-slate-100">Cross-chain hop timeline</h2>
-          <p className="mt-1 text-xs text-slate-500">Observed transactions only · no invented hashes</p>
-        </div>
-        <span className="rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 font-mono text-[10px] text-slate-400">
-          {hops.filter((h) => h.event).length}/{hops.length} observed
+    <Panel
+      title="Settlement timeline"
+      subtitle="Two legs, one decision, two releases"
+      action={
+        <span className="tnum font-mono text-[11px] text-ink-400">
+          {done} of {hops.length} complete
         </span>
-      </div>
-
-      <ol className="relative space-y-0">
+      }
+    >
+      <ConvergenceDiagram />
+      <ol className="relative">
         {hops.map((hop, i) => {
           const event = hop.event
-          const delta = event?.timestamp && previousTimestamp ? deltaMs(previousTimestamp, event.timestamp) : null
-          if (event?.timestamp) previousTimestamp = event.timestamp
+          const decision = hop.key === 'reactive'
           const last = i === hops.length - 1
           return (
-            <li key={hop.key} className="relative flex gap-3 pb-5 last:pb-0" style={{ animationDelay: `${i * 70}ms` }}>
-              {!last && (
-                <span className={`absolute left-3 top-7 h-[calc(100%-1.5rem)] w-px ${event ? 'bg-gradient-to-b from-good/50 to-white/10' : 'bg-white/[0.07]'}`} />
-              )}
-              <div className="relative z-10 shrink-0"><StepIcon observed={!!event} /></div>
-              <div className="min-w-0 flex-1 animate-slide-in">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-mono text-[11px] text-slate-500">{hop.n}</span>
-                  <span className={`text-xs font-semibold ${event ? 'text-slate-100' : 'text-slate-500'}`}>{hop.title}</span>
-                  <ChainBadge chain={hop.chain} />
-                  {delta && <span className="font-mono text-[10px] text-slate-500">+{delta}</span>}
-                </div>
-                <div className="mt-1.5 space-y-1 pl-6 text-[11px]">
-                  {event ? (
-                    <>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <TxLink chain={hop.chain} hash={event.txHash} />
-                        <ExternalLink href={txUrl(hop.chain, event.txHash)} className="text-[10px]">
-                          {EXPLORER_NAMES[hop.chain]}
-                        </ExternalLink>
-                      </div>
-                      <div className="font-mono text-[10px] text-slate-500">
-                        block #{event.blockNumber.toString()} · {formatTimestamp(event.timestamp)}
-                        {event.fields.amount && ` · ${formatAmount(BigInt(event.fields.amount), hop.chain === 'base' ? 6 : 18)}`}
-                        {event.fields.nonce && ` · nonce ${event.fields.nonce}`}
-                        {hop.note && ` · ${hop.note}`}
-                      </div>
-                    </>
+            <li key={hop.key} className={`relative flex gap-4 ${last ? '' : 'pb-6'}`}>
+              {!last && <span className="absolute left-[15px] top-9 h-[calc(100%-2.25rem)] w-px bg-line" />}
+              <div className="relative z-10 shrink-0">
+                <span
+                  className={`flex h-8 w-8 items-center justify-center rounded-lg border ${
+                    event ? 'border-accent/30 bg-accent-soft text-accent' : 'border-line bg-paper-50 text-ink-400'
+                  }`}
+                >
+                  {decision ? (
+                    <ConvergenceMark className="h-4 w-4" />
                   ) : (
-                    <p className="text-slate-600">not observed yet — waiting for {CHAIN_LABELS[hop.chain]} logs</p>
+                    <span className={`h-1.5 w-1.5 rounded-full ${event ? 'bg-accent' : 'bg-ink-400'}`} />
+                  )}
+                </span>
+              </div>
+              <div className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-x-4 gap-y-2 pt-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="tnum font-mono text-[11px] text-ink-400">{hop.n}</span>
+                  <span className={`text-[13px] font-medium ${event ? 'text-ink-900' : 'text-ink-500'}`}>
+                    {hop.title}
+                  </span>
+                  <ChainBadge chain={hop.chain} />
+                </div>
+                <div className="font-mono text-[11px]">
+                  {event ? (
+                    <TxLink chain={hop.chain} hash={event.txHash} />
+                  ) : (
+                    <span className="font-sans text-ink-400">{pendingText(hop.key)}</span>
                   )}
                 </div>
               </div>
@@ -87,20 +92,6 @@ export default function HopTimeline({
           )
         })}
       </ol>
-
-      <div className="mt-5 rounded-xl border border-white/[0.06] bg-ink-950/60 p-3">
-        <div className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-slate-500">Latency for this order</div>
-        {run ? (
-          <div className="grid grid-cols-2 gap-2 font-mono text-[11px] text-slate-300 sm:grid-cols-4">
-            <div><span className="block text-[10px] text-slate-500">2nd lock → RC</span>{run.t1ReactiveMs && run.t0SecondLockMs ? deltaMs(run.t0SecondLockMs, run.t1ReactiveMs) : '—'}</div>
-            <div><span className="block text-[10px] text-slate-500">RC → Base cb</span>{run.t1ReactiveMs && run.t2PaymentCallbackMs ? deltaMs(run.t1ReactiveMs, run.t2PaymentCallbackMs) : '—'}</div>
-            <div><span className="block text-[10px] text-slate-500">RC → Unichain cb</span>{run.t1ReactiveMs && run.t3AssetCallbackMs ? deltaMs(run.t1ReactiveMs, run.t3AssetCallbackMs) : '—'}</div>
-            <div className="text-good"><span className="block text-[10px] text-slate-500">Total</span>{run.totalMs ? `${run.totalMs} ms` : '—'}</div>
-          </div>
-        ) : (
-          <p className="text-[11px] text-slate-600">— no latency sample keyed to this order in latency.json (not observed yet)</p>
-        )}
-      </div>
-    </section>
+    </Panel>
   )
 }

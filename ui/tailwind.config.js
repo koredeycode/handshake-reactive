@@ -4,42 +4,40 @@ export default {
   theme: {
     extend: {
       colors: {
-        ink: {
-          950: '#070b12',
-          900: '#0b111c',
-          850: '#0e1624',
-          800: '#131d2e',
-          700: '#1c2940',
-          600: '#293a56',
+        paper: {
+          0: '#ffffff',
+          50: '#f8f7f4',
+          100: '#f2f0eb',
+          200: '#e9e6df',
         },
-        reactive: '#8b7cf6',
-        payment: '#45b6f5',
-        asset: '#f5a94b',
-        good: '#34d399',
-        warn: '#fbbf24',
-        bad: '#f87171',
+        ink: {
+          900: '#161a1f',
+          700: '#2f363f',
+          500: '#4d545e',
+          400: '#6c747e',
+        },
+        line: 'rgba(22, 26, 31, 0.12)',
+        accent: {
+          DEFAULT: '#1f4570',
+          soft: '#edf2f8',
+          ink: '#173454',
+        },
+        good: {
+          DEFAULT: '#2f6b4f',
+          soft: '#edf5f0',
+        },
+        warn: {
+          DEFAULT: '#8a5a12',
+          soft: '#faf3e6',
+        },
+        bad: {
+          DEFAULT: '#9b3a3a',
+          soft: '#f9eded',
+        },
       },
       fontFamily: {
-        sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
-        mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
-      },
-      boxShadow: {
-        panel: '0 1px 0 0 rgba(255,255,255,0.04) inset, 0 12px 40px -20px rgba(0,0,0,0.8)',
-        glow: '0 0 0 1px rgba(139,124,246,0.25), 0 0 32px -8px rgba(139,124,246,0.35)',
-      },
-      keyframes: {
-        pulseSoft: {
-          '0%, 100%': { opacity: '1' },
-          '50%': { opacity: '0.55' },
-        },
-        slideIn: {
-          from: { opacity: '0', transform: 'translateY(6px)' },
-          to: { opacity: '1', transform: 'translateY(0)' },
-        },
-      },
-      animation: {
-        'pulse-soft': 'pulseSoft 2s ease-in-out infinite',
-        'slide-in': 'slideIn 0.25s ease-out both',
+        sans: ['Inter', 'ui-sans-serif', 'system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
+        mono: ['SFMono-Regular', 'JetBrains Mono', 'Menlo', 'Consolas', 'monospace'],
       },
     },
   },
