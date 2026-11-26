@@ -106,11 +106,13 @@ $ cast --help
 
 Handshake is a three-chain DvP: the buyer pays `tUSD`, the seller delivers `tASSET`, and a
 single arbiter on Reactive Lasna decides the settlement. The app serves three live market
-instances via a selector (`ui/public/markets.json`): the original named-seller Base→Unichain
-market, an **open-order** Base→Unichain market where any seller can match (`seller = address(0)`
-and a race refunds later sellers), and a **reverse** Unichain→Base market with chain-local
-tokens. The sequence below shows the original named-seller flow; proofs and addresses for all
-three instances are in `DEPLOYMENT.md`, and the registry design in `MARKETS.md`.
+instances from `ui/public/markets.json`: the original named-seller Base→Unichain market, an
+**open-order** Base→Unichain market where any seller can match (`seller = address(0)` and a
+race refunds later sellers), and a **reverse** Unichain→Base market with chain-local tokens.
+There is no market selector: the trade ticket's arrow flips the direction, leaving the seller
+field blank creates an open order, and the order book aggregates all markets with direction
+and open filters. The sequence below shows the original named-seller flow; proofs and
+addresses for all three instances are in `DEPLOYMENT.md`, and the registry design in `MARKETS.md`.
 
 ### Components and event flow
 

@@ -26,7 +26,9 @@ Canonical constants (from `script/HandshakeSupport.sol`, `scripts/preflight.sh`,
 
 ## 0. Live instances (filled 2026-11-26)
 
-Three markets are deployed, funded, preflight-green (debt 0, 7 subscriptions each) and enabled in `ui/public/markets.json`. The selector offers all three; original proof hashes remain in `DEPLOYMENT.md`.
+Three markets are deployed, funded, preflight-green (debt 0, 7 subscriptions each) and enabled in `ui/public/markets.json`. Original proof hashes remain in `DEPLOYMENT.md`.
+
+**Postscript (PR #18):** the visible market selector was removed after user review. Direction is now chosen by the flip arrow in the trade ticket, blank seller means an open order, the order book aggregates all markets with direction/open filters, and order detail/Track infer their market from a hidden link param or a scan of the three RCs. References to a "selector" in the planning sections below are historical — the registry and role→chain mapping are unchanged.
 
 | Market id | Label | RC (Lasna) | Payment leg | Asset leg | Proof |
 |---|---|---|---|---|---|
@@ -426,10 +428,10 @@ Additional ERC-20 test balances: mint tUSD to the buyer on Unichain and tASSET t
 
 ## 6. UI handoff checklist (next UI PR)
 
-Scope: selector + role-derived chain mapping. No ABI or contract changes.
+Scope: role-derived chain mapping. No ABI or contract changes. **Delivered by PR #17 and revised by PR #18**; the checkbox list below is the original plan, and the visible selector item was replaced by the direction flip in the trade ticket.
 
-- [ ] Add `ui/public/markets.json` (§1.1) and `ui/src/lib/markets.ts` with `useMarkets()` / `useMarket()`; keep `useConfig()` and `contracts.json` as the default-market fallback so existing screens work unchanged.
-- [ ] Add a **market selector** control (segmented control/dropdown) in the shell header showing the two labels; selection via `?market=<id>` + localStorage, default `forward-tusd-base-tasset-unichain`, disabled entries hidden.
+- [x] Add `ui/public/markets.json` (§1.1) and `ui/src/lib/markets.ts` with `useMarkets()` / `useMarket()`; keep `useConfig()` and `contracts.json` as the default-market fallback so existing screens work unchanged.
+- [x] ~~Add a **market selector** control in the shell header~~ — **replaced by PR #18**: direction flip in the trade ticket + board filters, no visible selector.
 - [ ] Make the **route strip, token tiles, leg cards and flow explainer** follow the selected market: payment leg = tUSD on `market.payment.chainId`, asset leg = tASSET on `market.asset.chainId`, with amounts formatted using each token's own decimals.
 - [ ] Derive **chain marks and chain labels** from `chainKeyFor(market, role)` instead of hardcoded `'base'`/`'unichain'`; update `usePublicClient`, `txUrl`/`addressUrl`, `BALANCE_GROUPS` in `Shell.tsx`, `useTokenRegistry()` lookup, `buildHops()` in `proofs.ts`, `resolveProof()` and the faucet links. Reverse: buyer needs Unichain, seller needs Base.
 - [ ] Add `market.id` to all React Query keys (`order`, `leg`, `venues`, `proof`, balances, token meta, latency); on market switch, clear/invalidate stale per-market caches so no forward hash is shown under the reverse market.

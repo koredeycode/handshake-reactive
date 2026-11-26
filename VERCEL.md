@@ -5,7 +5,7 @@
 https://handshake-reactive.vercel.app
 
 Old auto-generated URL still resolves: https://ui-nine-gold.vercel.app
-- Latest production deployment: `handshake-reactive-jzlvakpl2-koredeycodes-projects.vercel.app` (Git-triggered, serves the three-market UI with open orders and the reverse market; bundle `index-DFlF8fV1.js`). The RPC-optimised query layer is documented in `ui/RPC-AUDIT.md`.
+- Latest production deployment: `handshake-reactive-8tpdugluh-koredeycodes-projects.vercel.app` (Git-triggered, serves the direction-driven UI: flip arrow, blank-seller open orders, aggregated book with filters, redesigned faucet, mobile fixes; bundle `index-p5zp7_4v.js`). The RPC-optimised query layer is documented in `ui/RPC-AUDIT.md`.
 - The short alias `handshake-reactive.vercel.app` was re-pointed to that deployment after the Git deploy; Vercel's project-level domain association is inconsistent after the project rename, so re-check the alias after future deploys.
 - Inspector: https://vercel.com/koredeycodes-projects/ui/9SyYFbGRD9MEwh8R9JzSNF5tuRiF
 - Status: `READY`, target `production`
