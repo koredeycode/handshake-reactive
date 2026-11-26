@@ -30,10 +30,11 @@ cp .env.example .env        # fill addresses/wallets, never keys in git
 
 Signing:
 
-- Foundry scripts and `preflight.sh` use the **keystore account** (`--account handshake`).
+- Foundry scripts and `preflight.sh` use the **keystore account** (`--account main`).
   Keys stay in Foundry's keystore; this repo never reads a private key for those paths.
-- `ts/deploy.ts` is the optional viem equivalent and reads `PRIVATE_KEY` from the shell/dotenv
-  only. It refuses to run if unset. Prefer the Foundry script for production demos.
+- **Do not use `ts/deploy.ts` for signing with a raw `PRIVATE_KEY`.** Prefer the Foundry
+  keystore scripts above. `ts/deploy.ts` is a fallback only: it reads `PRIVATE_KEY` from the
+  shell/dotenv, refuses to run if unset, and that key must **never** be committed to the repo.
 
 ## Deploy (PRD §13)
 
@@ -43,27 +44,29 @@ export BASE_RPC=https://sepolia.base.org
 export UNICHAIN_RPC=https://sepolia.unichain.org
 
 forge script script/Deploy.s.sol:DeployScript --rpc-url $REACTIVE_RPC \
-  --account handshake --broadcast --slow
+  --account main --broadcast --slow
 ```
 
 Artifact names default to `src/HandshakeReactive.sol:HandshakeReactive`,
 `src/tokens/TestUSD.sol:TestUSD`, `src/tokens/TestAsset.sol:TestAsset`,
 `src/PaymentEscrow.sol:PaymentEscrow`, `src/AssetEscrow.sol:AssetEscrow`.
 Override with `*_ARTIFACT` env vars if the contracts branch uses different paths.
-Previously deployed components can be reused by setting their `*_ADDRESS` env vars;
-`Deploy.s.sol` then skips those steps but still enforces `setVenues`.
+Previously deployed components can be reused by setting their `*_ADDRESS` env vars.
+`setVenues` is one-shot on the contracts branch: `Deploy.s.sol` calls it only when the RC
+reports `venuesSet() == false`, and logs `VenuesAlreadySet` when subscriptions already exist.
+First-run still follows the strict deploy order.
 
 The script writes `deployments.json` (gitignored). Funding is a separate step by default:
 
 ```bash
 forge script script/Fund.s.sol:FundScript --rpc-url $REACTIVE_RPC \
-  --account handshake --broadcast --slow
+  --account main --broadcast --slow
 ```
 
 Amounts: `RC_FUND_AMOUNT_WEI` (default 1 lREACT), `PAYMENT_RESERVE_WEI` and
 `ASSET_RESERVE_WEI` (default 0.02 ETH each). Set `AUTO_FUND=1` on Deploy to combine them.
 
-Alternatively: `npm run deploy` (viem; uses `PRIVATE_KEY` from the shell).
+Fallback only: `npm run deploy` (viem; requires `PRIVATE_KEY` from the shell — never commit it).
 
 ## Preflight (before every demo / video take)
 

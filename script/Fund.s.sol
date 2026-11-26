@@ -13,7 +13,7 @@ import {HandshakeSupport} from "script/HandshakeSupport.sol";
 /// keystore account selected by `--account`. No private key appears in source.
 ///
 ///   forge script script/Fund.s.sol:FundScript --rpc-url $REACTIVE_RPC \
-///     --account handshake --broadcast --slow
+///     --account main --broadcast --slow
 contract FundScript is Script {
     function run() external {
         address rc = HandshakeSupport.VM.envAddress("RC_ADDRESS");

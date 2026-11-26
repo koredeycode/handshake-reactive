@@ -18,7 +18,7 @@ REACTIVE_RPC="${REACTIVE_RPC:-https://lasna-rpc.rnk.dev/}"
 BASE_RPC="${BASE_RPC:-https://sepolia.base.org}"
 UNICHAIN_RPC="${UNICHAIN_RPC:-https://sepolia.unichain.org}"
 ETH_SEPOLIA_RPC="${ETH_SEPOLIA_RPC:-https://ethereum-sepolia-rpc.publicnode.com}"
-ACCOUNT="${FOUNDRY_ACCOUNT:-handshake}"
+ACCOUNT="${FOUNDRY_ACCOUNT:-main}"
 LASNA_FAUCET="0x9b9BB25f1A81078C544C829c5EB7822d747Cf434"
 
 RC="${RC_ADDRESS:-}"
