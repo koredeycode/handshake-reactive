@@ -2,7 +2,7 @@
 
 Cross-chain RFQ / OTC settlement primitives for the Handshake demo:
 
-See [TOOLING.md](TOOLING.md) for deployment, funding, preflight, latency observation and proof tooling.
+See [TOOLING.md](docs/TOOLING.md) for deployment, funding, preflight, latency observation and proof tooling. The full operator/proof index is in [`docs/`](docs/README.md).
 
 | Contract | Chain | Role |
 |---|---|---|
@@ -112,7 +112,7 @@ race refunds later sellers), and a **reverse** Unichain→Base market with chain
 There is no market selector: the trade ticket's arrow flips the direction, leaving the seller
 field blank creates an open order, and the order book aggregates all markets with direction
 and open filters. The sequence below shows the original named-seller flow; proofs and
-addresses for all three instances are in `DEPLOYMENT.md`, and the registry design in `MARKETS.md`.
+addresses for all three instances are in [DEPLOYMENT.md](docs/DEPLOYMENT.md), and the registry design in [MARKETS.md](docs/MARKETS.md).
 
 ### Components and event flow
 
@@ -213,5 +213,5 @@ observed back on Lasna and closes only its own leg, so a dropped or late callbac
 finished by `retry()` or the bounded cron sweep rather than silently closing the order.
 
 All three proven loops (payment-first, asset-first and timeout/refund) with their full
-transaction hashes are recorded in [DEPLOYMENT.md](DEPLOYMENT.md); the on-chain measurement
-methodology and latency numbers are in [LATENCY.md](LATENCY.md).
+transaction hashes are recorded in [DEPLOYMENT.md](docs/DEPLOYMENT.md); the on-chain measurement
+methodology and latency numbers are in [LATENCY.md](docs/LATENCY.md).

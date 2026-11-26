@@ -1,5 +1,5 @@
 {
-  "_comment": "Market registry. No keys. systemContract/legacy are chain-wide; per-market addresses are role-based, not chain-slot-based. All three entries are deployed, funded and proven — see DEPLOYMENT.md.",
+  "_comment": "Market registry. No keys. systemContract/legacy are chain-wide; per-market addresses are role-based, not chain-slot-based. All three entries are deployed, funded and proven — see docs/DEPLOYMENT.md.",
   "version": 1,
   "defaultMarketId": "forward-tusd-base-tasset-unichain",
   "systemContract": "0x8888888888888888888888888888888888888888",
@@ -37,8 +37,8 @@
       },
       "scan": { "lasnaFromBlock": 9279105, "lookbackBlocks": 50000 },
       "notes": {
-        "latency": "2nd lock → RC 0 s; RC → payment cb +1 s; RC → asset cb +2 s (LATENCY.md)",
-        "proofSection": "DEPLOYMENT.md §Proven loops"
+        "latency": "2nd lock → RC 0 s; RC → payment cb +1 s; RC → asset cb +2 s (docs/LATENCY.md)",
+        "proofSection": "docs/DEPLOYMENT.md §Proven loops"
       }
     },
     {
@@ -74,7 +74,7 @@
       "scan": { "lasnaFromBlock": 9311378, "lookbackBlocks": 50000 },
       "notes": {
         "latency": "2nd lock → RC 0 s; RC → payment cb +1 s; RC → asset cb +2 s",
-        "proofSection": "DEPLOYMENT.md §Proof — open order / race"
+        "proofSection": "docs/DEPLOYMENT.md §Proof — open order / race"
       }
     },
     {
@@ -109,8 +109,8 @@
       },
       "scan": { "lasnaFromBlock": 9311484, "lookbackBlocks": 50000 },
       "notes": {
-        "latency": "Asset-first loop proven; timings in DEPLOYMENT.md",
-        "proofSection": "DEPLOYMENT.md §Proof — reverse market"
+        "latency": "Asset-first loop proven; timings in docs/DEPLOYMENT.md",
+        "proofSection": "docs/DEPLOYMENT.md §Proof — reverse market"
       }
     }
   ]

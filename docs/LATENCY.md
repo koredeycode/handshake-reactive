@@ -15,7 +15,7 @@ On-chain `block.timestamp` deltas (1-second granularity) plus the origin logs' t
 The payment leg was locked ~13 s earlier (at 1795677149), so the loop began when the **second** leg arrived, not the first.
 
 ## Asset-first loop (order `0x2222…2222`)
-Both legs settled with the same mechanism; the RC's order-independent state machine produced settlement after the payment leg arrived. Tx hashes are in `DEPLOYMENT.md`. The reactive tx and both callbacks landed within 1–2 block timestamps of the second lock.
+Both legs settled with the same mechanism; the RC's order-independent state machine produced settlement after the payment leg arrived. Tx hashes are in [DEPLOYMENT.md](./DEPLOYMENT.md). The reactive tx and both callbacks landed within 1–2 block timestamps of the second lock.
 
 ## Timeout / refund loop (order `0x4444…4444`)
 Deadline passed, the next `Cron10` tick drove the refund sweep, and the refund callback landed on Base Sepolia. The cron interval (~10 s) plus callback delivery dominates here; the RC performs no polling and no keeper is involved.
@@ -26,4 +26,4 @@ On the legacy Reactive network (~7 s blocks, ~7 s finality), the reactive hop al
 ## Caveats
 - These are testnet numbers with purpose-built ERC-20s, not mainnet liquidity.
 - EVM block timestamps have 1-second resolution; wall-clock observer numbers include network/observer delay.
-- Cron billing drained RC reserves during an idle window and paused execution until topped up. See `DEPLOYMENT.md`. This is a funding-operational issue, not a latency measurement artefact.
+- Cron billing drained RC reserves during an idle window and paused execution until topped up. See [DEPLOYMENT.md](./DEPLOYMENT.md). This is a funding-operational issue, not a latency measurement artefact.

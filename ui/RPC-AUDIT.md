@@ -119,7 +119,7 @@ Headless Chrome screenshots of the production build (one tab, 15 s):
   "5 of 5 observed": asset released `0x7937029b…`.
 
 **Note for the reviewer:** the hash `0x7937029b…` in the task description
-belongs to order `0x2222…2222`, not `0x1111…1111`. `DEPLOYMENT.md` and the
+belongs to order `0x2222…2222`, not `0x1111…1111`. [DEPLOYMENT.md](../docs/DEPLOYMENT.md) and the
 live chain both record `0x4219685614356fc4be8d15d90f4129145fc082e62309560b1175e2ac4e7e3c37`
 as the asset-release tx for `0x1111…1111`. We show the real hash; nothing is
 fabricated. The tuple-decode (`decodeAbiParameters` with `callbackConfigTuple`)

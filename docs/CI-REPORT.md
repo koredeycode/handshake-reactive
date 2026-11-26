@@ -58,7 +58,7 @@ sh: line 1: vite: command not found
 Error: [BUILD_UTILS_SPAWN_127] Command "vite build" exited with 127
 ```
 
-- The repo was connected to Git during the original CLI deploy (`VERCEL.md` records this).
+- The repo was connected to Git during the original CLI deploy ([VERCEL.md](./VERCEL.md) records this).
   Since then, **every push to `main` and to any branch** triggers a Vercel build; the `git-*`
   aliases in `vercel alias ls` prove the deployments are Git-driven, not CLI-driven.
 - The project's Root Directory is `.` and the Vite preset defaults to `vite build`.
@@ -67,7 +67,7 @@ Error: [BUILD_UTILS_SPAWN_127] Command "vite build" exited with 127
   `ui/package.json`, whose build is `tsc -b && vite build` with `vite` in devDependencies.
   The cached UI `node_modules` is pruned by the root install (`removed 581 packages`), then
   `vite` is absent → exit 127.
-- The working site is produced only by the manual path documented in `VERCEL.md`:
+- The working site is produced only by the manual path documented in [VERCEL.md](./VERCEL.md):
   `cd ui && vercel deploy --prod --yes`. That deploy installs `ui/package-lock.json` and
   builds in `ui/`, so it succeeds. The two deploy paths coexist: Git deploys fail and the
   production domain keeps pointing at the older successful CLI deploy.
@@ -103,7 +103,7 @@ Git-triggered builds use the correct dependencies and script, and keep the SPA r
 
 `buildCommand`, `installCommand` and `outputDirectory` in `vercel.json` override project
 settings for the deployments built from that commit, so no dashboard change is required.
-This is applied in this branch. `VERCEL.md` is updated to declare one canonical deploy
+This is applied in this branch. [VERCEL.md](./VERCEL.md) is updated to declare one canonical deploy
 path — Git integration on push to `main` — with the CLI retained only as an escape hatch.
 
 Alternative dashboard-only fix (not applied here, no repo change): set the project's

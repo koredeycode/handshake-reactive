@@ -2,7 +2,7 @@
 
 **Status: PLAN ONLY.** This document proposes work; no contract, script, UI file, address, key or config has been changed, and no transaction has been sent. It is backlog §7 of `personal/FUTURE-DEVELOPMENT.md` in the main worktree.
 
-**Working rule (do not relitigate):** the three proven loops and every hash in [`DEPLOYMENT.md`](./DEPLOYMENT.md) are the submission proof and stay **untouched**. The reverse direction gets a **completely separate market instance** (new RC, new tokens, new escrows, new subscriptions, new proof hashes). When this instance is live, **append a new section** to `DEPLOYMENT.md`; never overwrite or "correct" the original hashes.
+**Working rule (do not relitigate):** the three proven loops and every hash in [`DEPLOYMENT.md`](./DEPLOYMENT.md) are the submission proof and stay **untouched**. The reverse direction gets a **completely separate market instance** (new RC, new tokens, new escrows, new subscriptions, new proof hashes). When this instance is live, **append a new section** to [DEPLOYMENT.md](./DEPLOYMENT.md); never overwrite or "correct" the original hashes.
 
 - Live market (forward): buyer pays `tUSD` on **Base Sepolia (84532)** → seller delivers `tASSET` on **Unichain Sepolia (1301)**.
 - Proposed market (reverse): buyer pays `tUSD` on **Unichain Sepolia (1301)** → seller delivers `tASSET` on **Base Sepolia (84532)**.
@@ -20,29 +20,29 @@ Canonical constants (from `script/HandshakeSupport.sol`, `scripts/preflight.sh`,
 | Live RC / live tUSD / live tASSET address | `0x6d1Da6e00066f4b3A16Fec64010478165BAb34E6` (same on all three chains — same deployer nonce) |
 | Live PaymentEscrow / AssetEscrow | `0xc5ca1b349d214855aB62291C8990ECC63881bDAe` |
 | Live scan from-blocks | Lasna `9279105`, Base `63775999`, Unichain `68824600`; lookback `50000` |
-| Deployer (keystore `main`, labelled `hs-deployer` in `DEPLOYMENT.md`) | `0x91b3CAFfB38CD8Ed578Ad149Ca48d0a4E35B9A88` |
+| Deployer (keystore `main`, labelled `hs-deployer` in [DEPLOYMENT.md](./DEPLOYMENT.md)) | `0x91b3CAFfB38CD8Ed578Ad149Ca48d0a4E35B9A88` |
 
 ---
 
 ## 0. Live instances (filled 2026-11-26)
 
-Three markets are deployed, funded, preflight-green (debt 0, 7 subscriptions each) and enabled in `ui/public/markets.json`. Original proof hashes remain in `DEPLOYMENT.md`.
+Three markets are deployed, funded, preflight-green (debt 0, 7 subscriptions each) and enabled in `ui/public/markets.json`. Original proof hashes remain in [DEPLOYMENT.md](./DEPLOYMENT.md).
 
 **Postscript (PR #18):** the visible market selector was removed after user review. Direction is now chosen by the flip arrow in the trade ticket, blank seller means an open order, the order book aggregates all markets with direction/open filters, and order detail/Track infer their market from a hidden link param or a scan of the three RCs. References to a "selector" in the planning sections below are historical — the registry and role→chain mapping are unchanged.
 
 | Market id | Label | RC (Lasna) | Payment leg | Asset leg | Proof |
 |---|---|---|---|---|---|
-| `forward-tusd-base-tasset-unichain` | Pay on Base · receive on Unichain | `0x6d1Da6e…34E6` | tUSD / escrow on **Base Sepolia** | tASSET / escrow on **Unichain Sepolia** | `DEPLOYMENT.md` §Proven loops |
-| `open-tusd-base-tasset-unichain` | Open orders · Base → Unichain | `0x679d9B73…3480` | tUSD / escrow `0x6f28EDb5…3480` on **Base** | tASSET / escrow `0x6f28EDb5…3480` on **Unichain** | `DEPLOYMENT.md` §Proof — open order / race |
-| `reverse-tusd-unichain-tasset-base` | Pay on Unichain · receive on Base | `0xC7A4aB5a…514` | tUSD `0x58025878…578c` / escrow `0xFc0C5588…64db` on **Unichain** | tASSET `0x58025878…578c` / escrow `0xFc0C5588…64db` on **Base** | `DEPLOYMENT.md` §Proof — reverse market |
+| `forward-tusd-base-tasset-unichain` | Pay on Base · receive on Unichain | `0x6d1Da6e…34E6` | tUSD / escrow on **Base Sepolia** | tASSET / escrow on **Unichain Sepolia** | [DEPLOYMENT.md](./DEPLOYMENT.md) §Proven loops |
+| `open-tusd-base-tasset-unichain` | Open orders · Base → Unichain | `0x679d9B73…3480` | tUSD / escrow `0x6f28EDb5…3480` on **Base** | tASSET / escrow `0x6f28EDb5…3480` on **Unichain** | [DEPLOYMENT.md](./DEPLOYMENT.md) §Proof — open order / race |
+| `reverse-tusd-unichain-tasset-base` | Pay on Unichain · receive on Base | `0xC7A4aB5a…514` | tUSD `0x58025878…578c` / escrow `0xFc0C5588…64db` on **Unichain** | tASSET `0x58025878…578c` / escrow `0xFc0C5588…64db` on **Base** | [DEPLOYMENT.md](./DEPLOYMENT.md) §Proof — reverse market |
 
-Full addresses, deploy/setVenues/funding tx hashes and from-blocks are in `DEPLOYMENT.md`. The reverse instance required new chain-local tokens because the original tUSD/tASSET ERC-20s exist only on their original chains.
+Full addresses, deploy/setVenues/funding tx hashes and from-blocks are in [DEPLOYMENT.md](./DEPLOYMENT.md). The reverse instance required new chain-local tokens because the original tUSD/tASSET ERC-20s exist only on their original chains.
 
 ## 1. Market registry design (`ui/public/markets.json`)
 
 ### 1.1 Schema
 
-Implemented as `ui/public/markets.json`, one entry per market. Roles are explicit (`payment` / `asset`) so a direction swap is data, not code. `enabled` gates the selector. All three entries below are now deployed, funded, proven and `enabled: true`; see the live-instance table at the top of §0. The JSON snippets in this section are the original planning shapes — the authoritative values are in `ui/public/markets.json` and `DEPLOYMENT.md`.
+Implemented as `ui/public/markets.json`, one entry per market. Roles are explicit (`payment` / `asset`) so a direction swap is data, not code. `enabled` gates the selector. All three entries below are now deployed, funded, proven and `enabled: true`; see the live-instance table at the top of §0. The JSON snippets in this section are the original planning shapes — the authoritative values are in `ui/public/markets.json` and [DEPLOYMENT.md](./DEPLOYMENT.md).
 
 ```jsonc
 {
@@ -84,8 +84,8 @@ Implemented as `ui/public/markets.json`, one entry per market. Roles are explici
       },
       "scan": { "lasnaFromBlock": 9279105, "lookbackBlocks": 50000 },
       "notes": {
-        "latency": "2nd lock → RC 0 s; RC → payment cb +1 s; RC → asset cb +2 s (LATENCY.md)",
-        "proofSection": "DEPLOYMENT.md §Proven loops"
+        "latency": "2nd lock → RC 0 s; RC → payment cb +1 s; RC → asset cb +2 s (docs/LATENCY.md)",
+        "proofSection": "docs/DEPLOYMENT.md §Proven loops"
       }
     },
     {
@@ -119,7 +119,7 @@ Implemented as `ui/public/markets.json`, one entry per market. Roles are explici
         "scanFromBlock": <TASSET_BASE_DEPLOY_BLOCK>
       },
       "scan": { "lasnaFromBlock": <REVERSE_RC_DEPLOY_BLOCK>, "lookbackBlocks": 50000 },
-      "notes": { "latency": "<fill after the reverse loop is proven>", "proofSection": "<new DEPLOYMENT.md section>" }
+      "notes": { "latency": "<fill after the reverse loop is proven>", "proofSection": "<new docs/DEPLOYMENT.md section>" }
     }
   ]
 }
@@ -276,7 +276,7 @@ The five existing address hooks also support a **hybrid** path: if the RC/tokens
 | Payment escrow reserve | `proxy.depositTo(paymentEscrow)` | Base proxy live / **Unichain proxy reverse** | `0.02` ETH (`PAYMENT_RESERVE_WEI=20000000000000000`) |
 | Asset escrow reserve | `proxy.depositTo(assetEscrow)` | Unichain proxy live / **Base proxy reverse** | `0.02` ETH (`ASSET_RESERVE_WEI=20000000000000000`) |
 
-Post-condition asserted by `fundAll`: `debt(rc) == debt(paymentEscrow) == debt(assetEscrow) == 0`. `debt > 0` means Reactive pauses delivery (documented in `DEPLOYMENT.md`); top up with `SYSTEM.depositTo(RC)` on Lasna **before** every demo. These are the tooling defaults; confirm the actual live `reserves()` values with `cast call` rather than assuming, and use the same numbers for the reverse instance so the two markets are comparable.
+Post-condition asserted by `fundAll`: `debt(rc) == debt(paymentEscrow) == debt(assetEscrow) == 0`. `debt > 0` means Reactive pauses delivery (documented in [DEPLOYMENT.md](./DEPLOYMENT.md)); top up with `SYSTEM.depositTo(RC)` on Lasna **before** every demo. These are the tooling defaults; confirm the actual live `reserves()` values with `cast call` rather than assuming, and use the same numbers for the reverse instance so the two markets are comparable.
 
 ### 3.2 The seven subscriptions installed by `setVenues`
 
@@ -332,7 +332,7 @@ cast abi-encode 'constructor(address,address,address)' \
   0x476F44b11F5C942c58f4c8E3d0300E5710743585 "$RC_ADDRESS" "$TASSET_BASE"
 ```
 
-Five commands to run after deployment (replace `<…>` with recorded outputs). For the live RC, `SOURCIFY.md` had to pass the `setVenues` tx as `--creation-transaction-hash` because no creation-code match entry existed; for a fresh `forge create` deployment use its real creation tx, falling back to the `setVenues` tx only if Sourcify cannot locate the creation code.
+Five commands to run after deployment (replace `<…>` with recorded outputs). For the live RC, [SOURCIFY.md](./SOURCIFY.md) had to pass the `setVenues` tx as `--creation-transaction-hash` because no creation-code match entry existed; for a fresh `forge create` deployment use its real creation tx, falling back to the `setVenues` tx only if Sourcify cannot locate the creation code.
 
 ```sh
 # 1. HandshakeReactive — Lasna 5318007, no constructor args
@@ -363,7 +363,7 @@ Five commands to run after deployment (replace `<…>` with recorded outputs). F
   <ASSET_ESCROW> src/AssetEscrow.sol:AssetEscrow
 ```
 
-Record each match ID / job ID / lookup URL in the **new** `DEPLOYMENT.md` section, and mirror the `SOURCIFY.md` summary table shape. **Do NOT overwrite the original hashes or match IDs in `DEPLOYMENT.md` or `SOURCIFY.md`; add a new section to each** (e.g. `## Symmetric reverse market (2026-11-…)`).
+Record each match ID / job ID / lookup URL in the **new** [DEPLOYMENT.md](./DEPLOYMENT.md) section, and mirror the [SOURCIFY.md](./SOURCIFY.md) summary table shape. **Do NOT overwrite the original hashes or match IDs in [DEPLOYMENT.md](./DEPLOYMENT.md) or [SOURCIFY.md](./SOURCIFY.md); add a new section to each** (e.g. `## Symmetric reverse market (2026-11-…)`).
 
 ### 4.2 Proof table template — fill after deployment
 
@@ -392,7 +392,7 @@ Run the reverse loops with the standard amounts (100 tUSD ↔ 1 tASSET), full 32
 | `PaymentRefunded` callback | `<TX>` | Unichain Sepolia | buyer refunded |
 | Final leg state | — | Unichain Sepolia | `REFUNDED` (3), nonce 1 — verify with `getLeg` |
 
-**Latency notes:** copy the `LATENCY.md` method (block timestamps, 1 s resolution) and record the reverse deltas separately: second lock → RC, RC → Unichain callback, RC → Base callback, plus the ~7 s legacy comparison. Do not reuse forward-market numbers or hashes.
+**Latency notes:** copy the [LATENCY.md](./LATENCY.md) method (block timestamps, 1 s resolution) and record the reverse deltas separately: second lock → RC, RC → Unichain callback, RC → Base callback, plus the ~7 s legacy comparison. Do not reuse forward-market numbers or hashes.
 
 ---
 
@@ -422,7 +422,7 @@ Additional ERC-20 test balances: mint tUSD to the buyer on Unichain and tASSET t
 1. Stop creating orders; wait for any open orders to reach terminal state (or expire).
 2. Call on the **reverse RC only**: `cast send --rpc-url $REACTIVE_RPC --account main $RC_ADDRESS 'unsubscribeAll()'` (onlyOwner). This removes all seven subscriptions, including the Cron10 one, and sets `venuesSet = false`, stopping cron billing for that RC. **Never call this on the live RC** `0x6d1Da6e…34E6`.
 3. If needed, `coverDebt()` on the reverse RC and leave any remaining lREACT reserve; optionally top up the **live** RC separately so the proven loops keep working.
-4. Set the reverse market entry `enabled: false` in `markets.json` and remove/ignore `deployments.reverse.json`; keep the recorded addresses and proof hashes for the audit trail. Do not delete or edit the original `DEPLOYMENT.md` section.
+4. Set the reverse market entry `enabled: false` in `markets.json` and remove/ignore `deployments.reverse.json`; keep the recorded addresses and proof hashes for the audit trail. Do not delete or edit the original [DEPLOYMENT.md](./DEPLOYMENT.md) section.
 
 ---
 
@@ -435,7 +435,7 @@ Scope: role-derived chain mapping. No ABI or contract changes. **Delivered by PR
 - [ ] Make the **route strip, token tiles, leg cards and flow explainer** follow the selected market: payment leg = tUSD on `market.payment.chainId`, asset leg = tASSET on `market.asset.chainId`, with amounts formatted using each token's own decimals.
 - [ ] Derive **chain marks and chain labels** from `chainKeyFor(market, role)` instead of hardcoded `'base'`/`'unichain'`; update `usePublicClient`, `txUrl`/`addressUrl`, `BALANCE_GROUPS` in `Shell.tsx`, `useTokenRegistry()` lookup, `buildHops()` in `proofs.ts`, `resolveProof()` and the faucet links. Reverse: buyer needs Unichain, seller needs Base.
 - [ ] Add `market.id` to all React Query keys (`order`, `leg`, `venues`, `proof`, balances, token meta, latency); on market switch, clear/invalidate stale per-market caches so no forward hash is shown under the reverse market.
-- [ ] Keep **per-market proof hashes and latency notes** from `markets.json` / the new `DEPLOYMENT.md` section; `/verify` and `/orders/:id` must use the selected market's RC and escrows. Full 64-hex order IDs only. Never surface another market's hashes.
+- [ ] Keep **per-market proof hashes and latency notes** from `markets.json` / the new [DEPLOYMENT.md](./DEPLOYMENT.md) section; `/verify` and `/orders/:id` must use the selected market's RC and escrows. Full 64-hex order IDs only. Never surface another market's hashes.
 - [ ] Add the new token addresses to `ui/public/tokens.json` under their **new chain keys** with real symbol/decimals/mark/color.
 - [ ] Keep **`/dev` hidden** from primary navigation (it remains a route only for diagnostics: debt/reserves, event log, latency chart, raw state, warnings). No demo notes, debt panels, "not observed yet" copy or wallet prompts on primary screens; `/verify` stays wallet-free.
 - [ ] QA both directions in one session: switch markets, create/lock/settle a small order on each (during a dedicated test window, not during a recording), confirm the two `CallbackRequest` logs and both callbacks resolve to the correct market, and confirm preflight debt == 0 for both RCs.
