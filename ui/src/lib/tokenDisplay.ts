@@ -16,14 +16,16 @@ export type TokenRegistry = {
 }
 
 const EMPTY: TokenRegistry = { base: {}, unichain: {} }
+/** Fallbacks mirror the deployed contracts, so a failed metadata fetch never invents a brand. */
 const FALLBACK: Record<LegKind, TokenDisplayEntry> = {
-  payment: { name: 'TestUSD', symbol: 'TestUSD', decimals: 6, mark: 'A', color: '#e11d62' },
-  asset: { name: 'TEST', symbol: 'TEST', decimals: 18, mark: 'N', color: '#4f46e5' },
+  payment: { name: 'Test USD', symbol: 'tUSD', decimals: 6, mark: 'US', color: '#e11d62' },
+  asset: { name: 'Test Asset', symbol: 'tASSET', decimals: 18, mark: 'AS', color: '#4f46e5' },
 }
 
 /**
- * Presentation metadata only. On-chain ERC-20 names and symbols are untouched;
- * this file decides how the two live testnet assets are labelled in the UI.
+ * Presentation metadata keyed by chain and live token address. The name,
+ * symbol and decimals match the ERC-20 contracts; the mark is a plain letter
+ * pair derived from the real symbol. No external images or invented branding.
  */
 async function loadTokens(): Promise<TokenRegistry> {
   try {

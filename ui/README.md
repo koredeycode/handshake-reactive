@@ -23,7 +23,7 @@ Deploy `dist/` to Vercel (see `vercel.json` rewrite) or GitHub Pages (`404.html`
 
 ## Configuration
 
-Live addresses are read at runtime from `public/contracts.json`. `public/tokens.json` holds presentation metadata only (display name, symbol, decimals, mark, color) keyed by chain and token address — the ERC-20 contracts keep their own on-chain names. Optional build-time overrides: `VITE_RC_ADDRESS`, `VITE_PAYMENT_ESCROW`, `VITE_ASSET_ESCROW`, `VITE_PAYMENT_TOKEN`, `VITE_ASSET_TOKEN`, `VITE_BASE_PROXY`, `VITE_UNICHAIN_PROXY`, `VITE_*_FROM_BLOCK`, `VITE_LOOKBACK_BLOCKS`. `VITE_DEV_TOOLS=1` enables the hidden `/dev` route in a production build (it can also be opened with `?dev=1`). Never put private keys in any of these files.
+Live addresses are read at runtime from `public/contracts.json`. `public/tokens.json` holds display metadata (name, symbol, decimals, letter mark, color) keyed by chain and token address; its name/symbol/decimals mirror the deployed ERC-20s (`Test USD` / `tUSD` on Base Sepolia, `Test Asset` / `tASSET` on Unichain Sepolia). Optional build-time overrides: `VITE_RC_ADDRESS`, `VITE_PAYMENT_ESCROW`, `VITE_ASSET_ESCROW`, `VITE_PAYMENT_TOKEN`, `VITE_ASSET_TOKEN`, `VITE_BASE_PROXY`, `VITE_UNICHAIN_PROXY`, `VITE_*_FROM_BLOCK`, `VITE_LOOKBACK_BLOCKS`. `VITE_DEV_TOOLS=1` enables the hidden `/dev` route in a production build (it can also be opened with `?dev=1`). Never put private keys in any of these files.
 
 ## Routes
 

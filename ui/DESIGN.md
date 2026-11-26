@@ -17,7 +17,7 @@ The product-grade pass removed that chrome but read too much like a settlement d
 
 ## Token presentation
 
-`public/tokens.json` is presentation metadata keyed by chain and live token address: the Base Sepolia asset is **Arc USD** (`aUSD`, mark `A`) and the Unichain Sepolia asset is **Nova** (`NOVA`, mark `N`). The ERC-20 contracts keep their real on-chain names and symbols; the file only changes what the UI shows, and the copy always says testnet. Marks are inline SVG circles with one letter, no external images.
+`public/tokens.json` is presentation metadata keyed by chain and live token address, and it mirrors the deployed ERC-20s: the Base Sepolia asset is **Test USD** (`tUSD`, 6 decimals, mark `US`) and the Unichain Sepolia asset is **Test Asset** (`tASSET`, 18 decimals, mark `AS`). The copy always says testnet. Token marks are inline SVG circles with letters taken from the real symbols; chain marks (Base, Unichain, Lasna) are small monochrome inline SVGs that inherit the pill's ink or active accent. No external images, no image CDN, no invented branding.
 
 The quiet `/faucet` destination lets a connected wallet call the existing public `mint(address,uint256)` on each live demo token, watch balances refresh, and find native ETH faucets (Alchemy, ZalalenA, Superchain) for gas. It reuses the same write/switch-chain/receipt pattern as approve and lock.
 

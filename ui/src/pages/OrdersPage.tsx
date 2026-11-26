@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowRight, Plus } from 'lucide-react'
+import { Plus } from 'lucide-react'
 import OrderBoard from '../components/OrderBoard'
 import TradeTicket from '../components/TradeTicket'
-import { Button, ChainPill, ConvergenceMark, icon } from '../components/ui'
+import { Button, ConvergenceMark, RouteStrip, icon } from '../components/ui'
 import { useAccount } from 'wagmi'
 import { toUnitString } from '../lib/format'
 import { useTokenBalance } from '../lib/queries'
@@ -39,13 +39,7 @@ export default function OrdersPage() {
           <h1 className="text-xl font-medium text-ink-900">Trade</h1>
           <p className="mt-1 text-xs text-ink-500">Cross-chain OTC settlement for traders and market makers</p>
         </div>
-        <div className="flex flex-wrap items-center gap-2 text-[11px] text-ink-400">
-          <ChainPill chain="base" />
-          <ArrowRight {...icon} />
-          <ChainPill chain="lasna" />
-          <ArrowRight {...icon} />
-          <ChainPill chain="unichain" />
-        </div>
+        <RouteStrip />
       </div>
 
       <div className="grid items-start gap-6 xl:grid-cols-[minmax(360px,420px)_minmax(0,1fr)]">

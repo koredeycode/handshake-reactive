@@ -137,12 +137,16 @@ function FaucetCard({ kind }: { kind: LegKind }) {
 }
 
 export default function FaucetPage() {
+  const payment = useTokenDisplay('payment')
+  const asset = useTokenDisplay('asset')
+
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-xl font-medium text-ink-900">Faucet</h1>
         <p className="mt-1 text-xs text-ink-500">
-          Mint the two testnet tokens used by Handshake. These are testnet tokens with no value.
+          Mint {payment.name} ({payment.symbol}) on Base Sepolia and {asset.name} ({asset.symbol}) on Unichain
+          Sepolia. These are testnet tokens with no value.
         </p>
       </div>
 
