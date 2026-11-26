@@ -37,10 +37,13 @@ gives the UTC timestamp of the fatal line in `vercel inspect <url> --logs`.
 | 9 | https://handshake-reactive-d7f3qu8oo-koredeycodes-projects.vercel.app | Production, `main` (`b61a7e8`) | 2026-11-26 09:22:19 | 08:22:50 `vite: command not found` | `handshake-reactive-git-main` |
 | 10 | https://handshake-reactive-7c4xdkaz4-koredeycodes-projects.vercel.app | Production, `main` (`a941934`) | 2026-11-26 09:24:27 | 08:24:44 `vite: command not found` | `handshake-reactive-git-main` |
 
-Working reference: https://handshake-reactive.vercel.app → `ui-mr4oezk78` (`Ready`);
-its build log has no `Cloning github.com/...` line (it was uploaded by the CLI from `ui/`),
-and completes with build-cache upload. https://ui-cahbzl55d-koredeycodes-projects.vercel.app
-is another `Ready` CLI deploy from 08:45:15 WAT.
+Working reference: https://handshake-reactive.vercel.app → `ui-mr4oezk78` (`Ready`, created
+2026-11-26 09:23:04 WAT, HTTP 200 at investigation time); its build log has no
+`Cloning github.com/...` line (it was uploaded by the CLI from `ui/`), and completes with
+build-cache upload. It was published ~1 minute before the last Git-triggered failure
+(09:24:27 WAT), direct evidence that the two deploy paths were racing.
+https://ui-cahbzl55d-koredeycodes-projects.vercel.app is another `Ready` CLI deploy from
+08:45:15 WAT.
 
 ## Root cause
 
