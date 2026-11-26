@@ -12,14 +12,14 @@ Old auto-generated URL still resolves: https://ui-nine-gold.vercel.app
 ## Deploy details
 
 - **Project name:** `handshake-reactive` (renamed from `ui` on 2026-11-26; Vercel team/scope `koredeycodes-projects`, project ID `prj_EYOzeYPQuCvQuw5kuDoFl9tqZ7Hb`). The CLI originally created it as `ui`.
-- **Deploy command used (run from `ui/`):**
-
-  ```bash
-  cd ui
-  vercel deploy --prod --yes
-  ```
-
-- Vercel detected Vite automatically (build command `vite build`, output directory `dist`). The GitHub repo `koredeycode/handshake-reactive` was connected during deploy.
+- **Canonical deploy path: Git integration.** Push to `main` (or open a PR). The GitHub repo `koredeycode/handshake-reactive` was connected during the original deploy; every push triggers a Vercel build.
+- The root-level `vercel.json` pins the build to the UI workspace, because the project Root Directory is `.` (repo root) while the Vite app lives in `ui/`:
+  - install: `npm ci --prefix ui`
+  - build: `npm run build --prefix ui` (`tsc -b && vite build`)
+  - output: `ui/dist`
+  - SPA rewrite to `/index.html` (same rule that used to live only in `ui/vercel.json`)
+- Without that config, Git-triggered builds ran `vite build` at the repo root, where `vite` is not a dependency, and failed with `BUILD_UTILS_SPAWN_127` / `vite: command not found`. See `CI-REPORT.md` for the failing deployment logs.
+- CLI deploys are now an **escape hatch only**, not the normal path. If you must use one, run it from the repo root (so the root `vercel.json` applies) or from `ui/`; do not run both the Git path and a `--prod` CLI deploy for the same change, or the production alias will point to whichever finished last.
 - The canonical subdomain was added as a project domain (`vercel domains add handshake-reactive.vercel.app ui`) and follows future production deployments.
 
 ## Build output summary
