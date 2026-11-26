@@ -1,0 +1,12 @@
+<!doctype html>
+<html>
+  <head><meta charset="utf-8" /><title>Handshake</title></head>
+  <body>
+    <script>
+      // GitHub Pages SPA fallback: preserve deep links such as /verify/0x... .
+      var path = window.location.pathname;
+      sessionStorage.setItem('handshake:redirect', path + window.location.search + window.location.hash);
+      window.location.replace('/');
+    </script>
+  </body>
+</html>

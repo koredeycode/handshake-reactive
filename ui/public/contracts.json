@@ -1,0 +1,24 @@
+{
+  "_comment": "Deployed addresses are intentionally blank until deployment. Fill in here (no rebuild needed) or use VITE_* env vars. Never put keys in this file.",
+  "reactive": {
+    "reactiveContract": "",
+    "systemContract": "0x8888888888888888888888888888888888888888",
+    "legacySystemContract": "0x0000000000000000000000000000000000ffffff"
+  },
+  "base": {
+    "paymentEscrow": "",
+    "paymentToken": "",
+    "callbackProxy": "0x476F44b11F5C942c58f4c8E3d0300E5710743585"
+  },
+  "unichain": {
+    "assetEscrow": "",
+    "assetToken": "",
+    "callbackProxy": "0x775c9B990ADe401060B78D0e98684eEf8d2466C1"
+  },
+  "scan": {
+    "lasnaFromBlock": 0,
+    "baseFromBlock": 0,
+    "unichainFromBlock": 0,
+    "lookbackBlocks": 50000
+  }
+}
