@@ -1,0 +1,5 @@
+personal/
+out/
+cache/
+broadcast/
+.env
