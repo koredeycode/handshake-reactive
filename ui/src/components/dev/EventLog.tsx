@@ -32,7 +32,8 @@ export default function EventLog() {
 
   const feed = useQuery({
     queryKey: ['event-feed', config.reactive.systemContract, config.base.paymentEscrow, config.unichain.assetEscrow],
-    refetchInterval: 10_000,
+    staleTime: 20_000,
+    refetchInterval: 30_000, // dev-only; was 10s
     queryFn: () => fetchEventFeed(config, clients),
   })
 

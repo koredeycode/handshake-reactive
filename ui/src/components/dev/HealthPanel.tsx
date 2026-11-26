@@ -74,7 +74,8 @@ export default function HealthPanel() {
 
   const cron = useQuery({
     queryKey: ['cron-status', legacy],
-    refetchInterval: 10_000,
+    staleTime: 20_000,
+    refetchInterval: 30_000, // dev-only; was 10s
     enabled: !!legacy,
     queryFn: async () => {
       if (!legacy || !lasnaClient) return null
@@ -100,7 +101,7 @@ export default function HealthPanel() {
   return (
     <Panel
       title="Debt, reserves and health"
-      subtitle={`Polls ${CHAIN_LABELS.lasna}, ${CHAIN_LABELS.base} and ${CHAIN_LABELS.unichain} every 5s. Debt is read from the system contract / callback proxy.`}
+      subtitle={`Polls ${CHAIN_LABELS.lasna}, ${CHAIN_LABELS.base} and ${CHAIN_LABELS.unichain} every 15s (dev-only). Debt is read from the system contract / callback proxy.`}
       action={
         <span className="flex items-center gap-2 text-[11px] text-ink-400">
           {health.isFetching && <Spinner />}

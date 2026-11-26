@@ -92,6 +92,10 @@ export interface ProofData {
     lasnaFrom: bigint
     baseFrom: bigint
     unichainFrom: bigint
+    /** Per-chain scan tips, reused as a small cursor window on the next poll. */
+    lasnaTo?: bigint
+    baseTo?: bigint
+    unichainTo?: bigint
     to: bigint
   }
 }

@@ -27,6 +27,11 @@ export const unichainSepolia = defineChain({
     default: { http: ['https://sepolia.unichain.org'] },
     public: { http: ['https://sepolia.unichain.org', 'https://unichain-sepolia-rpc.publicnode.com'] },
   },
+  // Canonical Multicall3 is deployed here; viem only batches reads when the
+  // chain declares it. Verified via eth_getCode at this address.
+  contracts: {
+    multicall3: { address: '0xcA11bde05977b3631167028862bE2a173976CA11', blockCreated: 0 },
+  },
   blockExplorers: {
     default: { name: 'Uniscan', url: 'https://sepolia.uniscan.xyz/' },
   },
