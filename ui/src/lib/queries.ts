@@ -1,11 +1,11 @@
 import { useQueries, useQuery } from '@tanstack/react-query'
 import { useBalance, usePublicClient } from 'wagmi'
 import type { Address, Hex } from 'viem'
-import { CHAIN_IDS } from './chains'
+import { CHAIN_IDS, type ChainKey } from './chains'
 import { configuredAddress } from './config'
 import { assetEscrowAbi, erc20Abi, paymentEscrowAbi, payerAbi, reactiveAbi } from './contracts'
 import { isEmptyOrder } from './format'
-import { useMarket, useMarketConfig, type LegKind } from './markets'
+import { chainKeyFromId, useMarket, useMarketConfig, type LegKind, type Market } from './markets'
 import { isOrderTerminal } from './status'
 import type { Leg, Order, Venues } from './types'
 
@@ -32,8 +32,8 @@ export interface OrderRow {
   createdIndex: number
 }
 
-export interface OrdersResult {
-  data?: OrderRow[]
+export interface OrdersResult<T extends OrderRow = OrderRow> {
+  data?: T[]
   isLoading: boolean
   isError: boolean
   error: Error | null
@@ -48,15 +48,15 @@ export interface OrdersResult {
  * query; each order uses the SAME ['order', id] key as the detail page and
  * stops polling on its own once it is terminal.
  */
-export function useOrders(): OrdersResult {
-  const config = useMarketConfig()
-  const { market } = useMarket()
+export function useOrders(marketOverride?: Market | null): OrdersResult {
+  const { market: current } = useMarket()
+  const target = marketOverride === undefined ? current : marketOverride
   const client = looseClient(usePublicClient({ chainId: CHAIN_IDS.lasna }))
-  const rc = configuredAddress(config.reactive.reactiveContract)
-  const enabled = !!client && !!rc
+  const rc = configuredAddress(target?.reactive.rc)
+  const enabled = !!client && !!rc && !!target
 
   const idsQuery = useQuery({
-    queryKey: ['order-ids', market.id, rc],
+    queryKey: ['order-ids', target?.id, rc],
     enabled,
     staleTime: 60_000,
     refetchInterval: 30_000, // new orders appear within 30s, or on Refresh
@@ -85,7 +85,7 @@ export function useOrders(): OrdersResult {
   const ids = idsQuery.data ?? []
   const orderQueries = useQueries({
     queries: ids.map((id) => ({
-      queryKey: ['order', market.id, id, rc],
+      queryKey: ['order', target?.id, id, rc],
       enabled,
       staleTime: 5_000,
       refetchInterval: (query: { state: { data?: Order | null } }) =>
@@ -116,6 +116,48 @@ export function useOrders(): OrdersResult {
     isFetching: idsQuery.isFetching || orderQueries.some((q) => q.isFetching),
     refetch: async () => {
       await Promise.all([idsQuery.refetch(), ...orderQueries.map((q) => q.refetch())])
+    },
+  }
+}
+
+export interface AggregatedOrderRow extends OrderRow {
+  market: Market
+}
+
+/**
+ * The board reads all enabled markets. Hook slots are fixed (up to four
+ * markets) so hook order never depends on registry contents; extra slots are
+ * simply disabled. Per-market query keys keep cached orders isolated.
+ */
+export function useAllOrders(): OrdersResult<AggregatedOrderRow> {
+  const { markets } = useMarket()
+  const slots = [markets[0], markets[1], markets[2], markets[3]]
+  const first = useOrders(slots[0] ?? null)
+  const second = useOrders(slots[1] ?? null)
+  const third = useOrders(slots[2] ?? null)
+  const fourth = useOrders(slots[3] ?? null)
+  const results = [first, second, third, fourth]
+
+  const rows: AggregatedOrderRow[] = results
+    .flatMap((result, index) => {
+      const market = slots[index]
+      return market ? (result.data ?? []).map((row) => ({ ...row, market })) : []
+    })
+    // Every RC appends ids on creation; higher index means newer on that market.
+    .sort((a, b) => b.createdIndex - a.createdIndex)
+
+  return {
+    data: rows.length
+      ? rows
+      : markets.length > 0 && results.slice(0, markets.length).every((result) => result.data)
+        ? []
+        : undefined,
+    isLoading: results.some((result) => result.isLoading),
+    isError: results.some((result) => result.isError),
+    error: results.find((result) => result.isError)?.error ?? null,
+    isFetching: results.some((result) => result.isFetching),
+    refetch: async () => {
+      await Promise.all(results.map((result) => result.refetch()))
     },
   }
 }
@@ -210,11 +252,11 @@ export function useLeg(kind: LegKind, orderId?: Hex | null, seller?: Hex | null)
   })
 }
 
-export function useTokenMeta(kind: LegKind) {
-  const config = useMarketConfig()
-  const { market, chainKeyFor, legConfig } = useMarket()
-  const token = configuredAddress(kind === 'payment' ? config.base.paymentToken : config.unichain.assetToken)
-  const client = looseClient(usePublicClient({ chainId: CHAIN_IDS[chainKeyFor(kind)] }))
+export function useTokenMeta(kind: LegKind, marketOverride?: Market | null) {
+  const { market: current } = useMarket()
+  const market = marketOverride ?? current
+  const token = configuredAddress(market[kind].token)
+  const client = looseClient(usePublicClient({ chainId: CHAIN_IDS[chainKeyFromId(market[kind].chainId, market[kind].chainKey)] }))
 
   return useQuery({
     queryKey: ['token-meta', market.id, kind, token],
@@ -222,7 +264,7 @@ export function useTokenMeta(kind: LegKind) {
     staleTime: Infinity,
     queryFn: async (): Promise<{ decimals: number; symbol: string }> => {
       // Mirrors the market registry; never a stand-in brand if the read fails.
-      const leg = legConfig(kind)
+      const leg = market[kind]
       const fallback = { decimals: leg.tokenDecimals, symbol: leg.tokenSymbol }
       try {
         const [decimals, symbol] = await Promise.all([
@@ -237,11 +279,36 @@ export function useTokenMeta(kind: LegKind) {
   })
 }
 
-export function useTokenBalance(kind: LegKind, owner?: Hex | null) {
-  const config = useMarketConfig()
-  const { market, chainKeyFor } = useMarket()
-  const token = configuredAddress(kind === 'payment' ? config.base.paymentToken : config.unichain.assetToken)
-  const client = looseClient(usePublicClient({ chainId: CHAIN_IDS[chainKeyFor(kind)] }))
+/** Balance of any deployed test token on an explicit chain (faucet cards). */
+export function useErc20Balance(chain: ChainKey, token?: string | null, owner?: Hex | null) {
+  const address = configuredAddress(token)
+  const client = looseClient(usePublicClient({ chainId: CHAIN_IDS[chain] }))
+
+  return useQuery({
+    queryKey: ['token-balance', chain, address, owner],
+    enabled: !!client && !!address && !!owner,
+    staleTime: 10_000,
+    refetchInterval: 15_000,
+    queryFn: async (): Promise<bigint | null> => {
+      try {
+        return (await client!.readContract({
+          address,
+          abi: erc20Abi,
+          functionName: 'balanceOf',
+          args: [owner],
+        })) as bigint
+      } catch {
+        return null
+      }
+    },
+  })
+}
+
+export function useTokenBalance(kind: LegKind, owner?: Hex | null, marketOverride?: Market | null) {
+  const { market: current } = useMarket()
+  const market = marketOverride ?? current
+  const token = configuredAddress(market[kind].token)
+  const client = looseClient(usePublicClient({ chainId: CHAIN_IDS[chainKeyFromId(market[kind].chainId, market[kind].chainKey)] }))
 
   return useQuery({
     queryKey: ['token-balance', market.id, kind, owner, token],

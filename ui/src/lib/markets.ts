@@ -1,8 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react'
-import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
+import { useCallback, useEffect, useMemo } from 'react'
+import { useQueries, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
+import { usePublicClient } from 'wagmi'
+import type { Hex } from 'viem'
 import { CHAIN_IDS, type ChainKey } from './chains'
 import { useConfig, withOverrides, type AppConfig } from './config'
+import { reactiveAbi } from './contracts'
+import { isEmptyOrder } from './format'
+import type { Order } from './types'
 
 /** Payment and asset roles are stable across markets; only their chains swap. */
 export type LegKind = 'payment' | 'asset'
@@ -38,8 +43,10 @@ export interface MarketsRegistry {
   markets: Market[]
 }
 
-export const DEFAULT_MARKET_ID = 'forward-tusd-base-tasset-unichain'
-const STORAGE_KEY = 'handshake:market'
+export const FORWARD_MARKET_ID = 'forward-tusd-base-tasset-unichain'
+export const OPEN_MARKET_ID = 'open-tusd-base-tasset-unichain'
+export const REVERSE_MARKET_ID = 'reverse-tusd-unichain-tasset-base'
+export const DEFAULT_MARKET_ID = FORWARD_MARKET_ID
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
 
@@ -168,7 +175,7 @@ function useMarketsRegistry(): { registry: MarketsRegistry; isFallback: boolean 
   return { registry: data ?? fallback, isFallback: !data }
 }
 
-/** All registry entries, including disabled ones (the selector filters them). */
+/** All registry entries; only enabled ones participate in trading and inference. */
 export function useMarkets(): Market[] {
   return useMarketsRegistry().registry.markets
 }
@@ -202,42 +209,27 @@ export function clearMarketQueries(queryClient: QueryClient): void {
   queryClient.invalidateQueries()
 }
 
-function readStoredMarket(): string | null {
-  try {
-    return window.localStorage.getItem(STORAGE_KEY)
-  } catch {
-    return null
-  }
+/** Find an enabled market by id. No UI exposes this list; links carry the id. */
+export function findMarket(markets: readonly Market[], id?: string | null): Market | undefined {
+  return markets.find((entry) => entry.enabled && entry.id === id)
 }
 
-function writeStoredMarket(id: string): void {
-  try {
-    window.localStorage.setItem(STORAGE_KEY, id)
-  } catch {
-    // Private browsing: selection still works for this session.
-  }
-}
-
+/**
+ * Internal market selection. The only input is the hidden `?market=` URL
+ * parameter written by trade direction, board links and order inference; the
+ * default is the forward market. There is no user-facing selector or stored
+ * preference — a pasted/read-only link describes its own market.
+ */
 export function useMarket() {
-  const { registry, isFallback } = useMarketsRegistry()
+  const { registry } = useMarketsRegistry()
   const [params, setParams] = useSearchParams()
   const queryClient = useQueryClient()
   const markets = useMemo(() => registry.markets.filter((market) => market.enabled), [registry])
-  const urlId = params.get('market')
-  // Capture once on mount: the one-market fallback must not overwrite a stored
-  // selection while the real registry is still being fetched.
-  const storedRef = useRef<string | null | undefined>(undefined)
-  if (storedRef.current === undefined) storedRef.current = readStoredMarket()
   const market =
-    markets.find((entry) => entry.id === urlId) ??
-    markets.find((entry) => entry.id === storedRef.current) ??
-    markets.find((entry) => entry.id === registry.defaultMarketId) ??
+    findMarket(markets, params.get('market')) ??
+    findMarket(markets, registry.defaultMarketId) ??
     markets[0] ??
     registry.markets[0]
-
-  useEffect(() => {
-    if (market && !isFallback) writeStoredMarket(market.id)
-  }, [market?.id, isFallback])
 
   const chainKeyFor = useCallback(
     (role: LegKind): ChainKey => {
@@ -249,11 +241,11 @@ export function useMarket() {
 
   const legConfig = useCallback((kind: LegKind): MarketLeg => market[kind], [market])
 
+  /** `clear: false` keeps already-cached inference reads when resolving a link. */
   const setMarket = useCallback(
-    (id: string) => {
-      const next = registry.markets.find((entry) => entry.id === id && entry.enabled)
+    (id: string, clear = true) => {
+      const next = findMarket(markets, id)
       if (!next) return
-      writeStoredMarket(next.id)
       setParams(
         (previous) => {
           const updated = new URLSearchParams(previous)
@@ -262,9 +254,9 @@ export function useMarket() {
         },
         { replace: true },
       )
-      clearMarketQueries(queryClient)
+      if (clear) clearMarketQueries(queryClient)
     },
-    [registry, setParams, queryClient],
+    [markets, setParams, queryClient],
   )
 
   return {
@@ -276,6 +268,70 @@ export function useMarket() {
     legConfig,
     paymentChainKey: chainKeyFor('payment'),
     assetChainKey: chainKeyFor('asset'),
+  }
+}
+
+interface LooseLasnaClient {
+  readContract: (args: Record<string, unknown>) => Promise<unknown>
+}
+
+/**
+ * Cheap market inference for a pasted order ID: one `getOrder` eth_call on
+ * each enabled market's RC. Results are cached forever by order id + RC, so
+ * repeated links make no extra calls.
+ */
+export function useInferMarket(orderId?: Hex | null, enabled = true) {
+  const { markets } = useMarket()
+  const client = (usePublicClient({ chainId: CHAIN_IDS.lasna }) ?? null) as unknown as LooseLasnaClient | null
+
+  const results = useQueries({
+    queries: markets.map((entry) => ({
+      queryKey: ['market-inference', orderId, entry.reactive.rc],
+      enabled: enabled && !!client && !!orderId,
+      staleTime: Infinity,
+      gcTime: Infinity,
+      retryCount: 0,
+      queryFn: async (): Promise<string | null> => {
+        try {
+          const result = (await client!.readContract({
+            address: entry.reactive.rc,
+            abi: reactiveAbi,
+            functionName: 'getOrder',
+            args: [orderId],
+          })) as unknown as Order
+          return isEmptyOrder(result) ? null : entry.id
+        } catch {
+          return null
+        }
+      },
+    })),
+  })
+
+  const marketId = results.find((result) => result.data)?.data ?? null
+  const isLoading = enabled && !!orderId && results.some((result) => result.isLoading)
+  return { marketId, isLoading }
+}
+
+/**
+ * Detail and track pages call this with the order id. An explicit hidden
+ * `?market=` link wins; otherwise inference writes the resolved id back into
+ * the (still invisible) URL so every downstream query shares one market.
+ */
+export function useEnsureMarket(orderId?: Hex | null) {
+  const [params] = useSearchParams()
+  const { markets, setMarket } = useMarket()
+  const explicit = findMarket(markets, params.get('market'))?.id ?? null
+  const inference = useInferMarket(orderId, !explicit)
+
+  useEffect(() => {
+    if (!explicit && inference.marketId && !params.get('market')) {
+      setMarket(inference.marketId, false)
+    }
+  }, [explicit, inference.marketId, params, setMarket])
+
+  return {
+    ready: !!explicit || !!inference.marketId,
+    isLoading: !explicit && inference.isLoading,
   }
 }
 

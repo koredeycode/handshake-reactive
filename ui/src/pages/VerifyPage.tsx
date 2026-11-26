@@ -15,16 +15,17 @@ import {
   inputClass,
   icon,
 } from '../components/ui'
-import { EXPLORER_NAMES, txUrl, CHAIN_LABELS } from '../lib/chains'
+import { CHAIN_LABELS, EXPLORER_NAMES, txUrl } from '../lib/chains'
 
 import { countdown, formatAmount, formatDeadline, normalizeOrderId, truncate } from '../lib/format'
-import { useMarket, useMarketConfig } from '../lib/markets'
+import { useEnsureMarket, useMarket, useMarketConfig } from '../lib/markets'
 import { useProof } from '../lib/proofs'
 import { useOrder } from '../lib/queries'
 import { deriveStatus } from '../lib/status'
 import { useTokenDisplay } from '../lib/tokenDisplay'
 import { useNow } from '../lib/useNow'
 import type { ChainKey } from '../lib/chains'
+import type { Hex } from 'viem'
 import type { ProofEvent } from '../lib/types'
 
 function ExplorerCard({
@@ -44,7 +45,9 @@ function ExplorerCard({
       </div>
       <div className="mt-4 font-mono text-[11px]">
         {event ? (
-          <ExternalLink href={txUrl(chain, event.txHash)}>{truncate(event.txHash, 12, 10)}</ExternalLink>
+          <ExternalLink href={txUrl(chain, event.txHash)} className="min-h-10 max-w-full truncate" title={event.txHash}>
+            {truncate(event.txHash, 10, 6)}
+          </ExternalLink>
         ) : (
           <span className="font-sans text-ink-400">Settlement in progress</span>
         )}
@@ -54,11 +57,8 @@ function ExplorerCard({
   )
 }
 
-export default function VerifyPage() {
-  const { orderId: param } = useParams()
-  const navigate = useNavigate()
-  const [input, setInput] = useState(param ?? '')
-  const [localError, setLocalError] = useState<string | null>(null)
+/** Public, wallet-free detail. Market comes from the hidden link param or inference. */
+function VerifyDetail({ orderId }: { orderId: Hex }) {
   const config = useMarketConfig()
   const { chainKeyFor } = useMarket()
   const paymentChain = chainKeyFor('payment')
@@ -66,18 +66,94 @@ export default function VerifyPage() {
   const now = useNow()
   const paymentToken = useTokenDisplay('payment')
   const assetToken = useTokenDisplay('asset')
-
-  useEffect(() => {
-    setInput(param ?? '')
-    setLocalError(null)
-  }, [param])
-
-  const orderId = normalizeOrderId(param)
   const orderQuery = useOrder(orderId)
   const proofQuery = useProof(orderId)
   const order = orderQuery.data
   const proof = proofQuery.data
   const status = order ? deriveStatus(order, now) : null
+  const notFound = !orderQuery.isLoading && !order
+  const paymentSymbol = paymentToken.symbol
+  const assetSymbol = assetToken.symbol
+  const paymentDecimals = paymentToken.decimals
+  const assetDecimals = assetToken.decimals
+
+  if (!config.reactive.reactiveContract) {
+    return <EmptyState title="Order unavailable" message="Order lookup is unavailable in this workspace." />
+  }
+  if (orderQuery.isLoading) {
+    return (
+      <Panel>
+        <div className="flex items-center justify-center gap-2 py-12 text-xs text-ink-500">
+          <Spinner /> Loading order
+        </div>
+      </Panel>
+    )
+  }
+  if (notFound) {
+    return <EmptyState title="No order found" message="Check the order ID and try again." />
+  }
+
+  return (
+    <div className="space-y-6">
+      <Panel
+        title={`Order ${truncate(orderId, 12, 8)}`}
+        subtitle="Terms read from the reactive contract"
+        action={status && <StatusPill status={status} />}
+      >
+        <TradeTicket
+          pay={{
+            symbol: paymentSymbol,
+            chain: paymentChain,
+            kind: 'payment',
+            mark: paymentToken.mark,
+            color: paymentToken.color,
+            amount: formatAmount(order?.paymentAmount, paymentDecimals),
+            hint: `You pay · ${CHAIN_LABELS[paymentChain]}`,
+          }}
+          receive={{
+            symbol: assetSymbol,
+            chain: assetChain,
+            kind: 'asset',
+            mark: assetToken.mark,
+            color: assetToken.color,
+            amount: formatAmount(order?.assetAmount, assetDecimals),
+            hint: `You receive · ${CHAIN_LABELS[assetChain]}`,
+          }}
+        />
+        <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <Metric label="Buyer" value={truncate(order?.buyer, 8, 6)} />
+          <Metric label="Seller" value={truncate(order?.seller, 8, 6)} />
+          <Metric label="Deadline" value={formatDeadline(order?.deadline ?? null)} />
+          <Metric label="Time remaining" value={countdown(order?.deadline ?? null, now)} />
+        </div>
+      </Panel>
+
+      <div>
+        <h2 className="mb-3 text-sm font-medium text-ink-900">Explorers</h2>
+        <div className="grid gap-4 md:grid-cols-3">
+          <ExplorerCard chain={paymentChain} event={proof?.paymentLocked} description={`Payment locked on ${CHAIN_LABELS[paymentChain]}`} />
+          <ExplorerCard chain="lasna" event={proof?.reactive} description={`Settlement decision on ${CHAIN_LABELS.lasna}`} />
+          <ExplorerCard chain={assetChain} event={proof?.assetLocked} description={`Asset locked on ${CHAIN_LABELS[assetChain]}`} />
+        </div>
+      </div>
+
+      <HopTimeline order={order} proof={proof} />
+    </div>
+  )
+}
+
+export default function VerifyPage() {
+  const { orderId: param } = useParams()
+  const navigate = useNavigate()
+  const [input, setInput] = useState(param ?? '')
+  const [localError, setLocalError] = useState<string | null>(null)
+  const orderId = normalizeOrderId(param)
+  const { ready, isLoading } = useEnsureMarket(orderId)
+
+  useEffect(() => {
+    setInput(param ?? '')
+    setLocalError(null)
+  }, [param])
 
   function submit(event: FormEvent) {
     event.preventDefault()
@@ -90,13 +166,7 @@ export default function VerifyPage() {
     navigate(`/verify/${normalized}`)
   }
 
-  const configured = !!config.reactive.reactiveContract
-  const notFound = param && !orderQuery.isLoading && !order
   const malformed = !!param && !orderId
-  const paymentSymbol = paymentToken.symbol
-  const assetSymbol = assetToken.symbol
-  const paymentDecimals = paymentToken.decimals
-  const assetDecimals = assetToken.decimals
 
   return (
     <div className="space-y-6">
@@ -108,7 +178,7 @@ export default function VerifyPage() {
       <Panel title="Find an order">
         <form onSubmit={submit} className="flex flex-wrap gap-3">
           <input
-            className={`${inputClass} min-w-[280px] flex-1`}
+            className={`${inputClass} min-w-0 flex-1 sm:min-w-[280px]`}
             placeholder="Paste an order ID — 0x… or 64 hex characters"
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -119,67 +189,22 @@ export default function VerifyPage() {
         {(localError || malformed) && (
           <p className="mt-3 text-xs text-bad">{localError ?? 'That order ID is not valid. Check it and try again.'}</p>
         )}
-        {!configured && (
-          <p className="mt-3 text-xs text-ink-500">Order lookup is unavailable in this workspace.</p>
-        )}
       </Panel>
 
       {!param ? (
         <EmptyState title="Enter an order ID" message="Paste an ID above to see the settlement trail." />
-      ) : !orderId ? null : orderQuery.isLoading ? (
+      ) : !orderId ? null : !ready ? (
         <Panel>
-          <div className="flex items-center justify-center gap-2 py-12 text-xs text-ink-500">
-            <Spinner /> Loading order
-          </div>
+          {isLoading ? (
+            <div className="flex items-center justify-center gap-2 py-12 text-xs text-ink-500">
+              <Spinner /> Finding the order's market
+            </div>
+          ) : (
+            <EmptyState title="No order found" message="Check the order ID and try again." />
+          )}
         </Panel>
-      ) : notFound ? (
-        <EmptyState title="No order found" message="Check the order ID and try again." />
       ) : (
-        <div className="space-y-6">
-          <Panel
-            title={`Order ${truncate(orderId, 12, 8)}`}
-            subtitle="Terms read from the reactive contract"
-            action={status && <StatusPill status={status} />}
-          >
-            <TradeTicket
-              pay={{
-                symbol: paymentSymbol,
-                chain: paymentChain,
-                kind: 'payment',
-                mark: paymentToken.mark,
-                color: paymentToken.color,
-                amount: formatAmount(order?.paymentAmount, paymentDecimals),
-                hint: `You pay · ${CHAIN_LABELS[paymentChain]}`,
-              }}
-              receive={{
-                symbol: assetSymbol,
-                chain: assetChain,
-                kind: 'asset',
-                mark: assetToken.mark,
-                color: assetToken.color,
-                amount: formatAmount(order?.assetAmount, assetDecimals),
-                hint: `You receive · ${CHAIN_LABELS[assetChain]}`,
-              }}
-            />
-            <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <Metric label="Buyer" value={truncate(order?.buyer, 8, 6)} />
-              <Metric label="Seller" value={truncate(order?.seller, 8, 6)} />
-              <Metric label="Deadline" value={formatDeadline(order?.deadline ?? null)} />
-              <Metric label="Time remaining" value={countdown(order?.deadline ?? null, now)} />
-            </div>
-          </Panel>
-
-          <div>
-            <h2 className="mb-3 text-sm font-medium text-ink-900">Explorers</h2>
-            <div className="grid gap-4 md:grid-cols-3">
-              <ExplorerCard chain={paymentChain} event={proof?.paymentLocked} description={`Payment locked on ${CHAIN_LABELS[paymentChain]}`} />
-              <ExplorerCard chain="lasna" event={proof?.reactive} description={`Settlement decision on ${CHAIN_LABELS.lasna}`} />
-              <ExplorerCard chain={assetChain} event={proof?.assetLocked} description={`Asset locked on ${CHAIN_LABELS[assetChain]}`} />
-            </div>
-          </div>
-
-          <HopTimeline order={order} proof={proof} />
-        </div>
+        <VerifyDetail orderId={orderId} />
       )}
     </div>
   )

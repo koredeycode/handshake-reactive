@@ -23,7 +23,7 @@ Deploy `dist/` to Vercel (see `vercel.json` rewrite) or GitHub Pages (`404.html`
 
 ## Configuration
 
-Live addresses are read at runtime from `public/contracts.json`. `public/tokens.json` holds display metadata (name, symbol, decimals, letter mark, color) keyed by chain and token address; its name/symbol/decimals mirror the deployed ERC-20s (`Test USD` / `tUSD` on Base Sepolia, `Test Asset` / `tASSET` on Unichain Sepolia). Optional build-time overrides: `VITE_RC_ADDRESS`, `VITE_PAYMENT_ESCROW`, `VITE_ASSET_ESCROW`, `VITE_PAYMENT_TOKEN`, `VITE_ASSET_TOKEN`, `VITE_BASE_PROXY`, `VITE_UNICHAIN_PROXY`, `VITE_*_FROM_BLOCK`, `VITE_LOOKBACK_BLOCKS`. `VITE_DEV_TOOLS=1` enables the hidden `/dev` route in a production build (it can also be opened with `?dev=1`). Never put private keys in any of these files.
+Live addresses are read at runtime from `public/contracts.json`. `public/tokens.json` holds display metadata (name, symbol, decimals, letter mark, color) keyed by chain and token address; its name/symbol/decimals mirror the deployed ERC-20s (`Test USD` / `tUSD` and `Test Asset` / `tASSET`, one of each on Base Sepolia and Unichain Sepolia). `public/markets.json` is the internal registry of the three live market instances; no screen exposes a market selector — direction comes from the trade ticket and links carry a hidden `?market=` id. Optional build-time overrides: `VITE_RC_ADDRESS`, `VITE_PAYMENT_ESCROW`, `VITE_ASSET_ESCROW`, `VITE_PAYMENT_TOKEN`, `VITE_ASSET_TOKEN`, `VITE_BASE_PROXY`, `VITE_UNICHAIN_PROXY`, `VITE_*_FROM_BLOCK`, `VITE_LOOKBACK_BLOCKS`. `VITE_DEV_TOOLS=1` enables the hidden `/dev` route in a production build (it can also be opened with `?dev=1`). Never put private keys in any of these files.
 
 ### Public RPCs are rate-limited
 
@@ -38,10 +38,10 @@ The browser reads public RPCs directly; shared public endpoints enforce per-IP l
 | `/` | Home: product headline, Base Sepolia → Reactive Lasna → Unichain Sepolia route, primary trade action and a live order book preview |
 | `/orders` | Trade screen: swap-style trade ticket and the live order book |
 | `/my-orders` | Personal order history: real orders where the connected wallet is buyer or seller, with observed tx hashes |
-| `/new` | Trade ticket + order details: validation, quick presets, custom settlement window (30 seconds – 30 days) and chain guards |
-| `/orders/:orderId` | Order detail: trade card, lock/approve/retry, settlement trail and paired leg cards |
-| `/verify` · `/verify/:orderId` | Public tracking — read-only, no wallet, only real hashes |
-| `/faucet` | Quiet testnet destination: mint the two demo tokens, refresh balances, find native ETH faucets |
+| `/new` | Trade ticket with a reversible direction control, optional seller (blank = any seller), validation, presets and a custom settlement window (30 seconds – 30 days) |
+| `/orders/:orderId` | Order detail: trade card, lock/approve/retry, settlement trail and paired leg cards; the market comes from a hidden link param or is inferred from the order |
+| `/verify` · `/verify/:orderId` | Public tracking — read-only, no wallet, only real hashes; pasted IDs resolve their market automatically |
+| `/faucet` | Four chain-local test tokens across both trade directions, with balances, mint actions and native-gas links |
 | `/dev` | Hidden internal diagnostics (not linked from navigation): debt/reserves/health, warnings, raw event log, latency chart, raw JSON state |
 
 ## Data policy

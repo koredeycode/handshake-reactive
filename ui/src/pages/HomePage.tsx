@@ -3,18 +3,61 @@ import { ArrowRight, Plus } from 'lucide-react'
 import { Button, EmptyState, Panel, RouteStrip, Spinner, StatusPill, TokenMark, icon } from '../components/ui'
 import { CHAIN_LABELS } from '../lib/chains'
 import { countdown, formatAmount, formatDeadline, truncate } from '../lib/format'
-import { useMarket } from '../lib/markets'
-import { useOrders } from '../lib/queries'
+import { chainKeyFromId, useMarket } from '../lib/markets'
+import { useAllOrders, type AggregatedOrderRow } from '../lib/queries'
 import { deriveStatus } from '../lib/status'
-import { useTokenDisplay } from '../lib/tokenDisplay'
+import { useMarketTokenDisplay } from '../lib/tokenDisplay'
 import { useNow } from '../lib/useNow'
 
-/** The newest real orders, shown as a compact read-only preview. */
+function PreviewRow({ row, now }: { row: AggregatedOrderRow; now: number }) {
+  const { id, order, market } = row
+  const payment = useMarketTokenDisplay(market, 'payment')
+  const asset = useMarketTokenDisplay(market, 'asset')
+  const status = deriveStatus(order, now)
+  const expired = countdown(order.deadline, now) === 'expired'
+  return (
+    <li>
+      <Link
+        to={`/orders/${id}?market=${market.id}`}
+        className="flex w-full flex-wrap items-center justify-between gap-4 px-5 py-4 text-left transition-colors hover:bg-paper-50 sm:px-6"
+      >
+        <span className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2">
+          <span className="flex items-center gap-2">
+            <TokenMark symbol={payment.symbol} kind="payment" size="sm" mark={payment.mark} color={payment.color} />
+            <span className="tnum font-mono text-[13px] font-medium text-ink-900">
+              {formatAmount(order.paymentAmount, payment.decimals, payment.symbol)}
+            </span>
+            <span className="hidden text-[10px] text-ink-400 sm:inline" title={CHAIN_LABELS[chainKeyFromId(market.payment.chainId, market.payment.chainKey)]}>
+              {chainKeyFromId(market.payment.chainId, market.payment.chainKey)}
+            </span>
+          </span>
+          <ArrowRight {...icon} className="text-ink-400" />
+          <span className="flex items-center gap-2">
+            <TokenMark symbol={asset.symbol} kind="asset" size="sm" mark={asset.mark} color={asset.color} />
+            <span className="tnum font-mono text-[13px] font-medium text-ink-900">
+              {formatAmount(order.assetAmount, asset.decimals, asset.symbol)}
+            </span>
+          </span>
+        </span>
+        <span className="flex items-center gap-3">
+          <StatusPill status={status} />
+          <span className={`tnum hidden font-mono text-[11px] sm:inline ${expired ? 'text-warn' : 'text-ink-400'}`}>
+            {countdown(order.deadline, now)}
+          </span>
+          <span className="tnum hidden font-mono text-[11px] text-ink-400 md:inline" title={formatDeadline(order.deadline)}>
+            {truncate(id, 10, 6)}
+          </span>
+          <ArrowRight {...icon} className="text-ink-400" />
+        </span>
+      </Link>
+    </li>
+  )
+}
+
+/** The newest real orders across all markets, as a compact read-only preview. */
 function OrderBookPreview() {
-  const { data: orders, isLoading, isError } = useOrders()
+  const { data: orders, isLoading, isError } = useAllOrders()
   const now = useNow()
-  const payment = useTokenDisplay('payment')
-  const asset = useTokenDisplay('asset')
   const preview = orders?.slice(0, 4) ?? []
 
   return (
@@ -44,44 +87,7 @@ function OrderBookPreview() {
         </div>
       ) : (
         <ul className="divide-y divide-line">
-          {preview.map(({ id, order }) => {
-            const status = deriveStatus(order, now)
-            const expired = countdown(order.deadline, now) === 'expired'
-            return (
-              <li key={id}>
-                <Link
-                  to={`/orders/${id}`}
-                  className="flex w-full flex-wrap items-center justify-between gap-4 px-6 py-4 text-left transition-colors hover:bg-paper-50"
-                >
-                  <span className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2">
-                    <span className="flex items-center gap-2">
-                      <TokenMark symbol={payment.symbol} kind="payment" size="sm" mark={payment.mark} color={payment.color} />
-                      <span className="tnum font-mono text-[13px] font-medium text-ink-900">
-                        {formatAmount(order.paymentAmount, payment.decimals, payment.symbol)}
-                      </span>
-                    </span>
-                    <ArrowRight {...icon} className="text-ink-400" />
-                    <span className="flex items-center gap-2">
-                      <TokenMark symbol={asset.symbol} kind="asset" size="sm" mark={asset.mark} color={asset.color} />
-                      <span className="tnum font-mono text-[13px] font-medium text-ink-900">
-                        {formatAmount(order.assetAmount, asset.decimals, asset.symbol)}
-                      </span>
-                    </span>
-                  </span>
-                  <span className="flex items-center gap-3">
-                    <StatusPill status={status} />
-                    <span className={`tnum hidden font-mono text-[11px] sm:inline ${expired ? 'text-warn' : 'text-ink-400'}`}>
-                      {countdown(order.deadline, now)}
-                    </span>
-                    <span className="tnum hidden font-mono text-[11px] text-ink-400 md:inline" title={formatDeadline(order.deadline)}>
-                      {truncate(id, 10, 6)}
-                    </span>
-                    <ArrowRight {...icon} className="text-ink-400" />
-                  </span>
-                </Link>
-              </li>
-            )
-          })}
+          {preview.map((row) => <PreviewRow key={row.id} row={row} now={now} />)}
         </ul>
       )}
     </Panel>

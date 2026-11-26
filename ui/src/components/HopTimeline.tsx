@@ -1,5 +1,5 @@
 import { CHAIN_LABELS, type ChainKey } from '../lib/chains'
-import { isZeroAddress } from '../lib/format'
+import { isZeroAddress, truncate } from '../lib/format'
 import { useMarket } from '../lib/markets'
 import { buildHops } from '../lib/proofs'
 import type { ProofChainKeys } from '../lib/logs'
@@ -23,15 +23,20 @@ function FlowRow({
   event?: { txHash: string }
 }) {
   return (
-    <div className="flex min-w-0 items-center justify-between gap-3 rounded-xl border border-line bg-paper-0 px-3 py-2">
-      <span className="flex min-w-0 items-center gap-2">
-        <ChainMark chain={chain} className="h-4 w-4" />
-        <span className="truncate text-[12px] text-ink-700">{label}</span>
+    <div className="flex min-w-0 flex-col items-start gap-2 rounded-xl border border-line bg-paper-0 px-3 py-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+      <span className="flex min-w-0 items-start gap-2">
+        <ChainMark chain={chain} className="mt-0.5 h-4 w-4" />
+        <span className="text-[12px] leading-snug text-ink-700">{label}</span>
       </span>
       {event ? (
-        <TxLink chain={chain} hash={event.txHash} />
+        <TxLink
+          chain={chain}
+          hash={event.txHash}
+          label={truncate(event.txHash, 6, 4)}
+          className="max-w-[9rem] truncate"
+        />
       ) : (
-        <span className="shrink-0 font-sans text-[11px] text-ink-400">Pending</span>
+        <span className="shrink-0 font-sans text-[12px] text-ink-400">Pending</span>
       )}
     </div>
   )
@@ -52,25 +57,32 @@ function ConvergenceDiagram({
   const paymentLabel = CHAIN_LABELS[chainKeys.payment]
   const assetLabel = CHAIN_LABELS[chainKeys.asset]
   return (
-    <div className="mb-6 grid grid-cols-1 gap-3 rounded-2xl border border-line bg-paper-50 p-4 md:grid-cols-[1fr_auto_1fr] md:items-center md:gap-4">
-      <div className="space-y-2">
-        <p className="px-1 text-[11px] font-medium text-ink-500">Locked on origin chains</p>
+    <div className="mb-6 grid grid-cols-1 gap-3 rounded-2xl border border-line bg-paper-50 p-4 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] md:items-center md:gap-4">
+      <div className="min-w-0 space-y-2">
+        <p className="px-1 text-[12px] font-medium text-ink-500">Locked on origin chains</p>
         <FlowRow chain={chainKeys.payment} label={`Payment · ${paymentLabel}`} event={proof?.paymentLocked} />
         <FlowRow chain={chainKeys.asset} label={`Asset · ${assetLabel}`} event={proof?.assetLocked} />
       </div>
 
-      <div className="flex items-center justify-center gap-3 md:flex-col md:gap-2">
+      <div className="flex min-w-0 items-center justify-center gap-3 md:flex-col md:gap-2">
         <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-accent/25 bg-accent-soft text-accent">
           <ConvergenceMark className="h-5 w-5" />
         </span>
-        <span className="text-[11px] font-medium text-ink-700">One decision</span>
+        <span className="text-[12px] font-medium text-ink-700">One decision</span>
         <ChainMark chain="lasna" className="h-4 w-4" />
-        <span className="text-[10px] text-ink-400">{CHAIN_LABELS.lasna}</span>
-        {proof?.reactive ? <TxLink chain="lasna" hash={proof.reactive.txHash} /> : null}
+        <span className="text-[11px] text-ink-400">{CHAIN_LABELS.lasna}</span>
+        {proof?.reactive ? (
+          <TxLink
+            chain="lasna"
+            hash={proof.reactive.txHash}
+            label={truncate(proof.reactive.txHash, 6, 4)}
+            className="max-w-[9rem] truncate"
+          />
+        ) : null}
       </div>
 
-      <div className="space-y-2">
-        <p className="px-1 text-[11px] font-medium text-ink-500">
+      <div className="min-w-0 space-y-2">
+        <p className="px-1 text-[12px] font-medium text-ink-500">
           {refundMode ? 'Refunded to depositors' : 'Delivered by callback'}
         </p>
         <FlowRow
@@ -149,11 +161,16 @@ export default function HopTimeline({
                   </span>
                   <ChainPill chain={hop.chain} />
                 </div>
-                <div className="font-mono text-[11px]">
+                <div className="min-w-0 font-mono text-[11px]">
                   {event ? (
-                    <TxLink chain={hop.chain} hash={event.txHash} />
+                    <TxLink
+                      chain={hop.chain}
+                      hash={event.txHash}
+                      label={truncate(event.txHash, 6, 4)}
+                      className="max-w-[9rem] truncate"
+                    />
                   ) : (
-                    <span className="font-sans text-ink-400">{pendingText(hop.key)}</span>
+                    <span className="font-sans text-[12px] text-ink-400">{pendingText(hop.key)}</span>
                   )}
                 </div>
               </div>

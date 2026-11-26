@@ -35,7 +35,7 @@ import {
 export default function OrderDetail({ orderId }: { orderId: Hex }) {
   const navigate = useNavigate()
   const config = useMarketConfig()
-  const { chainKeyFor } = useMarket()
+  const { market, chainKeyFor } = useMarket()
   const paymentChain = chainKeyFor('payment')
   const assetChain = chainKeyFor('asset')
   const { address } = useAccount()
@@ -144,8 +144,11 @@ export default function OrderDetail({ orderId }: { orderId: Hex }) {
             <Button size="sm" icon={<RefreshCw {...icon} />} onClick={refresh}>
               Refresh
             </Button>
-            <CopyButton text={`${window.location.origin}/verify/${orderId}`} label="Copy link" />
-            <Button size="sm" icon={<ArrowUpRight {...icon} />} onClick={() => navigate(`/verify/${orderId}`)}>
+            <CopyButton
+              text={`${window.location.origin}/verify/${orderId}?market=${market.id}`}
+              label="Copy link"
+            />
+            <Button size="sm" icon={<ArrowUpRight {...icon} />} onClick={() => navigate(`/verify/${orderId}?market=${market.id}`)}>
               Track order
             </Button>
           </div>
@@ -182,7 +185,7 @@ export default function OrderDetail({ orderId }: { orderId: Hex }) {
             label="Buyer"
             value={truncate(order.buyer, 8, 6)}
             hint={
-              <ExternalLink href={addressUrl(paymentChain, order.buyer)} className="text-[11px]">
+              <ExternalLink href={addressUrl(paymentChain, order.buyer)} className="inline-flex min-h-10 items-center text-[12px]">
                 {EXPLORER_NAMES[paymentChain]}
               </ExternalLink>
             }
@@ -192,7 +195,7 @@ export default function OrderDetail({ orderId }: { orderId: Hex }) {
             value={open ? 'Open to any seller' : truncate(order.seller, 8, 6)}
             hint={
               !open && (
-                <ExternalLink href={addressUrl(assetChain, order.seller)} className="text-[11px]">
+                <ExternalLink href={addressUrl(assetChain, order.seller)} className="inline-flex min-h-10 items-center text-[12px]">
                   {EXPLORER_NAMES[assetChain]}
                 </ExternalLink>
               )
@@ -204,7 +207,7 @@ export default function OrderDetail({ orderId }: { orderId: Hex }) {
                 label={winnerKnown ? 'Winner' : 'Leaderboard'}
                 value={
                   winnerKnown ? (
-                    <ExternalLink href={addressUrl(assetChain, order.winner)} className="text-[11px]">
+                    <ExternalLink href={addressUrl(assetChain, order.winner)} className="inline-flex min-h-10 items-center text-[12px]">
                       {truncate(order.winner, 8, 6)}
                     </ExternalLink>
                   ) : (

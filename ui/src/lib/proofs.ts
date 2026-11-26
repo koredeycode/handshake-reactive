@@ -5,17 +5,20 @@ import type { Hex } from 'viem'
 import { CHAIN_IDS, CHAIN_LABELS, EXPLORER_NAMES, txUrl, type ChainKey } from './chains'
 
 import { formatTimestamp, isZeroAddress, truncate } from './format'
+import { chainKeyFromId, marketToAppConfig, useMarket, type Market } from './markets'
 import { logClient, resolveProof, type ProofChainKeys, type ProofClients } from './logs'
-import { useMarket, useMarketConfig } from './markets'
 import { useOrder } from './queries'
 import { isOrderTerminal } from './status'
 import type { Order, ProofData, ProofEvent } from './types'
 
-export function useProofClients(): ProofClients {
-  const { chainKeyFor } = useMarket()
+export function useProofClients(marketOverride?: Market | null): ProofClients {
+  const { market: current } = useMarket()
+  const target = marketOverride ?? current
+  const paymentChain = chainKeyFromId(target.payment.chainId, target.payment.chainKey)
+  const assetChain = chainKeyFromId(target.asset.chainId, target.asset.chainKey)
   const lasna = usePublicClient({ chainId: CHAIN_IDS.lasna })
-  const payment = usePublicClient({ chainId: CHAIN_IDS[chainKeyFor('payment')] })
-  const asset = usePublicClient({ chainId: CHAIN_IDS[chainKeyFor('asset')] })
+  const payment = usePublicClient({ chainId: CHAIN_IDS[paymentChain] })
+  const asset = usePublicClient({ chainId: CHAIN_IDS[assetChain] })
   return { lasna: logClient(lasna), payment: logClient(payment), asset: logClient(asset) }
 }
 
@@ -25,10 +28,11 @@ export function useProofClients(): ProofClients {
  * still change: terminal orders keep their already-observed hashes forever
  * with `staleTime: Infinity` and `refetchInterval: false`.
  */
-export function useProof(orderId?: Hex | null, providedOrder?: Order | null) {
-  const config = useMarketConfig()
-  const { market, chainKeyFor } = useMarket()
-  const clients = useProofClients()
+export function useProof(orderId?: Hex | null, providedOrder?: Order | null, marketOverride?: Market | null) {
+  const { registry, market: current } = useMarket()
+  const market = marketOverride ?? current
+  const config = marketToAppConfig(registry, market)
+  const clients = useProofClients(market)
   // Callers that already have the order (e.g. My Orders) pass it through so we
   // do not create a second getOrder poller for the same id.
   const orderQuery = useOrder(orderId, { enabled: !providedOrder })
@@ -50,8 +54,8 @@ export function useProof(orderId?: Hex | null, providedOrder?: Order | null) {
     queryFn: async (context): Promise<ProofData> => {
       const previous = context.client.getQueryData<ProofData>(queryKey)
       return resolveProof(orderId!, config, clients, order, previous, {
-        payment: chainKeyFor('payment'),
-        asset: chainKeyFor('asset'),
+        payment: chainKeyFromId(market.payment.chainId, market.payment.chainKey),
+        asset: chainKeyFromId(market.asset.chainId, market.asset.chainKey),
       })
     },
   })
