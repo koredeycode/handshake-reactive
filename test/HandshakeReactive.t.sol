@@ -261,6 +261,13 @@ contract HandshakeReactiveTest is Test {
         rc.setVenues(1, BASE_ESCROW, 1301, UNICHAIN_ESCROW);
     }
 
+    function testSetVenuesCannotBeCalledTwice() public {
+        assertEq(sys.subscriptionCount(), 7);
+        vm.expectRevert(abi.encodeWithSignature("InvalidVenue()"));
+        rc.setVenues(84532, BASE_ESCROW, 1301, UNICHAIN_ESCROW);
+        assertEq(sys.subscriptionCount(), 7); // no duplicate subscriptions installed
+    }
+
     // --------------------------------------------------------------- happy paths
 
     function testPaymentFirstLockRequestsTwoCallbacksInOneReact() public {
@@ -447,6 +454,43 @@ contract HandshakeReactiveTest is Test {
         assertEq(injected, address(0));
         assertEq(cbOrder, id);
         assertEq(nonce, 2);
+    }
+
+    function testLateAssetLockedAfterRefundRequestedRefundsOnlyThatDepositor() public {
+        _useOrder(id);
+        _paymentLock();
+        vm.warp(deadline + 1);
+        _react(_cronLog()); // refund decision made for the already-seen payment leg
+        HandshakeReactive.Order memory before = rc.getOrder(id);
+        assertTrue(before.refundRequested);
+        assertFalse(before.settleRequested);
+        assertEq(sys.callbackCount(), 1);
+
+        // The asset Locked log is delivered only after refundRequested is already true.
+        // It must produce a single-leg refund to its depositor, never a settlement.
+        _react(_lockedLog(false, SELLER, BUYER));
+        HandshakeReactive.Order memory o = rc.getOrder(id);
+        assertEq(sys.callbackCount(), 2);
+        assertEq(o.nonce, 2);
+        assertTrue(o.refundRequested);
+        assertFalse(o.settleRequested);
+
+        CallbackRecord memory a = _callback(1);
+        assertEq(a.chainId, 1301);
+        assertEq(a.recipient, UNICHAIN_ESCROW);
+        assertEq(a.gasLimit, 500_000);
+        assertEq(bytes4(a.payload), REFUND_ASSET_SELECTOR);
+        (address injected, bytes32 cbOrder, address depositor, uint64 nonce) =
+            abi.decode(_args(a.payload), (address, bytes32, address, uint64));
+        assertEq(injected, address(0));
+        assertEq(cbOrder, id);
+        assertEq(depositor, SELLER);
+        assertEq(nonce, 2);
+
+        // The payment leg's request state and its earlier refund callback are untouched.
+        assertEq(o.paymentRequestNonce, before.paymentRequestNonce);
+        assertEq(o.paymentRefundRequested, before.paymentRefundRequested);
+        assertEq(bytes4(_callback(0).payload), REFUND_PAYMENT_SELECTOR);
     }
 
     function testBothLockedButSecondEventLateRoutesToRefund() public {
