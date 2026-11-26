@@ -5,7 +5,8 @@
 https://handshake-reactive.vercel.app
 
 Old auto-generated URL still resolves: https://ui-nine-gold.vercel.app
-- Latest production deployment: `handshake-reactive-ozigcm0ht-koredeycodes-projects.vercel.app` (Git-triggered, serves colored chain logos, newest-first order book and wallet balance dropdown)
+- Latest production deployment: `handshake-reactive-k2jyq6bs8-koredeycodes-projects.vercel.app` (Git-triggered, serves the Home route, official Reactscan Lasna mark, favicon, My orders and custom settlement window)
+- The short alias `handshake-reactive.vercel.app` was re-pointed to that deployment after the Git deploy; Vercel's project-level domain association is inconsistent after the project rename, so re-check the alias after future deploys.
 - Inspector: https://vercel.com/koredeycodes-projects/ui/9SyYFbGRD9MEwh8R9JzSNF5tuRiF
 - Status: `READY`, target `production`
 
