@@ -342,7 +342,10 @@ interface BlockRange {
 }
 
 /** Fixed, bounded window around the RC deadline (documented tradeoff in RPC-AUDIT.md). */
-const DEADLINE_LOOKBACK = 2_000n
+// Base Sepolia produces blocks every ~0.2s, so 2,000 blocks was only ~7 min
+// and missed locks placed early in a 30-minute order. 6,000 blocks is ~20 min
+// there (and hours on slower chains) while still being a bounded scan.
+const DEADLINE_LOOKBACK = 6_000n
 const DEADLINE_FORWARD = 2_000n
 
 function globalRange(fromBlock: number, latest: bigint, lookbackBlocks: number): BlockRange {
@@ -355,10 +358,10 @@ function globalRange(fromBlock: number, latest: bigint, lookbackBlocks: number):
  * The RC stores `deadline` (unix seconds) but no creation block. Rather than
  * scanning from the deployment-wide `scan.*FromBlock`, estimate the deadline's
  * block from two real block timestamps (the configured anchor and the tip)
- * and look a fixed 2,000 blocks either side. At current testnet block times
- * that is ~7 min on Base Sepolia and ~33 min on Unichain/Lasna, which covers
- * every observed lock/callback. Orders whose legs were locked much earlier
- * than their deadline fall back to the configured global window.
+ * and look a bounded number of blocks around it (6,000 before, 2,000 after).
+ * Base Sepolia has ~0.2s blocks, so the lookback is ~20 min there and longer
+ * on slower chains; that covers early locks in a normal settlement window.
+ * Orders locked even earlier fall back to the configured global window.
  */
 async function orderRange(
   config: AppConfig,
