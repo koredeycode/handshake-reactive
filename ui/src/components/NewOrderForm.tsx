@@ -217,6 +217,13 @@ export default function NewOrderForm() {
                 </Button>
               </div>
             </Field>
+            <p
+              className="-mt-3 text-[11px] leading-relaxed text-ink-400"
+              title="Order IDs are generated locally from 32 random bytes (crypto.getRandomValues, with a Math.random fallback). createOrder rejects an ID that is already on-chain."
+            >
+              <span className="block">Generated in your browser · 32 random bytes</span>
+              <span className="block">duplicates are rejected on-chain</span>
+            </p>
             <div className="grid grid-cols-2 gap-3 pt-1">
               <Metric label="Deadline" value={formatDeadline(BigInt(deadline))} />
               <Metric label="Window" value={`${duration}s`} />

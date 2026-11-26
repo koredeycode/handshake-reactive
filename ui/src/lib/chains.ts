@@ -65,6 +65,13 @@ export const CHAIN_ACCENT: Record<ChainKey, string> = {
   unichain: 'text-asset',
 }
 
+/** Local, official chain marks — bundled under public/chains, never a CDN at runtime. */
+export const CHAIN_LOGO: Record<ChainKey, string> = {
+  base: '/chains/base.svg',
+  lasna: '/chains/lasna.svg',
+  unichain: '/chains/unichain.svg',
+}
+
 /** Canonical explorer URL builders from PRD §9b UI rules. */
 export function txUrl(chain: ChainKey, hash?: string | null): string | null {
   if (!hash) return null

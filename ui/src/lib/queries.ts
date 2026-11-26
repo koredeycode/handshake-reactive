@@ -24,6 +24,8 @@ export function looseClient(client: unknown): LooseClient | null {
 export interface OrderRow {
   id: Hex
   order: Order
+  /** orderIds(i) index: higher means created later on the reactive ledger. */
+  createdIndex: number
 }
 
 export function useOrders() {
@@ -66,7 +68,11 @@ export function useOrders() {
           }) as Promise<Order>,
         ),
       )
-      return ids.map((id, i) => ({ id, order: orders[i] as Order }))
+      // Newest first: orderIds are appended on creation, so a higher index is
+      // a later order. Reverse index order without touching the on-chain reads.
+      return ids
+        .map((id, i) => ({ id, order: orders[i] as Order, createdIndex: i }))
+        .sort((a, b) => b.createdIndex - a.createdIndex)
     },
   })
 }

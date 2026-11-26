@@ -46,6 +46,15 @@ The terms-hash preflight uses `keccak256(abi.encode(buyer, seller, paymentToken,
 
 Lasna has no Multicall3 at viem's canonical address. wagmi is configured with `batch: { multicall: false }` and the order board issues plain `readContract` calls in parallel, so no read path requires Multicall3.
 
+## Chain logo assets
+
+Official colored chain marks are bundled in `public/chains/` and served locally — there is no runtime CDN dependency:
+
+- `base.svg` and `unichain.svg` — Web3 Icons (MIT), network "branded" SVGs: https://github.com/0xa3k5/web3icons (https://web3icons.io). Base is the official Base Square in Base Blue; Unichain is its brand pink mark.
+- `lasna.svg` — Reactive Network official "Symbol / Color on dark" brand mark from the Reactive Network press room: https://reactive.network/press (direct asset: https://reactive.network/brand/symbol-color-white.svg). Reactive Network owns that mark; see its brand guidelines for usage.
+
+These are third-party brand assets used purely to identify the chains; no logo is generated at runtime.
+
 ## Stack
 
 React 18 · Vite 5 · TypeScript (strict) · viem · wagmi (injected wallet + chain switching) · TanStack Query · Tailwind CSS 3.
