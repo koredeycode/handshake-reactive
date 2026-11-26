@@ -9,14 +9,22 @@ set -uo pipefail
 SYSTEM="0x8888888888888888888888888888888888888888"
 BASE_PROXY="0x476F44b11F5C942c58f4c8E3d0300E5710743585"
 UNICHAIN_PROXY="0x775c9B990ADe401060B78D0e98684eEf8d2466C1"
-PAYMENT_CHAIN_ID=84532
-ASSET_CHAIN_ID=1301
+# Role-based overrides. Defaults are the live forward market, so existing runs are unchanged.
+# For a reverse market set PAYMENT_* to Unichain and ASSET_* to Base (see MARKETS.md).
+PAYMENT_PROXY="${PAYMENT_PROXY:-$BASE_PROXY}"
+ASSET_PROXY="${ASSET_PROXY:-$UNICHAIN_PROXY}"
+PAYMENT_CHAIN_ID="${PAYMENT_CHAIN_ID:-84532}"
+ASSET_CHAIN_ID="${ASSET_CHAIN_ID:-1301}"
+PAYMENT_CHAIN_LABEL="${PAYMENT_CHAIN_LABEL:-Base Sepolia}"
+ASSET_CHAIN_LABEL="${ASSET_CHAIN_LABEL:-Unichain Sepolia}"
 SUBSCRIBE_TOPIC="0xe9b38458922e1af481b2244c7c2bb32e465e90c352946042d2a09472fad6c246"
 UNSUBSCRIBE_TOPIC="0x15fca4b8348be4e206988055f4ba52d98f0ba260e633cf0968042fcfb004a944"
 
 REACTIVE_RPC="${REACTIVE_RPC:-https://lasna-rpc.rnk.dev/}"
 BASE_RPC="${BASE_RPC:-https://sepolia.base.org}"
 UNICHAIN_RPC="${UNICHAIN_RPC:-https://sepolia.unichain.org}"
+PAYMENT_RPC="${PAYMENT_RPC:-$BASE_RPC}"
+ASSET_RPC="${ASSET_RPC:-$UNICHAIN_RPC}"
 ETH_SEPOLIA_RPC="${ETH_SEPOLIA_RPC:-https://ethereum-sepolia-rpc.publicnode.com}"
 ACCOUNT="${FOUNDRY_ACCOUNT:-main}"
 LASNA_FAUCET="0x9b9BB25f1A81078C544C829c5EB7822d747Cf434"
@@ -31,6 +39,8 @@ SELLER="${SELLER_ADDRESS:-}"
 MIN_LASNA="${MIN_LASNA_BALANCE:-100000000000000000}"
 MIN_BASE="${MIN_BASE_BALANCE:-10000000000000000}"
 MIN_UNICHAIN="${MIN_UNICHAIN_BALANCE:-5000000000000000}"
+MIN_PAYMENT="${MIN_PAYMENT_BALANCE:-$MIN_BASE}"
+MIN_ASSET="${MIN_ASSET_BALANCE:-$MIN_UNICHAIN}"
 MIN_SUBS="${MIN_ACTIVE_SUBSCRIPTIONS:-7}"
 LOOKBACK="${SUBSCRIPTION_LOOKBACK_BLOCKS:-300000}"
 
@@ -192,8 +202,8 @@ PY
 printf '=== Handshake preflight ===\n'
 printf 'Account (keystore): %s\n' "$ACCOUNT"
 check_health 'Reactive arbiter (Lasna)' "$REACTIVE_RPC" "$SYSTEM" "$RC"
-check_health 'Payment escrow (Base Sepolia)' "$BASE_RPC" "$BASE_PROXY" "$PAYMENT_ESCROW"
-check_health 'Asset escrow (Unichain Sepolia)' "$UNICHAIN_RPC" "$UNICHAIN_PROXY" "$ASSET_ESCROW"
+check_health "Payment escrow ($PAYMENT_CHAIN_LABEL)" "$PAYMENT_RPC" "$PAYMENT_PROXY" "$PAYMENT_ESCROW"
+check_health "Asset escrow ($ASSET_CHAIN_LABEL)" "$ASSET_RPC" "$ASSET_PROXY" "$ASSET_ESCROW"
 
 printf '\n[Wallet balances]\n'
 check_balance 'Deployer on Lasna' "$REACTIVE_RPC" "$DEPLOYER" "$MIN_LASNA" \
@@ -204,12 +214,12 @@ check_balance 'Deployer on Unichain Sepolia' "$UNICHAIN_RPC" "$DEPLOYER" "$MIN_U
   'https://faucet.zalalena.com/unichain'
 check_balance 'Buyer on Lasna' "$REACTIVE_RPC" "$BUYER" "$MIN_LASNA" \
   "cast send --rpc-url $ETH_SEPOLIA_RPC --account $ACCOUNT $LASNA_FAUCET \"request(address)\" $BUYER --value 2ether"
-check_balance 'Buyer on Base Sepolia' "$BASE_RPC" "$BUYER" "$MIN_BASE" \
-  'https://www.coinbase.com/developer-platform/products/faucet'
+check_balance "Buyer on $PAYMENT_CHAIN_LABEL" "$PAYMENT_RPC" "$BUYER" "$MIN_PAYMENT" \
+  "${PAYMENT_FAUCET:-https://www.coinbase.com/developer-platform/products/faucet}"
 check_balance 'Seller on Lasna' "$REACTIVE_RPC" "$SELLER" "$MIN_LASNA" \
   "cast send --rpc-url $ETH_SEPOLIA_RPC --account $ACCOUNT $LASNA_FAUCET \"request(address)\" $SELLER --value 2ether"
-check_balance 'Seller on Unichain Sepolia' "$UNICHAIN_RPC" "$SELLER" "$MIN_UNICHAIN" \
-  'https://faucet.zalalena.com/unichain'
+check_balance "Seller on $ASSET_CHAIN_LABEL" "$ASSET_RPC" "$SELLER" "$MIN_ASSET" \
+  "${ASSET_FAUCET:-https://faucet.zalalena.com/unichain}"
 
 check_subscriptions
 
