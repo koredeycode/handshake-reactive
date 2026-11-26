@@ -3,8 +3,17 @@ import type { Order, OrderStatus } from './types'
 /** Client-side derivation from RC flags plus the wall clock. */
 export function deriveStatus(order: Order, nowSeconds: number): OrderStatus {
   if (order.invalid) return 'INVALID'
+  // A refund can be terminal with only one leg locked (e.g. the seller never
+  // locks): require closure only of legs that were actually seen, not both.
+  if (
+    order.refundRequested &&
+    (!order.paymentSeen || order.paymentClosed) &&
+    (!order.assetSeen || order.assetClosed)
+  ) {
+    return 'REFUNDED'
+  }
   const closed = order.paymentClosed && order.assetClosed
-  if (closed) return order.refundRequested ? 'REFUNDED' : 'SETTLED'
+  if (closed) return 'SETTLED'
   if (order.refundRequested) return 'REFUNDING'
   if (order.settleRequested) return 'SETTLING'
   if (order.paymentSeen && order.assetSeen) return 'READY'
