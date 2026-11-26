@@ -2,15 +2,16 @@
 
 ## Production URL
 
-https://ui-six-livid.vercel.app
+https://handshake-reactive.vercel.app
 
-- Deployment ID: `dpl_AXzubFftMfA4uMW7b1YBHXRs7DiR`
-- Inspector: https://vercel.com/koredeycodes-projects/ui/AXzubFftMfA4uMW7b1YBHXRs7DiR
+Old auto-generated URL still resolves: https://ui-nine-gold.vercel.app
+- Deployment ID: `dpl_9SyYFbGRD9MEwh8R9JzSNF5tuRiF`
+- Inspector: https://vercel.com/koredeycodes-projects/ui/9SyYFbGRD9MEwh8R9JzSNF5tuRiF
 - Status: `READY`, target `production`
 
 ## Deploy details
 
-- **Project name:** `ui` (Vercel team/scope `koredeycodes-projects`, project ID `prj_EYOzeYPQuCvQuw5kuDoFl9tqZ7Hb`). The CLI created this project automatically; it did not require `--name`.
+- **Project name:** `handshake-reactive` (renamed from `ui` on 2026-11-26; Vercel team/scope `koredeycodes-projects`, project ID `prj_EYOzeYPQuCvQuw5kuDoFl9tqZ7Hb`). The CLI originally created it as `ui`.
 - **Deploy command used (run from `ui/`):**
 
   ```bash
@@ -19,7 +20,7 @@ https://ui-six-livid.vercel.app
   ```
 
 - Vercel detected Vite automatically (build command `vite build`, output directory `dist`). The GitHub repo `koredeycode/handshake-reactive` was connected during deploy.
-- Deployment Protection (Vercel Authentication) is enabled on the project by default; external viewers may need to be added to the Vercel project to view the site.
+- The canonical subdomain was added as a project domain (`vercel domains add handshake-reactive.vercel.app ui`) and follows future production deployments.
 
 ## Build output summary
 
