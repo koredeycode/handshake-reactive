@@ -83,9 +83,8 @@ $ anvil
 
 ### Deploy
 
-```shell
-$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
-```
+Deployment, funding and verification scripts are maintained in the tooling PR; this package
+contains only the contracts and their unit tests.
 
 ### Cast
 
