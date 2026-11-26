@@ -1,4 +1,8 @@
+import { CHAIN_LABELS, type ChainKey } from '../lib/chains'
+import { isZeroAddress } from '../lib/format'
+import { useMarket } from '../lib/markets'
 import { buildHops } from '../lib/proofs'
+import type { ProofChainKeys } from '../lib/logs'
 import { ChainMark, ChainPill, ConvergenceMark, Panel, TxLink } from './ui'
 import type { Order, ProofData } from '../lib/types'
 
@@ -14,7 +18,7 @@ function FlowRow({
   label,
   event,
 }: {
-  chain: 'base' | 'unichain'
+  chain: ChainKey
   label: string
   event?: { txHash: string }
 }) {
@@ -34,14 +38,25 @@ function FlowRow({
 }
 
 /** Three columns: locked on two chains → one decision → delivered on two chains. */
-function ConvergenceDiagram({ proof }: { proof?: ProofData | null }) {
+function ConvergenceDiagram({
+  proof,
+  order,
+  chainKeys,
+}: {
+  proof?: ProofData | null
+  order?: Order | null
+  chainKeys: ProofChainKeys
+}) {
   const refundMode = !!proof?.paymentRefunded || !!proof?.assetRefunded
+  const open = !!order && isZeroAddress(order.seller)
+  const paymentLabel = CHAIN_LABELS[chainKeys.payment]
+  const assetLabel = CHAIN_LABELS[chainKeys.asset]
   return (
     <div className="mb-6 grid grid-cols-1 gap-3 rounded-2xl border border-line bg-paper-50 p-4 md:grid-cols-[1fr_auto_1fr] md:items-center md:gap-4">
       <div className="space-y-2">
         <p className="px-1 text-[11px] font-medium text-ink-500">Locked on origin chains</p>
-        <FlowRow chain="base" label="Payment · Base Sepolia" event={proof?.paymentLocked} />
-        <FlowRow chain="unichain" label="Asset · Unichain Sepolia" event={proof?.assetLocked} />
+        <FlowRow chain={chainKeys.payment} label={`Payment · ${paymentLabel}`} event={proof?.paymentLocked} />
+        <FlowRow chain={chainKeys.asset} label={`Asset · ${assetLabel}`} event={proof?.assetLocked} />
       </div>
 
       <div className="flex items-center justify-center gap-3 md:flex-col md:gap-2">
@@ -50,7 +65,7 @@ function ConvergenceDiagram({ proof }: { proof?: ProofData | null }) {
         </span>
         <span className="text-[11px] font-medium text-ink-700">One decision</span>
         <ChainMark chain="lasna" className="h-4 w-4" />
-        <span className="text-[10px] text-ink-400">Reactive Lasna</span>
+        <span className="text-[10px] text-ink-400">{CHAIN_LABELS.lasna}</span>
         {proof?.reactive ? <TxLink chain="lasna" hash={proof.reactive.txHash} /> : null}
       </div>
 
@@ -59,13 +74,19 @@ function ConvergenceDiagram({ proof }: { proof?: ProofData | null }) {
           {refundMode ? 'Refunded to depositors' : 'Delivered by callback'}
         </p>
         <FlowRow
-          chain="base"
-          label={refundMode ? 'Payment back to buyer · Base Sepolia' : 'Payment to seller · Base Sepolia'}
+          chain={chainKeys.payment}
+          label={
+            refundMode
+              ? `Payment back to buyer · ${paymentLabel}`
+              : `Payment to ${open ? 'winner' : 'seller'} · ${paymentLabel}`
+          }
           event={refundMode ? proof?.paymentRefunded : proof?.paymentReleased}
         />
         <FlowRow
-          chain="unichain"
-          label={refundMode ? 'Asset back to seller · Unichain Sepolia' : 'Asset to buyer · Unichain Sepolia'}
+          chain={chainKeys.asset}
+          label={
+            refundMode ? `Asset back to seller · ${assetLabel}` : `Asset to buyer · ${assetLabel}`
+          }
           event={refundMode ? proof?.assetRefunded : proof?.assetReleased}
         />
       </div>
@@ -80,7 +101,12 @@ export default function HopTimeline({
   order?: Order | null
   proof?: ProofData | null
 }) {
-  const hops = buildHops(order, proof)
+  const { chainKeyFor } = useMarket()
+  const chainKeys: ProofChainKeys = {
+    payment: chainKeyFor('payment'),
+    asset: chainKeyFor('asset'),
+  }
+  const hops = buildHops(order, proof, chainKeys)
   const done = hops.filter((hop) => hop.event).length
 
   return (
@@ -93,7 +119,7 @@ export default function HopTimeline({
         </span>
       }
     >
-      <ConvergenceDiagram proof={proof} />
+      <ConvergenceDiagram proof={proof} order={order} chainKeys={chainKeys} />
       <ol className="relative">
         {hops.map((hop, i) => {
           const event = hop.event

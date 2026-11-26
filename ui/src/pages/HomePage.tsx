@@ -1,7 +1,9 @@
 import { Link, useNavigate } from 'react-router-dom'
 import { ArrowRight, Plus } from 'lucide-react'
 import { Button, EmptyState, Panel, RouteStrip, Spinner, StatusPill, TokenMark, icon } from '../components/ui'
+import { CHAIN_LABELS } from '../lib/chains'
 import { countdown, formatAmount, formatDeadline, truncate } from '../lib/format'
+import { useMarket } from '../lib/markets'
 import { useOrders } from '../lib/queries'
 import { deriveStatus } from '../lib/status'
 import { useTokenDisplay } from '../lib/tokenDisplay'
@@ -88,6 +90,7 @@ function OrderBookPreview() {
 
 export default function HomePage() {
   const navigate = useNavigate()
+  const { chainKeyFor } = useMarket()
 
   return (
     <div className="space-y-8">
@@ -97,7 +100,7 @@ export default function HomePage() {
           Two legs. One decision. Both legs settle.
         </h1>
         <p className="mt-4 max-w-xl text-sm leading-relaxed text-ink-500">
-          Lock payment on Base Sepolia and the asset on Unichain Sepolia. Reactive Lasna decides once, then releases both legs — no intermediary holding funds.
+          Lock payment on {CHAIN_LABELS[chainKeyFor('payment')]} and the asset on {CHAIN_LABELS[chainKeyFor('asset')]}. Reactive Lasna decides once, then releases both legs — no intermediary holding funds.
         </p>
         <RouteStrip className="mt-8" />
         <div className="mt-8 flex flex-wrap gap-3">

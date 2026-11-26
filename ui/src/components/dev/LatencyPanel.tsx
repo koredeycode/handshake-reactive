@@ -1,6 +1,7 @@
-import { REPO_URL } from '../../lib/chains'
+import { CHAIN_LABELS, REPO_URL } from '../../lib/chains'
 import { deltaMs, formatTimestamp } from '../../lib/format'
 import { useLatency, type LatencyRun } from '../../lib/latency'
+import { useMarket } from '../../lib/markets'
 import { EmptyState, ExternalLink, Metric, Panel, Spinner } from '../ui'
 
 function scenarioTone(scenario: string): string {
@@ -17,6 +18,7 @@ function median(values: number[]): number {
 
 export default function LatencyPanel() {
   const latency = useLatency()
+  const { chainKeyFor } = useMarket()
   const data = latency.data
   const runs = data?.runs ?? []
   const totals = runs.map((r) => r.totalMs).filter((n): n is number => typeof n === 'number')
@@ -103,9 +105,9 @@ export default function LatencyPanel() {
                         {run.t1ReactiveMs ? `+${deltaMs(run.t0SecondLockMs, run.t1ReactiveMs)}` : '—'}
                       </td>
                       <td className="px-2 py-2.5 font-mono text-ink-500">
-                        {run.t2PaymentCallbackMs ? `Base Sepolia +${deltaMs(run.t1ReactiveMs, run.t2PaymentCallbackMs)}` : '—'}
+                        {run.t2PaymentCallbackMs ? `${CHAIN_LABELS[chainKeyFor('payment')]} +${deltaMs(run.t1ReactiveMs, run.t2PaymentCallbackMs)}` : '—'}
                         <br />
-                        {run.t3AssetCallbackMs ? `Unichain Sepolia +${deltaMs(run.t1ReactiveMs, run.t3AssetCallbackMs)}` : '—'}
+                        {run.t3AssetCallbackMs ? `${CHAIN_LABELS[chainKeyFor('asset')]} +${deltaMs(run.t1ReactiveMs, run.t3AssetCallbackMs)}` : '—'}
                       </td>
                       <td className="px-2 py-2.5 font-mono font-medium text-ink-900">
                         {run.totalMs ? `${run.totalMs} ms` : '—'}

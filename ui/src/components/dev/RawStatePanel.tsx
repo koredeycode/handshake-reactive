@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { normalizeOrderId, truncate } from '../../lib/format'
+import { useMarket } from '../../lib/markets'
 import { useProof } from '../../lib/proofs'
 import { useOrder, useVenues } from '../../lib/queries'
 import { Button, CopyButton, EmptyState, Metric, Panel, Spinner, TxLink, inputClass, icon } from '../ui'
@@ -10,17 +11,21 @@ function raw(value: unknown): string {
   return JSON.stringify(value, (_key, item) => (typeof item === 'bigint' ? item.toString() : item), 2)
 }
 
-const PROOF_FIELDS: Array<{ key: string; label: string; chain: ChainKey }> = [
-  { key: 'paymentLocked', label: 'PaymentLocked', chain: 'base' },
-  { key: 'assetLocked', label: 'AssetLocked', chain: 'unichain' },
-  { key: 'reactive', label: 'Settlement decision', chain: 'lasna' },
-  { key: 'paymentReleased', label: 'PaymentReleased', chain: 'base' },
-  { key: 'assetReleased', label: 'AssetReleased', chain: 'unichain' },
-  { key: 'paymentRefunded', label: 'PaymentRefunded', chain: 'base' },
-  { key: 'assetRefunded', label: 'AssetRefunded', chain: 'unichain' },
+type ProofRole = 'payment' | 'asset' | 'lasna'
+
+const PROOF_FIELDS: Array<{ key: string; label: string; role: ProofRole }> = [
+  { key: 'paymentLocked', label: 'PaymentLocked', role: 'payment' },
+  { key: 'assetLocked', label: 'AssetLocked', role: 'asset' },
+  { key: 'reactive', label: 'Settlement decision', role: 'lasna' },
+  { key: 'paymentReleased', label: 'PaymentReleased', role: 'payment' },
+  { key: 'assetReleased', label: 'AssetReleased', role: 'asset' },
+  { key: 'paymentRefunded', label: 'PaymentRefunded', role: 'payment' },
+  { key: 'assetRefunded', label: 'AssetRefunded', role: 'asset' },
 ]
 
 export default function RawStatePanel() {
+  const { chainKeyFor } = useMarket()
+  const chainFor = (role: ProofRole): ChainKey => (role === 'lasna' ? 'lasna' : chainKeyFor(role))
   const [input, setInput] = useState('')
   const [selected, setSelected] = useState<string>('')
   const [localError, setLocalError] = useState<string | null>(null)
@@ -90,7 +95,7 @@ export default function RawStatePanel() {
                         </span>
                       </div>
                       <div className="mt-2 font-mono text-[10px]">
-                        {found ? <TxLink chain={field.chain} hash={found.txHash} /> : '—'}
+                        {found ? <TxLink chain={chainFor(field.role)} hash={found.txHash} /> : '—'}
                       </div>
                     </div>
                   )

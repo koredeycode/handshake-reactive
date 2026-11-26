@@ -1,4 +1,24 @@
+import { isZeroAddress } from './format'
 import type { Order, OrderStatus } from './types'
+
+/** Open orders carry a zero seller: any connected wallet can take the asset leg. */
+export function isOpenOrder(order?: Order | null): boolean {
+  return !!order && isZeroAddress(order.seller)
+}
+
+/** Buyer cancellation is only possible while the open order is unmatched and live. */
+export function canCancelOpenOrder(
+  order: Order | null | undefined,
+  nowSeconds: number,
+  address?: string | null,
+): boolean {
+  if (!order || !isOpenOrder(order)) return false
+  if (!address || order.buyer.toLowerCase() !== address.toLowerCase()) return false
+  if (order.invalid || order.refundRequested || order.settleRequested) return false
+  if (order.paymentClosed || order.assetClosed || order.assetSeen) return false
+  if (!isZeroAddress(order.winner) || Number(order.assetLockCount) > 0) return false
+  return Number(order.deadline) > nowSeconds
+}
 
 /** Client-side derivation from RC flags plus the wall clock. */
 export function deriveStatus(order: Order, nowSeconds: number): OrderStatus {

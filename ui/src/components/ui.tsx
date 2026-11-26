@@ -2,6 +2,7 @@ import type { ButtonHTMLAttributes, ReactNode } from 'react'
 import { ArrowRight, ArrowUpRight, Copy, Inbox } from 'lucide-react'
 import { CHAIN_LABELS, CHAIN_LOGO, txUrl } from '../lib/chains'
 import { copyText, truncate } from '../lib/format'
+import { useMarket } from '../lib/markets'
 import { useCopyFeedback } from '../lib/proofs'
 import { STATUS_DOT, STATUS_LABEL, STATUS_STYLES } from '../lib/status'
 import type { ChainKey } from '../lib/chains'
@@ -144,15 +145,16 @@ export function ChainMark({
   )
 }
 
-/** The route: Base Sepolia → Reactive Lasna → Unichain Sepolia. */
+/** The selected market's route: payment chain → Reactive Lasna → asset chain. */
 export function RouteStrip({ className = '' }: { className?: string }) {
+  const { chainKeyFor } = useMarket()
   return (
     <div className={`flex flex-wrap items-center gap-1.5 text-[11px] text-ink-400 ${className}`}>
-      <ChainPill chain="base" />
+      <ChainPill chain={chainKeyFor('payment')} />
       <ArrowRight {...icon} />
       <ChainPill chain="lasna" />
       <ArrowRight {...icon} />
-      <ChainPill chain="unichain" />
+      <ChainPill chain={chainKeyFor('asset')} />
     </div>
   )
 }

@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { usePublicClient } from 'wagmi'
 import { CHAIN_IDS, CHAIN_LABELS } from '../../lib/chains'
-import { configuredAddress, useConfig } from '../../lib/config'
+import { configuredAddress } from '../../lib/config'
 import { cron10Event } from '../../lib/contracts'
 import { formatAmount, formatDeadline, formatNative, truncate } from '../../lib/format'
 import {
@@ -10,6 +10,7 @@ import {
   logClient,
   type ProofClients,
 } from '../../lib/logs'
+import { useMarket, useMarketConfig } from '../../lib/markets'
 import { useHealth, type HealthRow } from '../../lib/queries'
 import { ExternalLink, Metric, Panel, Spinner } from '../ui'
 
@@ -66,14 +67,17 @@ function ContractCard({
 }
 
 export default function HealthPanel() {
-  const config = useConfig()
+  const config = useMarketConfig()
+  const { market, chainKeyFor } = useMarket()
   const health = useHealth()
   const lasnaClient = logClient(usePublicClient({ chainId: CHAIN_IDS.lasna }))
-  const clients: ProofClients = { lasna: lasnaClient, base: null, unichain: null }
+  const clients: ProofClients = { lasna: lasnaClient, payment: null, asset: null }
   const legacy = configuredAddress(config.reactive.legacySystemContract)
+  const paymentChain = chainKeyFor('payment')
+  const assetChain = chainKeyFor('asset')
 
   const cron = useQuery({
-    queryKey: ['cron-status', legacy],
+    queryKey: ['cron-status', market.id, legacy],
     staleTime: 20_000,
     refetchInterval: 30_000, // dev-only; was 10s
     enabled: !!legacy,
@@ -101,7 +105,7 @@ export default function HealthPanel() {
   return (
     <Panel
       title="Debt, reserves and health"
-      subtitle={`Polls ${CHAIN_LABELS.lasna}, ${CHAIN_LABELS.base} and ${CHAIN_LABELS.unichain} every 15s (dev-only). Debt is read from the system contract / callback proxy.`}
+      subtitle={`Polls ${CHAIN_LABELS.lasna}, ${CHAIN_LABELS[paymentChain]} and ${CHAIN_LABELS[assetChain]} every 15s (dev-only). Debt is read from the system contract / callback proxy.`}
       action={
         <span className="flex items-center gap-2 text-[11px] text-ink-400">
           {health.isFetching && <Spinner />}
@@ -118,18 +122,18 @@ export default function HealthPanel() {
           tokenAmount={byKey('lasna')?.balance}
         />
         <ContractCard
-          row={byKey('base')}
-          title="Payment escrow"
+          row={byKey('payment')}
+          title={`Payment escrow · ${CHAIN_LABELS[paymentChain]}`}
           symbol="ETH"
-          tokenLabel="Pooled tUSD"
-          tokenAmount={byKey('base')?.tokenBalance}
+          tokenLabel="Pooled payment token"
+          tokenAmount={byKey('payment')?.tokenBalance}
         />
         <ContractCard
-          row={byKey('unichain')}
-          title="Asset escrow"
+          row={byKey('asset')}
+          title={`Asset escrow · ${CHAIN_LABELS[assetChain]}`}
           symbol="ETH"
-          tokenLabel="Pooled tASSET"
-          tokenAmount={byKey('unichain')?.tokenBalance}
+          tokenLabel="Pooled asset token"
+          tokenAmount={byKey('asset')?.tokenBalance}
         />
         <div className="rounded-xl border border-line bg-paper-50 p-4">
           <div className="mb-3 flex items-center gap-2">

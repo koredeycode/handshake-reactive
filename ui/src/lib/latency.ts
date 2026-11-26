@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
+import { useMarket } from './markets'
 
 export interface LatencyRun {
   orderId?: string
@@ -47,8 +48,9 @@ async function loadLatency(): Promise<LatencyData> {
 }
 
 export function useLatency() {
+  const { market } = useMarket()
   return useQuery({
-    queryKey: ['latency'],
+    queryKey: ['latency', market.id],
     queryFn: loadLatency,
     staleTime: 30_000,
   })

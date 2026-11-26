@@ -324,10 +324,16 @@ function sortEvents(events: ProofEvent[]): ProofEvent[] {
   })
 }
 
+/** Role-keyed clients: which chain a role lives on comes from the market. */
 export interface ProofClients {
   lasna: LogClient | null
-  base: LogClient | null
-  unichain: LogClient | null
+  payment: LogClient | null
+  asset: LogClient | null
+}
+
+export interface ProofChainKeys {
+  payment: ChainKey
+  asset: ChainKey
 }
 
 interface BlockRange {
@@ -336,7 +342,10 @@ interface BlockRange {
 }
 
 /** Fixed, bounded window around the RC deadline (documented tradeoff in RPC-AUDIT.md). */
-const DEADLINE_LOOKBACK = 2_000n
+// Base Sepolia produces blocks every ~0.2s, so 2,000 blocks was only ~7 min
+// and missed locks placed early in a 30-minute order. 6,000 blocks is ~20 min
+// there (and hours on slower chains) while still being a bounded scan.
+const DEADLINE_LOOKBACK = 6_000n
 const DEADLINE_FORWARD = 2_000n
 
 function globalRange(fromBlock: number, latest: bigint, lookbackBlocks: number): BlockRange {
@@ -349,10 +358,10 @@ function globalRange(fromBlock: number, latest: bigint, lookbackBlocks: number):
  * The RC stores `deadline` (unix seconds) but no creation block. Rather than
  * scanning from the deployment-wide `scan.*FromBlock`, estimate the deadline's
  * block from two real block timestamps (the configured anchor and the tip)
- * and look a fixed 2,000 blocks either side. At current testnet block times
- * that is ~7 min on Base Sepolia and ~33 min on Unichain/Lasna, which covers
- * every observed lock/callback. Orders whose legs were locked much earlier
- * than their deadline fall back to the configured global window.
+ * and look a bounded number of blocks around it (6,000 before, 2,000 after).
+ * Base Sepolia has ~0.2s blocks, so the lookback is ~20 min there and longer
+ * on slower chains; that covers early locks in a normal settlement window.
+ * Orders locked even earlier fall back to the configured global window.
  */
 async function orderRange(
   config: AppConfig,
@@ -471,22 +480,23 @@ export async function resolveProof(
   clients: ProofClients,
   order?: Order | null,
   previous?: ProofData | null,
+  chainKeys: ProofChainKeys = { payment: 'base', asset: 'unichain' },
 ): Promise<ProofData> {
   const resolveTimestamp = createTimestampResolver(clients)
-  const [lasnaLatest, baseLatest, unichainLatest] = await Promise.all([
+  const [lasnaLatest, paymentLatest, assetLatest] = await Promise.all([
     clients.lasna?.getBlockNumber().catch(() => 0n) ?? 0n,
-    clients.base?.getBlockNumber().catch(() => 0n) ?? 0n,
-    clients.unichain?.getBlockNumber().catch(() => 0n) ?? 0n,
+    clients.payment?.getBlockNumber().catch(() => 0n) ?? 0n,
+    clients.asset?.getBlockNumber().catch(() => 0n) ?? 0n,
   ])
   const deadline = order?.deadline
-  const [lasnaBase, baseBase, unichainBase] = await Promise.all([
+  const [lasnaBase, paymentBase, assetBase] = await Promise.all([
     orderRange(config, clients.lasna, config.scan.lasnaFromBlock, lasnaLatest, deadline),
-    orderRange(config, clients.base, config.scan.baseFromBlock, baseLatest, deadline),
-    orderRange(config, clients.unichain, config.scan.unichainFromBlock, unichainLatest, deadline),
+    orderRange(config, clients.payment, config.scan.baseFromBlock, paymentLatest, deadline),
+    orderRange(config, clients.asset, config.scan.unichainFromBlock, assetLatest, deadline),
   ])
   const lasnaRange = cursorRange(lasnaBase, previous?.scan.lasnaTo, lasnaLatest)
-  const baseRange = cursorRange(baseBase, previous?.scan.baseTo, baseLatest)
-  const unichainRange = cursorRange(unichainBase, previous?.scan.unichainTo, unichainLatest)
+  const paymentRange = cursorRange(paymentBase, previous?.scan.paymentTo, paymentLatest)
+  const assetRange = cursorRange(assetBase, previous?.scan.assetTo, assetLatest)
 
   const paymentEscrow = configuredAddress(config.base.paymentEscrow)
   const assetEscrow = configuredAddress(config.unichain.assetEscrow)
@@ -504,18 +514,18 @@ export async function resolveProof(
     : ASSET_EVENTS
 
   const tasks: Promise<ProofEvent[]>[] = []
-  if (clients.base && paymentEscrow) {
+  if (clients.payment && paymentEscrow) {
     tasks.push(
       decodeChainEvents(
-        clients.base, 'base', paymentEscrow, paymentSpecs, baseRange, { orderId },
+        clients.payment, chainKeys.payment, paymentEscrow, paymentSpecs, paymentRange, { orderId },
         resolveTimestamp, found, required,
       ),
     )
   }
-  if (clients.unichain && assetEscrow) {
+  if (clients.asset && assetEscrow) {
     tasks.push(
       decodeChainEvents(
-        clients.unichain, 'unichain', assetEscrow, assetSpecs, unichainRange, { orderId },
+        clients.asset, chainKeys.asset, assetEscrow, assetSpecs, assetRange, { orderId },
         resolveTimestamp, found, required,
       ),
     )
@@ -582,14 +592,14 @@ export async function resolveProof(
     assetRefunded: pick('assetRefunded'),
     scan: {
       lasnaFrom: lasnaRange.fromBlock,
-      baseFrom: baseRange.fromBlock,
-      unichainFrom: unichainRange.fromBlock,
+      paymentFrom: paymentRange.fromBlock,
+      assetFrom: assetRange.fromBlock,
       lasnaTo: lasnaRange.toBlock,
-      baseTo: baseRange.toBlock,
-      unichainTo: unichainRange.toBlock,
-      to: lasnaRange.toBlock > baseRange.toBlock
-        ? (lasnaRange.toBlock > unichainRange.toBlock ? lasnaRange.toBlock : unichainRange.toBlock)
-        : (baseRange.toBlock > unichainRange.toBlock ? baseRange.toBlock : unichainRange.toBlock),
+      paymentTo: paymentRange.toBlock,
+      assetTo: assetRange.toBlock,
+      to: lasnaRange.toBlock > paymentRange.toBlock
+        ? (lasnaRange.toBlock > assetRange.toBlock ? lasnaRange.toBlock : assetRange.toBlock)
+        : (paymentRange.toBlock > assetRange.toBlock ? paymentRange.toBlock : assetRange.toBlock),
     },
   }
 }
@@ -600,11 +610,15 @@ export interface FeedEvent extends ProofEvent {
 }
 
 /** Unfiltered multi-chain feed for the Event log screen (last ~2k blocks). */
-export async function fetchEventFeed(config: AppConfig, clients: ProofClients): Promise<FeedEvent[]> {
+export async function fetchEventFeed(
+  config: AppConfig,
+  clients: ProofClients,
+  chainKeys: ProofChainKeys = { payment: 'base', asset: 'unichain' },
+): Promise<FeedEvent[]> {
   const resolveTimestamp = createTimestampResolver(clients)
-  const [baseLatest, unichainLatest, lasnaLatest] = await Promise.all([
-    clients.base?.getBlockNumber().catch(() => 0n) ?? 0n,
-    clients.unichain?.getBlockNumber().catch(() => 0n) ?? 0n,
+  const [paymentLatest, assetLatest, lasnaLatest] = await Promise.all([
+    clients.payment?.getBlockNumber().catch(() => 0n) ?? 0n,
+    clients.asset?.getBlockNumber().catch(() => 0n) ?? 0n,
     clients.lasna?.getBlockNumber().catch(() => 0n) ?? 0n,
   ])
   const window = 2_000n
@@ -620,11 +634,11 @@ export async function fetchEventFeed(config: AppConfig, clients: ProofClients): 
   const noneRequired = new Set<ProofEventKind>()
 
   const tasks: Promise<ProofEvent[]>[] = []
-  if (clients.base && paymentEscrow) {
-    tasks.push(decodeChainEvents(clients.base, 'base', paymentEscrow, PAYMENT_EVENTS, range(baseLatest), undefined, resolveTimestamp, noFound, noneRequired))
+  if (clients.payment && paymentEscrow) {
+    tasks.push(decodeChainEvents(clients.payment, chainKeys.payment, paymentEscrow, PAYMENT_EVENTS, range(paymentLatest), undefined, resolveTimestamp, noFound, noneRequired))
   }
-  if (clients.unichain && assetEscrow) {
-    tasks.push(decodeChainEvents(clients.unichain, 'unichain', assetEscrow, ASSET_EVENTS, range(unichainLatest), undefined, resolveTimestamp, noFound, noneRequired))
+  if (clients.asset && assetEscrow) {
+    tasks.push(decodeChainEvents(clients.asset, chainKeys.asset, assetEscrow, ASSET_EVENTS, range(assetLatest), undefined, resolveTimestamp, noFound, noneRequired))
   }
   if (clients.lasna && system) {
     tasks.push(

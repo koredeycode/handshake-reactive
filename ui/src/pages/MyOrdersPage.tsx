@@ -13,7 +13,8 @@ import {
   TxLink,
   icon,
 } from '../components/ui'
-import { countdown, formatAmount, formatDeadline, truncate } from '../lib/format'
+import { countdown, formatAmount, formatDeadline, isZeroAddress, truncate } from '../lib/format'
+import { useMarket } from '../lib/markets'
 import { buildHops, useProof } from '../lib/proofs'
 import { useOrders, type OrderRow } from '../lib/queries'
 import { deriveStatus } from '../lib/status'
@@ -33,9 +34,14 @@ interface WalletOrderProps {
 /** One wallet order, with only the observed hashes relevant to the user's side. */
 function WalletOrderRow({ row, wallet, now, payment, asset }: WalletOrderProps) {
   const { id, order } = row
+  const { chainKeyFor } = useMarket()
+  const paymentChain = chainKeyFor('payment')
+  const assetChain = chainKeyFor('asset')
   const address = wallet.toLowerCase()
   const isBuyer = order.buyer.toLowerCase() === address
-  const isSeller = order.seller.toLowerCase() === address
+  const isSeller =
+    order.seller.toLowerCase() === address ||
+    (!isZeroAddress(order.winner) && order.winner.toLowerCase() === address)
   const status = deriveStatus(order, now)
   // Proof queries are shared by queryKey with the detail/verify screens. The
   // hook only polls while the order is non-terminal; settled/refunded rows
@@ -43,7 +49,7 @@ function WalletOrderRow({ row, wallet, now, payment, asset }: WalletOrderProps) 
   const proof = useProof(id, order)
   const expired = countdown(order.deadline, now) === 'expired'
 
-  const hashes = buildHops(order, proof.data)
+  const hashes = buildHops(order, proof.data, { payment: paymentChain, asset: assetChain })
     .filter((hop) => {
       if (hop.key === 'reactive') return true
       if (hop.key.startsWith('payment')) return isBuyer
@@ -59,12 +65,12 @@ function WalletOrderRow({ row, wallet, now, payment, asset }: WalletOrderProps) 
           <div className="flex flex-wrap items-center gap-2">
             {isBuyer && (
               <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-paper-100 px-2.5 py-1 text-[11px] font-medium text-ink-700">
-                <ChainMark chain="base" /> You pay
+                <ChainMark chain={paymentChain} /> You pay
               </span>
             )}
             {isSeller && (
               <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-paper-100 px-2.5 py-1 text-[11px] font-medium text-ink-700">
-                <ChainMark chain="unichain" /> You deliver
+                <ChainMark chain={assetChain} /> You deliver
               </span>
             )}
           </div>
@@ -126,7 +132,8 @@ export default function MyOrdersPage() {
     ? (orders ?? []).filter(
         ({ order }) =>
           order.buyer.toLowerCase() === address.toLowerCase() ||
-          order.seller.toLowerCase() === address.toLowerCase(),
+          order.seller.toLowerCase() === address.toLowerCase() ||
+          (!isZeroAddress(order.winner) && order.winner.toLowerCase() === address.toLowerCase()),
       )
     : []
 

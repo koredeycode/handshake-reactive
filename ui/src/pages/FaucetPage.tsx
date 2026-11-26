@@ -7,6 +7,7 @@ import { CHAIN_IDS, CHAIN_LABELS } from '../lib/chains'
 import { mintAbi } from '../lib/contracts'
 import { logClient } from '../lib/logs'
 import { formatAmount } from '../lib/format'
+import { useMarket } from '../lib/markets'
 import { useTokenBalance } from '../lib/queries'
 import { useTokenDisplay } from '../lib/tokenDisplay'
 import type { LegKind } from '../lib/queries'
@@ -33,7 +34,8 @@ function FaucetCard({ kind }: { kind: LegKind }) {
   const display = useTokenDisplay(kind)
   const { address } = useAccount()
   const { writeContractAsync, isPending } = useWriteContract()
-  const chainKey: ChainKey = kind === 'payment' ? 'base' : 'unichain'
+  const { chainKeyFor } = useMarket()
+  const chainKey: ChainKey = chainKeyFor(kind)
   const client = logClient(usePublicClient({ chainId: CHAIN_IDS[chainKey] })) as unknown as {
     waitForTransactionReceipt: (args: { hash: Hex }) => Promise<unknown>
   } | null
@@ -139,13 +141,20 @@ function FaucetCard({ kind }: { kind: LegKind }) {
 export default function FaucetPage() {
   const payment = useTokenDisplay('payment')
   const asset = useTokenDisplay('asset')
+  const { chainKeyFor } = useMarket()
+  const paymentChain = chainKeyFor('payment')
+  const assetChain = chainKeyFor('asset')
+  const gasChains: Array<{ chain: ChainKey; role: string }> = [
+    { chain: paymentChain, role: 'Buyer gas' },
+    { chain: assetChain, role: 'Seller gas' },
+  ]
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-xl font-medium text-ink-900">Faucet</h1>
         <p className="mt-1 text-xs text-ink-500">
-          Mint {payment.name} ({payment.symbol}) on Base Sepolia and {asset.name} ({asset.symbol}) on Unichain Sepolia.
+          Mint {payment.name} ({payment.symbol}) on {CHAIN_LABELS[paymentChain]} and {asset.name} ({asset.symbol}) on {CHAIN_LABELS[assetChain]}.
           These are testnet tokens with no value.
         </p>
       </div>
@@ -157,10 +166,12 @@ export default function FaucetPage() {
 
       <Panel title="Native ETH for gas" subtitle="Minting is a transaction, so each chain still needs a little native ETH">
         <div className="grid gap-4 md:grid-cols-2">
-          {(['base', 'unichain'] as const).map((chain) => (
+          {gasChains.map(({ chain, role }) => (
             <div key={chain} className="rounded-xl border border-line bg-paper-50 p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-xs font-medium text-ink-900">{CHAIN_LABELS[chain]}</span>
+                <span className="text-xs font-medium text-ink-900">
+                  {CHAIN_LABELS[chain]} <span className="text-[11px] font-normal text-ink-400">· {role}</span>
+                </span>
                 <ChainPill chain={chain} />
               </div>
               <div className="mt-3">
