@@ -1,10 +1,11 @@
-import { useQuery } from '@tanstack/react-query'
+import { useQueries, useQuery } from '@tanstack/react-query'
 import { useBalance, usePublicClient } from 'wagmi'
 import type { Address, Hex } from 'viem'
 import { CHAIN_IDS } from './chains'
 import { configuredAddress, useConfig } from './config'
 import { assetEscrowAbi, erc20Abi, paymentEscrowAbi, payerAbi, reactiveAbi } from './contracts'
 import { isEmptyOrder } from './format'
+import { isOrderTerminal } from './status'
 import type { Leg, Order, Venues } from './types'
 
 /**
@@ -28,16 +29,34 @@ export interface OrderRow {
   createdIndex: number
 }
 
-export function useOrders() {
+export interface OrdersResult {
+  data?: OrderRow[]
+  isLoading: boolean
+  isError: boolean
+  error: Error | null
+  isFetching: boolean
+  refetch: () => Promise<unknown>
+}
+
+/**
+ * The order board used to refetch orderCount + every orderIds + every getOrder
+ * (1 + 2N eth_calls on Lasna, which has no Multicall3) every 5s on every page.
+ * IDs change only when a trade is created, so they live in a slow shared
+ * query; each order uses the SAME ['order', id] key as the detail page and
+ * stops polling on its own once it is terminal.
+ */
+export function useOrders(): OrdersResult {
   const config = useConfig()
   const client = looseClient(usePublicClient({ chainId: CHAIN_IDS.lasna }))
   const rc = configuredAddress(config.reactive.reactiveContract)
+  const enabled = !!client && !!rc
 
-  return useQuery({
-    queryKey: ['orders', rc],
-    enabled: !!client && !!rc,
-    refetchInterval: 5_000,
-    queryFn: async (): Promise<OrderRow[]> => {
+  const idsQuery = useQuery({
+    queryKey: ['order-ids', rc],
+    enabled,
+    staleTime: 60_000,
+    refetchInterval: 30_000, // new orders appear within 30s, or on Refresh
+    queryFn: async (): Promise<Hex[]> => {
       const c = client!
       const count = (await c.readContract({
         address: rc,
@@ -46,9 +65,7 @@ export function useOrders() {
       })) as bigint
       const n = Number(count)
       if (n <= 0) return []
-      // Lasna has no Multicall3 deployment. Plain reads keep the board honest:
-      // one eth_call per order, with no dependency on a canonical multicall address.
-      const ids = await Promise.all(
+      return Promise.all(
         Array.from({ length: n }, (_, i) =>
           c.readContract({
             address: rc,
@@ -58,34 +75,57 @@ export function useOrders() {
           }) as Promise<Hex>,
         ),
       )
-      const orders = await Promise.all(
-        ids.map((id) =>
-          c.readContract({
-            address: rc,
-            abi: reactiveAbi,
-            functionName: 'getOrder',
-            args: [id],
-          }) as Promise<Order>,
-        ),
-      )
-      // Newest first: orderIds are appended on creation, so a higher index is
-      // a later order. Reverse index order without touching the on-chain reads.
-      return ids
-        .map((id, i) => ({ id, order: orders[i] as Order, createdIndex: i }))
-        .sort((a, b) => b.createdIndex - a.createdIndex)
     },
   })
+
+  const ids = idsQuery.data ?? []
+  const orderQueries = useQueries({
+    queries: ids.map((id) => ({
+      queryKey: ['order', id, rc],
+      enabled,
+      staleTime: 5_000,
+      refetchInterval: (query: { state: { data?: Order | null } }) =>
+        isOrderTerminal(query.state.data) ? false : 5_000,
+      queryFn: async (): Promise<Order | null> => {
+        const result = (await client!.readContract({
+          address: rc,
+          abi: reactiveAbi,
+          functionName: 'getOrder',
+          args: [id],
+        })) as unknown as Order
+        return isEmptyOrder(result) ? null : result
+      },
+    })),
+  })
+
+  const rows: OrderRow[] = ids
+    .map((id, i) => ({ id, order: orderQueries[i]?.data, createdIndex: i }))
+    .filter((row): row is OrderRow => !!row.order)
+    // Newest first: orderIds are appended on creation.
+    .sort((a, b) => b.createdIndex - a.createdIndex)
+
+  return {
+    data: idsQuery.data && rows.length === ids.length ? rows : undefined,
+    isLoading: idsQuery.isLoading || orderQueries.some((q) => q.isLoading),
+    isError: idsQuery.isError || orderQueries.some((q) => q.isError),
+    error: (idsQuery.error ?? orderQueries.find((q) => q.isError)?.error ?? null) as Error | null,
+    isFetching: idsQuery.isFetching || orderQueries.some((q) => q.isFetching),
+    refetch: async () => {
+      await Promise.all([idsQuery.refetch(), ...orderQueries.map((q) => q.refetch())])
+    },
+  }
 }
 
-export function useOrder(orderId?: Hex | null) {
+export function useOrder(orderId?: Hex | null, options?: { enabled?: boolean }) {
   const config = useConfig()
   const client = looseClient(usePublicClient({ chainId: CHAIN_IDS.lasna }))
   const rc = configuredAddress(config.reactive.reactiveContract)
 
   return useQuery({
     queryKey: ['order', orderId, rc],
-    enabled: !!client && !!rc && !!orderId,
-    refetchInterval: 2_000,
+    enabled: !!client && !!rc && !!orderId && (options?.enabled ?? true),
+    staleTime: 5_000,
+    refetchInterval: (query) => (isOrderTerminal(query.state.data) ? false : 5_000),
     queryFn: async (): Promise<Order | null> => {
       const result = (await client!.readContract({
         address: rc,
@@ -133,7 +173,12 @@ export function useLeg(kind: LegKind, orderId?: Hex | null, seller?: Hex | null)
   return useQuery({
     queryKey: ['leg', kind, orderId, seller, escrow],
     enabled: !!client && !!escrow && !!orderId,
-    refetchInterval: 2_000,
+    staleTime: 5_000,
+    // Leg state 2 = RELEASED, 3 = REFUNDED: nothing else can happen there.
+    refetchInterval: (query) => {
+      const state = query.state.data?.state
+      return state !== undefined && state >= 2n ? false : 8_000
+    },
     queryFn: async (): Promise<Leg | null> => {
       try {
         if (kind === 'asset') {
@@ -199,7 +244,8 @@ export function useTokenBalance(kind: LegKind, owner?: Hex | null) {
   return useQuery({
     queryKey: ['token-balance', kind, owner, token],
     enabled: !!client && !!token && !!owner,
-    refetchInterval: 10_000,
+    staleTime: 10_000,
+    refetchInterval: 15_000,
     queryFn: async (): Promise<bigint | null> => {
       try {
         return (await client!.readContract({
@@ -226,7 +272,8 @@ export function useAllowance(kind: LegKind, owner?: Hex | null) {
   return useQuery({
     queryKey: ['allowance', kind, owner, token, spender],
     enabled: !!client && !!token && !!spender && !!owner,
-    refetchInterval: 4_000,
+    staleTime: 10_000,
+    refetchInterval: 15_000,
     queryFn: async (): Promise<bigint | null> => {
       try {
         return (await client!.readContract({
@@ -266,7 +313,8 @@ export function useHealth() {
       config.base.paymentEscrow,
       config.unichain.assetEscrow,
     ],
-    refetchInterval: 5_000,
+    staleTime: 10_000,
+    refetchInterval: 15_000, // dev-only panel; was 5s
     queryFn: async (): Promise<HealthRow[]> => {
       const definitions: Array<{
         key: HealthRow['key']
@@ -327,8 +375,9 @@ export function useHealth() {
 
 export function useNativeBalances(address?: Hex | null) {
   const enabled = !!address
-  const lasna = useBalance({ address: address as Address | undefined, chainId: CHAIN_IDS.lasna, query: { enabled } })
-  const base = useBalance({ address: address as Address | undefined, chainId: CHAIN_IDS.base, query: { enabled } })
-  const unichain = useBalance({ address: address as Address | undefined, chainId: CHAIN_IDS.unichain, query: { enabled } })
+  const query = { enabled, refetchInterval: 15_000, staleTime: 10_000 }
+  const lasna = useBalance({ address: address as Address | undefined, chainId: CHAIN_IDS.lasna, query })
+  const base = useBalance({ address: address as Address | undefined, chainId: CHAIN_IDS.base, query })
+  const unichain = useBalance({ address: address as Address | undefined, chainId: CHAIN_IDS.unichain, query })
   return { lasna: lasna.data, base: base.data, unichain: unichain.data }
 }

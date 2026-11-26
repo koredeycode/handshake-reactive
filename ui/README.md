@@ -25,6 +25,12 @@ Deploy `dist/` to Vercel (see `vercel.json` rewrite) or GitHub Pages (`404.html`
 
 Live addresses are read at runtime from `public/contracts.json`. `public/tokens.json` holds display metadata (name, symbol, decimals, letter mark, color) keyed by chain and token address; its name/symbol/decimals mirror the deployed ERC-20s (`Test USD` / `tUSD` on Base Sepolia, `Test Asset` / `tASSET` on Unichain Sepolia). Optional build-time overrides: `VITE_RC_ADDRESS`, `VITE_PAYMENT_ESCROW`, `VITE_ASSET_ESCROW`, `VITE_PAYMENT_TOKEN`, `VITE_ASSET_TOKEN`, `VITE_BASE_PROXY`, `VITE_UNICHAIN_PROXY`, `VITE_*_FROM_BLOCK`, `VITE_LOOKBACK_BLOCKS`. `VITE_DEV_TOOLS=1` enables the hidden `/dev` route in a production build (it can also be opened with `?dev=1`). Never put private keys in any of these files.
 
+### Public RPCs are rate-limited
+
+The browser reads public RPCs directly; shared public endpoints enforce per-IP limits (`code -32005`) and disagree on `eth_getLogs` range caps (200 blocks on `sepolia.base.org`, 1,000 on Unichain, 1,000 on publicnode). `src/wagmi.ts` therefore configures `fallback([...])` per chain with `retryCount: 0` (no retry storms on rate limits), `rank: false` (no background `net_listening` pings) and immediate failover for per-endpoint errors; `src/lib/logs.ts` adapts its `eth_getLogs` chunk size from 200 up to 1,000 and halves/retries on a range error. Pollers stop for terminal orders and share cached queries across pages — see [RPC-AUDIT.md](RPC-AUDIT.md) for the full inventory and measured call rates.
+
+**For production, set `VITE_BASE_RPC`, `VITE_UNICHAIN_RPC` and/or `VITE_LASNA_RPC` to a private provider URL (e.g. your Alchemy/QuickNode endpoint).** The override is used as the first fallback hop for that chain, before the public endpoints; the key is build-time only and must never be a secret key. Lasna currently has a single working public endpoint (`https://lasna-rpc.rnk.dev/`); `lasna.drpc.org` did not respond from this environment, so it is deliberately not configured. drpc is a last-resort hop on Base/Unichain only.
+
 ## Routes
 
 | Route | Screen |

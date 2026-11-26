@@ -18,9 +18,10 @@ export interface BalanceChip {
 
 /**
  * Reads are scoped by chainId, so they work from any connected chain: there is
- * no wrong-chain error state to resolve. Every read is a plain eth_call — the
- * wagmi config keeps batch.multicall off because Lasna has no Multicall3.
- * Loading shows a dot and a failed read shows a dash; no value is invented.
+ * no wrong-chain error state to resolve. Multicall is enabled per chain on
+ * Base/Unichain and off on Lasna; smart polling keeps these at 15s instead of
+ * wagmi's faster defaults. Loading shows a dot and a failed read shows a dash;
+ * no value is invented.
  */
 export function useWalletBalances(address?: Hex | null): BalanceChip[] {
   const config = useConfig()
@@ -28,12 +29,13 @@ export function useWalletBalances(address?: Hex | null): BalanceChip[] {
   const asset = useTokenDisplay('asset')
   const owner = address as Address | undefined
   const enabled = !!address
+  const balanceQuery = { enabled, refetchInterval: 15_000, staleTime: 10_000 }
   const paymentToken = configuredAddress(config.base.paymentToken)
   const assetToken = configuredAddress(config.unichain.assetToken)
 
-  const baseNative = useBalance({ address: owner, chainId: CHAIN_IDS.base, query: { enabled } })
-  const unichainNative = useBalance({ address: owner, chainId: CHAIN_IDS.unichain, query: { enabled } })
-  const lasnaNative = useBalance({ address: owner, chainId: CHAIN_IDS.lasna, query: { enabled } })
+  const baseNative = useBalance({ address: owner, chainId: CHAIN_IDS.base, query: balanceQuery })
+  const unichainNative = useBalance({ address: owner, chainId: CHAIN_IDS.unichain, query: balanceQuery })
+  const lasnaNative = useBalance({ address: owner, chainId: CHAIN_IDS.lasna, query: balanceQuery })
 
   const paymentBalance = useReadContract({
     address: (paymentToken ?? undefined) as Address | undefined,
@@ -41,7 +43,7 @@ export function useWalletBalances(address?: Hex | null): BalanceChip[] {
     functionName: 'balanceOf',
     args: owner ? [owner] : undefined,
     chainId: CHAIN_IDS.base,
-    query: { enabled: enabled && !!paymentToken },
+    query: { ...balanceQuery, enabled: enabled && !!paymentToken },
   })
   const assetBalance = useReadContract({
     address: (assetToken ?? undefined) as Address | undefined,
@@ -49,7 +51,7 @@ export function useWalletBalances(address?: Hex | null): BalanceChip[] {
     functionName: 'balanceOf',
     args: owner ? [owner] : undefined,
     chainId: CHAIN_IDS.unichain,
-    query: { enabled: enabled && !!assetToken },
+    query: { ...balanceQuery, enabled: enabled && !!assetToken },
   })
 
   const nativeLabel = (query: typeof baseNative): string => {

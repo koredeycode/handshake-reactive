@@ -6,6 +6,8 @@ import { CHAIN_IDS, EXPLORER_NAMES, txUrl } from './chains'
 import { useConfig } from './config'
 import { formatTimestamp, truncate } from './format'
 import { logClient, resolveProof, type ProofClients } from './logs'
+import { useOrder } from './queries'
+import { isOrderTerminal } from './status'
 import type { Order, ProofData, ProofEvent } from './types'
 
 export function useProofClients(): ProofClients {
@@ -15,15 +17,37 @@ export function useProofClients(): ProofClients {
   return { lasna: logClient(lasna), base: logClient(base), unichain: logClient(unichain) }
 }
 
-export function useProof(orderId?: Hex | null) {
+/**
+ * One cached proof query per order, shared by order detail, verify, raw state
+ * and My Orders (identical queryKey). Polling only happens while the order can
+ * still change: terminal orders keep their already-observed hashes forever
+ * with `staleTime: Infinity` and `refetchInterval: false`.
+ */
+export function useProof(orderId?: Hex | null, providedOrder?: Order | null) {
   const config = useConfig()
   const clients = useProofClients()
+  // Callers that already have the order (e.g. My Orders) pass it through so we
+  // do not create a second getOrder poller for the same id.
+  const orderQuery = useOrder(orderId, { enabled: !providedOrder })
+  const order = providedOrder ?? orderQuery.data
+  const terminal = isOrderTerminal(order)
   const watch = `${config.reactive.reactiveContract}:${config.base.paymentEscrow}:${config.unichain.assetEscrow}`
+  const queryKey = ['proof', orderId, watch] as const
+  // Wait for getOrder: its deadline is what makes the log window narrow.
+  // Starting the proof with an unknown order would fall back to the global
+  // deployment-wide scan (the old ~90-call behaviour).
+  const orderResolved = !!providedOrder || orderQuery.isSuccess || orderQuery.isError
+
   return useQuery({
-    queryKey: ['proof', orderId, watch],
-    enabled: !!orderId,
-    refetchInterval: 5_000,
-    queryFn: async (): Promise<ProofData> => resolveProof(orderId!, config, clients),
+    queryKey,
+    enabled: !!orderId && orderResolved && !!order,
+    // 8s while pending (inside the requested 5–10s band), never when settled.
+    refetchInterval: terminal ? false : 8_000,
+    staleTime: terminal ? Infinity : 8_000,
+    queryFn: async (context): Promise<ProofData> => {
+      const previous = context.client.getQueryData<ProofData>(queryKey)
+      return resolveProof(orderId!, config, clients, order, previous)
+    },
   })
 }
 

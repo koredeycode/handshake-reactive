@@ -37,7 +37,10 @@ function WalletOrderRow({ row, wallet, now, payment, asset }: WalletOrderProps) 
   const isBuyer = order.buyer.toLowerCase() === address
   const isSeller = order.seller.toLowerCase() === address
   const status = deriveStatus(order, now)
-  const proof = useProof(id)
+  // Proof queries are shared by queryKey with the detail/verify screens. The
+  // hook only polls while the order is non-terminal; settled/refunded rows
+  // fetch once and are then cached indefinitely (no per-row 5s log scans).
+  const proof = useProof(id, order)
   const expired = countdown(order.deadline, now) === 'expired'
 
   const hashes = buildHops(order, proof.data)

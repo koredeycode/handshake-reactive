@@ -23,6 +23,29 @@ export function deriveStatus(order: Order, nowSeconds: number): OrderStatus {
   return 'AWAITING_PAYMENT'
 }
 
+/**
+ * A terminal order cannot change on-chain any more: both legs closed, a refund
+ * completed, or the RC flagged the order invalid. Pollers use this to stop as
+ * soon as there is nothing left to observe. `settleRequested` alone is NOT
+ * terminal (the callbacks are still in flight); `refundRequested` alone is not
+ * terminal either until the leg(s) that were locked have been refunded.
+ */
+export function isOrderTerminal(order?: Order | null): boolean {
+  if (!order) return false
+  if (order.invalid) return true
+  if (order.paymentClosed && order.assetClosed) return true
+  if (
+    order.refundRequested &&
+    (!order.paymentSeen || order.paymentClosed) &&
+    (!order.assetSeen || order.assetClosed)
+  ) {
+    return true
+  }
+  // A settle request with both legs already closed is the same settled case as
+  // above; with legs still open it is deliberately still polled.
+  return Boolean(order.settleRequested && order.paymentClosed && order.assetClosed)
+}
+
 export const STATUS_LABEL: Record<OrderStatus, string> = {
   AWAITING_PAYMENT: 'Awaiting payment',
   AWAITING_ASSET: 'Awaiting asset',

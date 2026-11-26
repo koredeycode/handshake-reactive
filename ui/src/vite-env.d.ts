@@ -14,6 +14,10 @@ interface ImportMetaEnv {
   readonly VITE_BASE_FROM_BLOCK?: string
   readonly VITE_UNICHAIN_FROM_BLOCK?: string
   readonly VITE_LOOKBACK_BLOCKS?: string
+  /** Optional private/primary RPC URLs; they become the first fallback hop. */
+  readonly VITE_BASE_RPC?: string
+  readonly VITE_UNICHAIN_RPC?: string
+  readonly VITE_LASNA_RPC?: string
   /** Enables the hidden /dev diagnostics route in production builds. */
   readonly VITE_DEV_TOOLS?: string
 }
