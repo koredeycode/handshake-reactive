@@ -4,6 +4,8 @@ React + Vite + TypeScript static console for Handshake — trust-minimized cross
 
 ## Run
 
+The package lives in `ui/`, not at the repo root. From the repo root, the correct commands are:
+
 ```bash
 cd ui
 npm install
@@ -12,7 +14,11 @@ npm run build     # static output in ui/dist/
 npm run preview
 ```
 
+Running `npm install && npm run build` directly at the repo root fails with `Missing script: "build"` — there is no root `package.json` by design.
+
 Deploy `dist/` to Vercel (see `vercel.json` rewrite) or GitHub Pages (`404.html` SPA fallback). Set the Vite base path if deploying under a project subpath.
+
+`npm install` may report transitive npm audit advisories (mostly wagmi/WalletConnect dependencies); these are dev-time dependency warnings and did not affect the static build, so no forced major upgrades are applied.
 
 ## Configuration
 

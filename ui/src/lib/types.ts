@@ -22,6 +22,9 @@ export interface Order {
   nonce: bigint
   lastActionTimestamp: bigint
   winner: Hex
+  assetLockCount: bigint
+  paymentRequestNonce: bigint
+  assetRequestNonce: bigint
 }
 
 export interface Leg {
