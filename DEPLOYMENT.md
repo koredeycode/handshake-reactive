@@ -94,3 +94,38 @@ The three proven loops above stay untouched as submission proof. Two new instanc
 ### Original RC top-up
 
 The original RC accrued ~0.0198 lREACT of debt and Reactive paused delivery. Top-up `SYSTEM.depositTo` → `0xf9da2394c79ecf11fdc97dffe27ca0f610bb1b172a4605e7a699dd933a2642bd`; debt is back to 0 and reserves ~1.03e16 wei.
+
+### Proof — open order `0xaaaa…aaaa` (race market, seller = address(0))
+| Stage | Tx | Chain |
+|---|---|---|
+| createOrder (open) | `0x9d8f8c078699bc47bfc60e930eea988f683026153655821c9353dbe280e52e98` | Lasna |
+| PaymentLocked (counterparty 0) | `0x14f8f22d51a08a287948ebee97b602a8ea5cd19561533024bd710894d333cf96` | Base Sepolia |
+| AssetLocked (winner) | `0x07a7bc7a66828fc82570f9c670d9acfa2e7f874589afb566abb2d1cdb4fb83fc` | Unichain Sepolia |
+| Reactive tx with **two** `CallbackRequest` logs | `0xdb6117bd972950c37e4d412b47e24783fc6432643e7eb2089cd3038234e30e01` | Lasna |
+| PaymentReleased (to winner) | `0xc9153ef7658ddcd442b05fec6e415e9ae429d1cedd88cec599e06e0e6f4760c8` | Base Sepolia |
+| AssetReleased (to buyer) | `0x82f17033b2b9d5ef67b9d806c058a8219483a648391416ece2a7dcb2bc78d721` | Unichain Sepolia |
+
+### Proof — race with two sellers `0xbbbb…bbbb` (race market)
+First valid asset lock wins; the later seller is refunded without closing the winner's leg. Final state: winner = first seller, `assetLockCount = 2`, payment RELEASED, winner asset RELEASED, loser asset REFUNDED, both legs closed.
+
+| Stage | Tx | Chain |
+|---|---|---|
+| createOrder (open) | `0x7aace04ccad67772de21029e1e7d2a930a80ea288e3e7d397ff2178fe735d200` | Lasna |
+| PaymentLocked | `0x6bf11a7818a228de4f1e77224a330731f872e29e91c0310d528598990a4f19ba` | Base Sepolia |
+| AssetLocked — winning seller | `0xa95d819994fc77a8f053259ea73c43fd3d7c417fffe98b3ac8aa03da91be2017` | Unichain Sepolia |
+| AssetLocked — later seller | `0xdd960395a7b72d15cb4c77923b1d4a513d1cdb5dd16d30bfc0bf4faba6555425` | Unichain Sepolia |
+| Reactive tx with **two** `CallbackRequest` logs | `0x824eecdea48e9fb9e2fc61f5cdb44a742c55e04023bc9228c69028f476cd6063` | Lasna |
+| Reactive loser-refund tx | `0x7bceca193b1103f02474e6a9d49e952f4ae1575b364f7b29dc80c5f40211097d` | Lasna |
+| PaymentReleased (to winner) | `0x9e508e5eee5b06a03f2a6aa07959b419285f9b467c2a36573333b39888630aaa` | Base Sepolia |
+| AssetReleased (winner → buyer) | `0x901a4615ec788af64046cc18d55765547971610e235b939cc2caf2cb2e3c8f8d` | Unichain Sepolia |
+| AssetRefunded (loser) | `0xcc4c5f8261760198a2d1d94c34019ca9156569167b77f85b3e663f4992d1f46c` | Unichain Sepolia |
+
+### Proof — reverse market `0xcccc…cccc` (asset-first)
+| Stage | Tx | Chain |
+|---|---|---|
+| createOrder | `0x61cc0e591e85b1c93f0632bf034f2336ccacfc2305b82df23b8f9a14a79e8076` | Lasna |
+| AssetLocked (tASSET on Base) | `0xc491f031b6d882f16c406e0a8f48683d627699a5d3c7edab6f5780f35f7593a0` | Base Sepolia |
+| PaymentLocked (tUSD on Unichain) | `0x58ad65b3189d8ab940ded4786cad85d887da3745d1830e88c688857c5967c811` | Unichain Sepolia |
+| Reactive tx with **two** `CallbackRequest` logs | `0x1e3d80263ae3d2f87376182ec199b530ab6f979e19c8607436a1d34a91259041` | Lasna |
+| PaymentReleased (to seller) | `0x4d0037ae1016061e64dfc0e64b8f5259035bd89b5d5d8ce2bb440ae3f53e4ca0` | Unichain Sepolia |
+| AssetReleased (to buyer) | `0x248083746d1bcd0a61150b1213630d0bfecf30fbe4f19d2a7fd695e8a69138d9` | Base Sepolia |
