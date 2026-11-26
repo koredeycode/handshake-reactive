@@ -38,30 +38,30 @@ export interface HopStep {
 
 export function buildHops(order: Order | null | undefined, proof?: ProofData | null): HopStep[] {
   const refundMode = !!order?.refundRequested || !!proof?.paymentRefunded || !!proof?.assetRefunded
-  const release: Array<[string, string, 'base' | 'unichain', ProofEvent | undefined]> = [
-    ['paymentRelease', '④ Payment released', 'base', proof?.paymentReleased],
-    ['assetRelease', '⑤ Asset released', 'unichain', proof?.assetReleased],
-  ]
-  const refund: Array<[string, string, 'base' | 'unichain', ProofEvent | undefined]> = [
-    ['paymentRefund', '④ Payment refunded', 'base', proof?.paymentRefunded],
-    ['assetRefund', '⑤ Asset refunded', 'unichain', proof?.assetRefunded],
-  ]
+  const closing: Array<[string, string, 'base' | 'unichain', ProofEvent | undefined]> = refundMode
+    ? [
+        ['paymentRefund', 'Payment refunded', 'base', proof?.paymentRefunded],
+        ['assetRefund', 'Asset refunded', 'unichain', proof?.assetRefunded],
+      ]
+    : [
+        ['paymentRelease', 'Payment released', 'base', proof?.paymentReleased],
+        ['assetRelease', 'Asset released', 'unichain', proof?.assetReleased],
+      ]
 
   return [
-    { n: '①', key: 'paymentLocked', title: 'Payment locked', chain: 'base', event: proof?.paymentLocked },
-    { n: '②', key: 'assetLocked', title: 'Asset locked', chain: 'unichain', event: proof?.assetLocked },
+    { n: '01', key: 'paymentLocked', title: 'Payment locked', chain: 'base', event: proof?.paymentLocked },
+    { n: '02', key: 'assetLocked', title: 'Asset locked', chain: 'unichain', event: proof?.assetLocked },
     {
-      n: '③',
+      n: '03',
       key: 'reactive',
-      title: 'Reactive decision',
+      title: 'Settlement decision',
       chain: 'lasna',
       event: proof?.reactive,
-      note: 'CallbackRequest',
     },
-    ...(refundMode ? refund : release).map(([key, title, chain, event]) => ({
-      n: key.includes('payment') ? '④' : '⑤',
+    ...closing.map(([key, title, chain, event], i) => ({
+      n: i === 0 ? '04' : '05',
       key,
-      title: title.replace(/^[④⑤]\s*/, ''),
+      title,
       chain,
       event,
     })),
@@ -71,7 +71,7 @@ export function buildHops(order: Order | null | undefined, proof?: ProofData | n
 function markdownRow(step: HopStep): string {
   const hash = step.event?.txHash
   const url = txUrl(step.chain, hash)
-  const hashCell = hash ? `\`${hash}\`` : '— (not observed yet)'
+  const hashCell = hash ? `\`${hash}\`` : '—'
   const explorerCell = url ? `[${EXPLORER_NAMES[step.chain]}](${url})` : '—'
   const block = step.event ? `${step.event.blockNumber.toString()} @ ${formatTimestamp(step.event.timestamp)}` : '—'
   return `| ${step.n} ${step.title} | ${step.chain === 'lasna' ? 'Reactive Lasna' : step.chain === 'base' ? 'Base Sepolia' : 'Unichain Sepolia'} | ${hashCell} | ${block} | ${explorerCell} |`
@@ -118,7 +118,7 @@ export function useCopyFeedback() {
 }
 
 export function shortProofSummary(proof?: ProofData | null): string {
-  if (!proof) return 'Not observed yet'
+  if (!proof) return 'Settlement in progress'
   const hashes = proof.events.map((e) => truncate(e.txHash, 8, 6))
-  return hashes.length ? hashes.join(' · ') : 'Not observed yet'
+  return hashes.length ? hashes.join(' · ') : 'Settlement in progress'
 }

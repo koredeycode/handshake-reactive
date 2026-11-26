@@ -1,6 +1,6 @@
 import type { Order, OrderStatus } from './types'
 
-/** Client-side derivation from RC flags plus the wall clock (PRD screen 4). */
+/** Client-side derivation from RC flags plus the wall clock. */
 export function deriveStatus(order: Order, nowSeconds: number): OrderStatus {
   if (order.invalid) return 'INVALID'
   const closed = order.paymentClosed && order.assetClosed
@@ -14,24 +14,35 @@ export function deriveStatus(order: Order, nowSeconds: number): OrderStatus {
   return 'AWAITING_PAYMENT'
 }
 
+export const STATUS_LABEL: Record<OrderStatus, string> = {
+  AWAITING_PAYMENT: 'Awaiting payment',
+  AWAITING_ASSET: 'Awaiting asset',
+  READY: 'Ready to settle',
+  SETTLING: 'Settling',
+  SETTLED: 'Settled',
+  REFUNDING: 'Refunding',
+  REFUNDED: 'Refunded',
+  INVALID: 'Invalid',
+}
+
 export const STATUS_STYLES: Record<OrderStatus, string> = {
-  AWAITING_PAYMENT: 'border-slate-500/40 bg-slate-500/10 text-slate-300',
-  AWAITING_ASSET: 'border-sky-400/40 bg-sky-400/10 text-sky-300',
-  READY: 'border-emerald-400/40 bg-emerald-400/10 text-emerald-300',
-  SETTLING: 'border-amber-400/40 bg-amber-400/10 text-amber-300',
-  SETTLED: 'border-emerald-400/50 bg-emerald-400/15 text-emerald-300',
-  REFUNDING: 'border-amber-400/40 bg-amber-400/10 text-amber-300',
-  REFUNDED: 'border-slate-400/40 bg-slate-400/10 text-slate-300',
-  INVALID: 'border-red-400/50 bg-red-400/10 text-red-300',
+  AWAITING_PAYMENT: 'border-line bg-paper-100 text-ink-500',
+  AWAITING_ASSET: 'border-line bg-paper-100 text-ink-500',
+  READY: 'border-accent/25 bg-accent-soft text-accent',
+  SETTLING: 'border-accent/25 bg-accent-soft text-accent',
+  SETTLED: 'border-good/25 bg-good-soft text-good',
+  REFUNDING: 'border-warn/25 bg-warn-soft text-warn',
+  REFUNDED: 'border-line bg-paper-100 text-ink-500',
+  INVALID: 'border-bad/25 bg-bad-soft text-bad',
 }
 
 export const STATUS_DOT: Record<OrderStatus, string> = {
-  AWAITING_PAYMENT: 'bg-slate-400',
-  AWAITING_ASSET: 'bg-sky-400',
-  READY: 'bg-emerald-400',
-  SETTLING: 'bg-amber-400 animate-pulse-soft',
-  SETTLED: 'bg-emerald-400',
-  REFUNDING: 'bg-amber-400 animate-pulse-soft',
-  REFUNDED: 'bg-slate-400',
-  INVALID: 'bg-red-400',
+  AWAITING_PAYMENT: 'bg-ink-400',
+  AWAITING_ASSET: 'bg-ink-400',
+  READY: 'bg-accent',
+  SETTLING: 'bg-accent',
+  SETTLED: 'bg-good',
+  REFUNDING: 'bg-warn',
+  REFUNDED: 'bg-ink-400',
+  INVALID: 'bg-bad',
 }
