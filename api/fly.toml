@@ -1,6 +1,6 @@
 # One shared-cpu-1x / 256 MB machine runs the Hono API and the 4-chain indexer
 # in a single Node process. No keeper key belongs in this app (separate Fly app).
-app = 'handshake-api'
+app = 'handshake-api-hs'
 primary_region = 'iad'
 
 [build]
