@@ -8,11 +8,13 @@ const envSchema = z.object({
 
   REACTIVE_RPC: z.string().default('https://lasna-rpc.rnk.dev/'),
   REACTIVE_WS: z.string().default('wss://lasna-rpc.rnk.dev/'),
-  BASE_RPC: z.string().default('https://sepolia.base.org'),
-  BASE_WS: z.string().default('wss://sepolia.base.org'),
-  UNICHAIN_RPC: z.string().default('https://sepolia.unichain.org'),
-  UNICHAIN_WS: z.string().default('wss://sepolia.unichain.org'),
-  SEPOLIA_RPC: z.string().default('https://ethereum-sepolia-rpc.publicnode.com'),
+  BASE_RPC: z.string().default('https://base-sepolia-rpc.publicnode.com'),
+  BASE_WS: z.string().default('wss://base-sepolia-rpc.publicnode.com'),
+  UNICHAIN_RPC: z.string().default('https://unichain-sepolia-rpc.publicnode.com'),
+  // The official Unichain Sepolia WebSocket endpoint requires the /ws suffix.
+  UNICHAIN_WS: z.string().default('wss://sepolia.unichain.org/ws'),
+  // publicnode has pruned history for old eth_getLogs; Tenderly gateway serves backfill.
+  SEPOLIA_RPC: z.string().default('https://sepolia.gateway.tenderly.co'),
   SEPOLIA_WS: z.string().default('wss://ethereum-sepolia-rpc.publicnode.com'),
 
   RESEND_API_KEY: z.string().optional(),
