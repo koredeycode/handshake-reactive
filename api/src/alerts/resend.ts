@@ -28,6 +28,18 @@ export type AlertInput = {
   dedupeKey?: string;
 };
 
+/** viem/WebSocket errors are often ErrorEvent wrappers: String(error) gives
+ *  "[object ErrorEvent]" and loses the actual message. */
+export function formatError(error: unknown): string {
+  if (error instanceof Error) return error.message || error.name;
+  if (error && typeof error === 'object') {
+    const candidate = error as { message?: unknown; error?: { message?: unknown } };
+    const inner = candidate.error?.message ?? candidate.message;
+    if (typeof inner === 'string' && inner.length > 0) return inner;
+  }
+  return String(error);
+}
+
 export async function sendOperatorAlert(input: AlertInput): Promise<void> {
   const mailer = client();
   if (!mailer || !env.OPERATOR_ALERT_EMAIL) {
@@ -37,7 +49,10 @@ export async function sendOperatorAlert(input: AlertInput): Promise<void> {
     return;
   }
   const dedupeKey = input.dedupeKey ?? input.subject;
-  const since = new Date(Date.now() - env.ALERT_DEDUPE_MS);
+  // WebSocket closes are expected with public RPCs; keep their alert cooldown
+  // longer than the generic 10-minute window to avoid inbox spam.
+  const windowMs = input.kind === 'indexer_ws' ? Math.max(env.ALERT_DEDUPE_MS, 30 * 60_000) : env.ALERT_DEDUPE_MS;
+  const since = new Date(Date.now() - windowMs);
   const recent = await db.select({ id: alertDeliveries.id }).from(alertDeliveries)
     .where(and(
       eq(alertDeliveries.kind, input.kind),
