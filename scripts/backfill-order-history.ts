@@ -639,7 +639,7 @@ async function insertRows(sql: SqlClient, rows: Candidate[]): Promise<number> {
          returning id`,
         [
           row.chainId, row.txHash, row.logIndex, row.blockNumber, row.blockHash,
-          row.address, row.eventName, JSON.stringify(row.payload), row.removed, row.receivedAt,
+          row.address, row.eventName, row.payload, row.removed, row.receivedAt,
         ],
       );
       inserted += result.length;
