@@ -12,7 +12,7 @@ const envSchema = z.object({
   BASE_WS: z.string().default('wss://base-sepolia-rpc.publicnode.com'),
   UNICHAIN_RPC: z.string().default('https://unichain-sepolia-rpc.publicnode.com'),
   // The official Unichain Sepolia WebSocket endpoint requires the /ws suffix.
-  UNICHAIN_WS: z.string().default('wss://sepolia.unichain.org/ws'),
+  UNICHAIN_WS: z.string().default('wss://unichain-sepolia-rpc.publicnode.com'),
   // publicnode has pruned history for old eth_getLogs; Tenderly gateway serves backfill.
   SEPOLIA_RPC: z.string().default('https://sepolia.gateway.tenderly.co'),
   SEPOLIA_WS: z.string().default('wss://ethereum-sepolia-rpc.publicnode.com'),
