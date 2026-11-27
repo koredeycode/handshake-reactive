@@ -139,6 +139,12 @@ export function decodeRawLog(raw: RawLog, chainId: number): DecodedEvent | null 
       break;
     }
     case 'callbackRequest': {
+      // CallbackRequest(uint256,address,address,uint8,bytes): the subscriber is
+      // topic3. Prefer the decoded name, but fall back to the raw topic so a
+      // future ABI/payload change cannot hide who requested the callback.
+      const topicSubscriber = str(raw.topics[3]);
+      const subscriber = str(arg(args, 'subscriber_', 2))
+        ?? (topicSubscriber ? `0x${topicSubscriber.slice(-40)}`.toLowerCase() : undefined);
       const configBytes = str(arg(args, 'config_', 4));
       let config: { chainId: bigint; recipient: Address; gasLimit: bigint; payload: Hex } | undefined;
       let functionName = 'unknown';
@@ -161,7 +167,7 @@ export function decodeRawLog(raw: RawLog, chainId: number): DecodedEvent | null 
         orderId,
         chainId: config ? Number(config.chainId) : Number(asDecimal(arg(args, 'chainId_', 0))),
         contract: str(arg(args, 'contract_', 1)),
-        subscriber: str(arg(args, 'subscriber_', 2)),
+        subscriber,
         version: Number(asDecimal(arg(args, 'version_', 3))),
         recipient: config?.recipient,
         gasLimit: config ? Number(config.gasLimit) : undefined,

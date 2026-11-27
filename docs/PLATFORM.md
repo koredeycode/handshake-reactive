@@ -51,7 +51,15 @@ transactions and settlement proof for the contracts live in
   Reorged logs are marked removed and affected orders are rebuilt from surviving
   events, after which clients receive a `resync` frame. `Cron10` ticks are
   liveness-only: they update indexer status and metrics but are not stored as
-  event rows, published or folded into orders.
+  event rows, published or folded into orders. Foreign `CallbackRequest` logs
+  (subscriber other than our reactive contract) are ignored, and events for an
+  unknown order are never folded unless they are `OrderStateChanged("CREATED")`,
+  so term-less orders cannot be synthesized from foreign or late events.
+  `OrderStateChanged` only carries the stage, so terms for new and partial rows
+  are hydrated from the RC with `getOrder(bytes32)`/`termsHash(bytes32)` (cached
+  per order, failure-tolerant, with a bounded one-shot startup reconciliation
+  of pre-existing partial rows); venue escrows remain sourced from the venue
+  registry because the `orders` table has no escrow columns.
 
 ## Local development
 

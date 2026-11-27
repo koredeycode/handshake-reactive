@@ -14,8 +14,9 @@ import {
   venues,
   type OrderRow,
 } from '../db/schema.js';
-import type { DecodedEvent } from './decode.js';
+import { sseNameFor, type DecodedEvent } from './decode.js';
 import { emptyOrderState, foldEvent, stateFromRow, type FoldOrderState } from './fold.js';
+import { hydrateOrderTerms, type HydratedTerms } from './onchain.js';
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
@@ -140,13 +141,51 @@ async function insertOutbox(
   }));
 }
 
+function isCreatedEvent(event: DecodedEvent): boolean {
+  return sseNameFor(event) === 'order.state'
+    && String(event.fields.stage ?? '').toUpperCase() === 'CREATED';
+}
+
+/**
+ * Existing rows have event-derived flags/nonces: only fill fields they are
+ * missing. A fresh row can take the full RC snapshot before the stage is folded.
+ */
+function mergeHydratedTerms(
+  state: FoldOrderState,
+  terms: HydratedTerms | undefined,
+  isNew: boolean,
+): FoldOrderState {
+  if (!terms) return state;
+  if (isNew) return { ...state, ...terms };
+  const merged = { ...state } as unknown as Record<string, unknown>;
+  for (const [key, value] of Object.entries(terms)) {
+    if (value !== undefined && merged[key] === undefined) merged[key] = value;
+  }
+  return merged as unknown as FoldOrderState;
+}
+
 /**
  * Idempotent ingestion. The event insert, order fold, leg state and outbox rows
  * all commit in one transaction; the typed bus publish happens after commit.
+ * Terms hydration is a best-effort read outside the transaction: the RC holds
+ * the full tuple while OrderStateChanged carries only the stage.
  */
 export async function ingestLog(event: DecodedEvent, blockTimestamp?: Date): Promise<PublishedEvent[]> {
   const now = blockTimestamp ?? new Date();
   let published: PublishedEvent[] = [];
+  const created = isCreatedEvent(event);
+  let hydrated: HydratedTerms | undefined;
+  if (event.orderId && event.name !== 'cron10') {
+    if (created) {
+      hydrated = await hydrateOrderTerms(event.orderId);
+    } else {
+      // Reconciliation for a partial row: at most one RPC attempt per order by
+      // hydrateOrderTerms, and only when terms were never stored.
+      const [existing] = await db.select({ termsHash: orders.termsHash })
+        .from(orders).where(eq(orders.orderId, event.orderId)).limit(1);
+      if (existing && !existing.termsHash) hydrated = await hydrateOrderTerms(event.orderId);
+    }
+  }
   try {
     await db.transaction(async (tx) => {
       const inserted = await tx.insert(orderEvents).values({
@@ -196,8 +235,14 @@ export async function ingestLog(event: DecodedEvent, blockTimestamp?: Date): Pro
       if (!event.orderId || event.name === 'cron10') return;
       const orderId = event.orderId;
       const [row] = await tx.select().from(orders).where(eq(orders.orderId, orderId)).limit(1);
+      // Only CREATED introduces an order. A lock/terminal/callback event for
+      // an ID we have never seen at CREATED would otherwise fold from an empty
+      // state and persist a term-less phantom order. Keep the raw event row
+      // for audit, but do not fold, persist state or publish anything.
+      if (!row && !created) return;
       const legs = await tx.select().from(orderLegs).where(eq(orderLegs.orderId, orderId));
-      const state = row ? stateFromRow(row, legs) : emptyOrderState(orderId);
+      const base = row ? stateFromRow(row, legs) : emptyOrderState(orderId);
+      const state = mergeHydratedTerms(base, hydrated, !row);
       const folded = foldEvent(state, event, now);
       if (!folded.changed) return;
       if (folded.violation) {
@@ -214,6 +259,40 @@ export async function ingestLog(event: DecodedEvent, blockTimestamp?: Date): Pro
   bus.publish(published);
   if (published.length > 0) refreshOutboxDepth().catch(() => undefined);
   return published;
+}
+
+/**
+ * One-shot startup reconciliation for rows that predate terms hydration.
+ * Fills only columns that are still null from an authoritative RC snapshot;
+ * never rewrites event-derived flags or a more advanced state. Bounded and
+ * failure-tolerant so it cannot block the API/indexer from starting.
+ */
+export async function reconcilePartialOrderTerms(limit = 100): Promise<void> {
+  try {
+    const rows = await db.select().from(orders)
+      .where(sql`${orders.termsHash} is null`)
+      .limit(limit);
+    for (const row of rows) {
+      const terms = await hydrateOrderTerms(row.orderId);
+      if (!terms) continue;
+      const values: Partial<typeof orders.$inferInsert> = {};
+      if (terms.termsHash) values.termsHash = terms.termsHash;
+      if (!row.buyer && terms.buyer) values.buyer = terms.buyer;
+      if (!row.seller && terms.seller) values.seller = terms.seller;
+      if (!row.paymentChainId && terms.paymentChainId) values.paymentChainId = terms.paymentChainId;
+      if (!row.assetChainId && terms.assetChainId) values.assetChainId = terms.assetChainId;
+      if (!row.paymentToken && terms.paymentToken) values.paymentToken = terms.paymentToken;
+      if (!row.paymentAmount && terms.paymentAmount) values.paymentAmount = terms.paymentAmount;
+      if (!row.assetToken && terms.assetToken) values.assetToken = terms.assetToken;
+      if (!row.assetAmount && terms.assetAmount) values.assetAmount = terms.assetAmount;
+      if (!row.deadline && terms.deadline) values.deadline = terms.deadline;
+      if (Object.keys(values).length === 0) continue;
+      await db.update(orders).set(values).where(eq(orders.orderId, row.orderId));
+      log.info({ orderId: row.orderId }, 'reconciled partial order terms from reactive contract');
+    }
+  } catch (error) {
+    log.warn({ err: error }, 'partial order terms reconciliation failed');
+  }
 }
 
 /**
@@ -271,6 +350,14 @@ export async function handleReorg(event: DecodedEvent): Promise<PublishedEvent[]
           sql`${orderEvents.payload}->>'orderId' = ${orderId}`,
         ))
         .orderBy(asc(orderEvents.blockNumber), asc(orderEvents.txHash), asc(orderEvents.logIndex));
+      // Reorg rebuild must obey the same rule as live ingestion: no CREATED
+      // event in the surviving history means this ID was never one of our
+      // orders, so do not re-synthesize it from stale callback rows.
+      const hasCreated = history.some((row) => row.eventName === 'orderStateChanged'
+        && String((row.payload as { stage?: unknown } | null)?.stage ?? '').toUpperCase() === 'CREATED');
+      const [existing] = await tx.select({ orderId: orders.orderId })
+        .from(orders).where(eq(orders.orderId, orderId)).limit(1);
+      if (!existing && !hasCreated) continue;
       let state = emptyOrderState(orderId);
       for (const row of history) {
         // Re-fold through the same pure reducer; decode lazily to avoid a second RPC.
