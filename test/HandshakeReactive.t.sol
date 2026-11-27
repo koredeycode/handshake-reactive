@@ -60,6 +60,8 @@ contract HandshakeReactiveTest is Test {
         bytes payload;
     }
 
+    event VenueUnregistered(uint256 indexed chainId, address paymentEscrow, address assetEscrow);
+
     MockSystemContract sys;
     HandshakeReactive rc;
     bytes32 id;
@@ -462,7 +464,25 @@ contract HandshakeReactiveTest is Test {
         assertEq(rc.registeredChainIds().length, 3);
     }
 
+    function testReplaceVenueRejectedWhileOrderInFlight() public {
+        // setUp created an active order on Base -> Unichain. Replacing either
+        // venue now strands that order because react() validates live escrow meta.
+        vm.expectRevert(abi.encodeWithSignature("VenueInUse()"));
+        rc.setVenue(BASE_CHAIN, NEW_PAYMENT_ESCROW, NEW_ASSET_ESCROW);
+        vm.expectRevert(abi.encodeWithSignature("VenueInUse()"));
+        rc.setVenue(UNICHAIN_CHAIN, NEW_PAYMENT_ESCROW, NEW_ASSET_ESCROW);
+        // A chain with no in-flight orders can still be replaced.
+        rc.setVenue(SEPOLIA_CHAIN, NEW_PAYMENT_ESCROW, NEW_ASSET_ESCROW);
+    }
+
     function testReplaceVenueUnsubscribesOldAndSubscribesNew() public {
+        // Fresh RC with venues but no orders so the venue is idle.
+        HandshakeReactive fresh = new HandshakeReactive{value: 1 ether}();
+        fresh.setVenue(BASE_CHAIN, BASE_ESCROW, BASE_ASSET_ESCROW);
+        fresh.setVenue(UNICHAIN_CHAIN, UNICHAIN_PAYMENT_ESCROW, UNICHAIN_ESCROW);
+        fresh.setVenue(SEPOLIA_CHAIN, SEPOLIA_PAYMENT_ESCROW, SEPOLIA_ASSET_ESCROW);
+        rc = fresh;
+
         uint256 subscriptionsBefore = sys.subscriptionCount();
         uint256 unsubscriptionsBefore = sys.unsubscriptionCount();
 
@@ -1106,6 +1126,18 @@ contract HandshakeReactiveTest is Test {
         rc.coverDebt();
         assertEq(sys.received(), 0.1 ether);
 
+        // The setUp order is in flight, so unsubscribing must be refused.
+        vm.expectRevert(abi.encodeWithSignature("VenueInUse()"));
+        rc.unsubscribeAll();
+
+        // With a fresh idle RC, unsubscribeAll succeeds and emits real addresses.
+        HandshakeReactive fresh = new HandshakeReactive{value: 1 ether}();
+        fresh.setVenue(BASE_CHAIN, BASE_ESCROW, BASE_ASSET_ESCROW);
+        fresh.setVenue(UNICHAIN_CHAIN, UNICHAIN_PAYMENT_ESCROW, UNICHAIN_ESCROW);
+        fresh.setVenue(SEPOLIA_CHAIN, SEPOLIA_PAYMENT_ESCROW, SEPOLIA_ASSET_ESCROW);
+        rc = fresh;
+        vm.expectEmit(true, true, true, true);
+        emit VenueUnregistered(SEPOLIA_CHAIN, SEPOLIA_PAYMENT_ESCROW, SEPOLIA_ASSET_ESCROW);
         rc.unsubscribeAll();
         assertFalse(rc.cronSubscribed());
         assertEq(rc.registeredChainIds().length, 0);

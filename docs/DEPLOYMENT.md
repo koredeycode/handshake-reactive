@@ -39,6 +39,37 @@ RC.venue(11155111) = (payment escrow, asset escrow, true)
 all six escrows: debt = 0, reserves > 0
 ```
 
+## Deploy / fund runbook (re-runs and new markets)
+
+`script/Deploy.s.sol` deploys the RC, then **for each of the three chains** two
+tokens and two escrows in one broadcast session, then registers the three venues.
+`script/Fund.s.sol` then deposits reserves and asserts `debt == 0` everywhere.
+Do not run these in a different order — the escrows pin the RC address at
+construction and the RC rejects unregistered venues in `createOrder()`.
+
+Required env (see `.env.example`): `REACTIVE_RPC`, `BASE_RPC`, `UNICHAIN_RPC`,
+`SEPOLIA_RPC`, plus `RC_ADDRESS`, `PAYMENT_ESCROW_ADDRESS`,
+`ASSET_ESCROW_ADDRESS`, `UNICHAIN_PAYMENT_ESCROW_ADDRESS`,
+`UNICHAIN_ASSET_ESCROW_ADDRESS`, `SEPOLIA_PAYMENT_ESCROW_ADDRESS`,
+`SEPOLIA_ASSET_ESCROW_ADDRESS` for funding and re-runs. `HandshakeSupport.deploy`
+no longer self-broadcasts; callers wrap each fork's deployments in
+`vm.startBroadcast()` / `vm.stopBroadcast()`.
+
+After a run, assert:
+
+```
+RC.subscriptionCount() == 19
+RC.registeredChainIds().length == 3
+RC owner == deployer
+SYSTEM.debt(RC) == 0
+each proxy.debt(escrow) == 0 and reserves(escrow) > 0
+```
+
+**Venue safety:** `setVenue()` replacement and `unsubscribeAll()` revert with
+`VenueInUse()` while any non-closed order references that chain. Wait for those
+orders to close (or refund) before rotating a venue. `VenueUnregistered` emits the
+real escrow addresses (cached before storage deletion).
+
 ## Deployment / setup transactions
 
 | Step | Tx | Chain |

@@ -122,6 +122,7 @@ contract HandshakeReactive is AbstractReactive, Ownable {
     error OrderMatched();
     error DeadlineReached();
     error NoWinner();
+    error VenueInUse();
 
     // --------------------------------------------------------------------- state
 
@@ -155,6 +156,9 @@ contract HandshakeReactive is AbstractReactive, Ownable {
             // A new escrow may not already be in use by a different chain/role.
             if (paymentEscrow_ != v.paymentEscrow && escrows[paymentEscrow_].registered) revert InvalidVenue();
             if (assetEscrow_ != v.assetEscrow && escrows[assetEscrow_].registered) revert InvalidVenue();
+            // Replacing a venue with in-flight orders would make those orders
+            // unprocessable: react() validates logs against the live escrow map.
+            _requireVenueIdle(chainId_);
             _unsubscribeEscrow(chainId_, v.paymentEscrow, ROLE_PAYMENT);
             _unsubscribeEscrow(chainId_, v.assetEscrow, ROLE_ASSET);
             delete escrows[v.paymentEscrow];
@@ -204,18 +208,32 @@ contract HandshakeReactive is AbstractReactive, Ownable {
     }
 
     /// @notice Removes every subscription (e.g. after the demo, to stop cron billing).
+    /// @dev Refuses to unregister while any order on that venue is still open, so
+    ///      in-flight funds can always be settled or refunded.
     function unsubscribeAll() external onlyOwner {
+        // Snapshot the ids before we start mutating the registry array.
         uint256 len = _registeredChainIds.length;
+        uint256[] memory chainIds = new uint256[](len);
+        for (uint256 i = 0; i < len; ++i) chainIds[i] = _registeredChainIds[i];
+
         for (uint256 i = 0; i < len; ++i) {
-            uint256 chainId = _registeredChainIds[i];
+            uint256 chainId = chainIds[i];
+            _requireVenueIdle(chainId);
+        }
+
+        for (uint256 i = 0; i < len; ++i) {
+            uint256 chainId = chainIds[i];
             VenueRegistration storage v = _venueRegistry[chainId];
             if (!v.registered) continue;
-            _unsubscribeEscrow(chainId, v.paymentEscrow, ROLE_PAYMENT);
-            _unsubscribeEscrow(chainId, v.assetEscrow, ROLE_ASSET);
-            delete escrows[v.paymentEscrow];
-            delete escrows[v.assetEscrow];
+            // Cache before delete so the event carries the real addresses.
+            address paymentEscrow = v.paymentEscrow;
+            address assetEscrow = v.assetEscrow;
+            _unsubscribeEscrow(chainId, paymentEscrow, ROLE_PAYMENT);
+            _unsubscribeEscrow(chainId, assetEscrow, ROLE_ASSET);
+            delete escrows[paymentEscrow];
+            delete escrows[assetEscrow];
             delete _venueRegistry[chainId];
-            emit VenueUnregistered(chainId, v.paymentEscrow, v.assetEscrow);
+            emit VenueUnregistered(chainId, paymentEscrow, assetEscrow);
         }
         delete _registeredChainIds;
 
@@ -712,6 +730,20 @@ contract HandshakeReactive is AbstractReactive, Ownable {
     function _validEscrow(address escrow_, uint256 chainId_, uint8 role_) internal view returns (bool) {
         EscrowMeta storage meta = escrows[escrow_];
         return meta.registered && meta.chainId == chainId_ && meta.role == role_;
+    }
+
+    /// @notice A venue may not be replaced or removed while an order that uses it
+    ///         can still receive callbacks. Removing the escrow metadata would make
+    ///         react() ignore that order's events, stranding locked funds.
+    function _requireVenueIdle(uint256 chainId_) internal view {
+        uint256 len = _orderIds.length;
+        for (uint256 i = 0; i < len; ++i) {
+            Order storage o = orders[_orderIds[i]];
+            if (o.paymentClosed && o.assetClosed) continue;
+            if (o.venue.paymentChainId == chainId_ || o.venue.assetChainId == chainId_) {
+                revert VenueInUse();
+            }
+        }
     }
 
     function _isTestnet(uint256 chainId_) internal pure returns (bool) {
