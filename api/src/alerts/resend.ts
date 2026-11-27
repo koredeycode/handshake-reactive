@@ -1,0 +1,191 @@
+import { and, desc, eq, gt, inArray, sql } from 'drizzle-orm';
+import { Resend } from 'resend';
+import { env } from '../config.js';
+import { db } from '../db/client.js';
+import { alertDeliveries, keeperState, outbox } from '../db/schema.js';
+import { bus, type PublishedEvent } from '../lib/bus.js';
+import type { SseEventType } from '../lib/events.js';
+import { log } from '../lib/log.js';
+import { metrics } from '../lib/metrics.js';
+import { backoffDelay } from '../lib/retry.js';
+import { indexerStats } from '../indexer/stats.js';
+
+/**
+ * Operator-only error alerts. User notifications never leave the SSE stream;
+ * no user email addresses are read, stored or sent anywhere in this backend.
+ */
+let resend: Resend | undefined;
+function client(): Resend | undefined {
+  if (!env.RESEND_API_KEY) return undefined;
+  resend ??= new Resend(env.RESEND_API_KEY);
+  return resend;
+}
+
+export type AlertInput = {
+  kind: string;
+  subject: string;
+  body: string;
+  dedupeKey?: string;
+};
+
+export async function sendOperatorAlert(input: AlertInput): Promise<void> {
+  const mailer = client();
+  if (!mailer || !env.OPERATOR_ALERT_EMAIL) {
+    // No credentials (or no recipient): logs are the only alert channel.
+    log.warn({ kind: input.kind, subject: input.subject }, 'operator alert (Resend not configured)');
+    metrics.alertEmail.inc({ status: 'skipped' });
+    return;
+  }
+  const dedupeKey = input.dedupeKey ?? input.subject;
+  const since = new Date(Date.now() - env.ALERT_DEDUPE_MS);
+  const recent = await db.select({ id: alertDeliveries.id }).from(alertDeliveries)
+    .where(and(
+      eq(alertDeliveries.kind, input.kind),
+      eq(alertDeliveries.dedupeKey, dedupeKey),
+      gt(alertDeliveries.createdAt, since),
+      inArray(alertDeliveries.status, ['sent', 'pending']),
+    ))
+    .limit(1);
+  if (recent.length > 0) {
+    log.debug({ kind: input.kind, dedupeKey }, 'operator alert deduped');
+    return;
+  }
+
+  const [row] = await db.insert(alertDeliveries).values({
+    kind: input.kind, dedupeKey, subject: input.subject, status: 'pending', attempts: 0,
+  }).returning({ id: alertDeliveries.id });
+  if (!row) return;
+
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      await mailer.emails.send({
+        from: env.ALERT_FROM_EMAIL,
+        to: [env.OPERATOR_ALERT_EMAIL],
+        subject: input.subject,
+        text: `${input.body}\n\nkind=${input.kind} dedupeKey=${dedupeKey}`,
+      });
+      await db.update(alertDeliveries).set({
+        status: 'sent', attempts: attempt, sentAt: new Date(), error: null,
+      }).where(eq(alertDeliveries.id, row.id));
+      metrics.alertEmail.inc({ status: 'sent' });
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, backoffDelay(attempt, 1000, 10_000)));
+    }
+  }
+  await db.update(alertDeliveries).set({
+    status: 'failed', attempts: 3, error: String(lastError instanceof Error ? lastError.message : lastError),
+  }).where(eq(alertDeliveries.id, row.id));
+  metrics.alertEmail.inc({ status: 'failed' });
+  log.error({ err: lastError, kind: input.kind }, 'operator alert delivery failed');
+}
+
+export async function alertApiError(route: string, errorId: string, message: string): Promise<void> {
+  await sendOperatorAlert({
+    kind: 'api_5xx', subject: `[handshake] API 5xx on ${route}`,
+    body: `${message}\nerrorId=${errorId}`, dedupeKey: route,
+  });
+}
+
+export async function alertWsFailure(chainId: number, message: string): Promise<void> {
+  await sendOperatorAlert({
+    kind: 'indexer_ws', subject: `[handshake] WebSocket failure on chain ${chainId}`,
+    body: message, dedupeKey: String(chainId),
+  });
+}
+
+export async function alertStaleEvents(maxAgeMs: number): Promise<void> {
+  await sendOperatorAlert({
+    kind: 'indexer_stale', subject: '[handshake] Indexer has no recent events',
+    body: `Last accepted event age ${Math.round(maxAgeMs / 1000)}s exceeds ${env.STALE_EVENT_MS / 1000}s.`,
+    dedupeKey: 'indexer-stale',
+  });
+}
+
+export async function alertDbFailure(error: unknown): Promise<void> {
+  await sendOperatorAlert({
+    kind: 'db_failure', subject: '[handshake] Database failure',
+    body: String(error instanceof Error ? error.message : error), dedupeKey: 'database',
+  });
+}
+
+export async function alertOutboxBacklog(depth: number): Promise<void> {
+  await sendOperatorAlert({
+    kind: 'outbox_backlog', subject: `[handshake] Outbox backlog ${depth}`,
+    body: `${depth} undelivered outbox rows (threshold ${env.OUTBOX_BACKLOG_ALERT}).`,
+    dedupeKey: 'outbox-backlog',
+  });
+}
+
+/** Emits read-only keeper telemetry to the public stream and alerts on issues. */
+export async function pollKeeperState(): Promise<void> {
+  const rows = await db.select().from(keeperState).orderBy(desc(keeperState.lastCheckedAt)).limit(20);
+  const now = Date.now();
+  for (const row of rows) {
+    const action = row.alertLevel === 'ok' ? 'none' : 'alert';
+    const [inserted] = await db.insert(outbox).values({
+      type: 'keeper.status' as SseEventType,
+      orderId: null,
+      wallets: [],
+      payload: {
+        chainId: row.chainId,
+        target: row.target,
+        debtWei: row.debtWei,
+        reservesWei: row.reservesWei,
+        action,
+      },
+    }).returning();
+    if (inserted) {
+      const event: PublishedEvent = {
+        id: inserted.id, type: 'keeper.status', orderId: null, wallets: [],
+        payload: inserted.payload, createdAt: inserted.createdAt,
+      };
+      bus.publish([event]);
+    }
+    const stale = now - new Date(row.lastCheckedAt).getTime() > 15 * 60_000;
+    if (row.alertLevel !== 'ok' || stale) {
+      await sendOperatorAlert({
+        kind: 'keeper_issue',
+        subject: `[handshake] Keeper issue: ${row.alertLevel} on chain ${row.chainId}`,
+        body: `target=${row.target} debt=${row.debtWei} reserves=${row.reservesWei} stale=${stale}`,
+        dedupeKey: `${row.target}:${row.chainId}:${row.alertLevel}`,
+      });
+    }
+  }
+  metrics.rcDebtWei.set(Number(rows.find((row) => row.chainId === 5318007)?.debtWei ?? 0));
+  metrics.rcReservesWei.set(Number(rows.find((row) => row.chainId === 5318007)?.reservesWei ?? 0));
+  for (const row of rows) {
+    if (row.chainId !== 5318007) metrics.escrowDebtWei.set({ chain: String(row.chainId) }, Number(row.debtWei));
+  }
+}
+
+let monitorTimer: ReturnType<typeof setInterval> | undefined;
+
+/** Periodic operator checks: backlog, stale index, keeper state. */
+export function startAlertMonitor(): void {
+  if (monitorTimer) return;
+  const tick = async () => {
+    try {
+      const depth = await db.select({ count: sql<number>`count(*)::int` }).from(outbox)
+        .where(sql`${outbox.deliveredAt} is null`);
+      const count = depth[0]?.count ?? 0;
+      metrics.outboxDepth.set(count);
+      if (count > env.OUTBOX_BACKLOG_ALERT) await alertOutboxBacklog(count);
+      const age = indexerStats.maxLastEventAgeMs();
+      if (age > env.STALE_EVENT_MS) await alertStaleEvents(age);
+      await pollKeeperState();
+    } catch (error) {
+      log.error({ err: error }, 'alert monitor tick failed');
+    }
+  };
+  monitorTimer = setInterval(() => void tick(), 60_000);
+  monitorTimer.unref();
+  void tick();
+}
+
+export function stopAlertMonitor(): void {
+  if (monitorTimer) clearInterval(monitorTimer);
+  monitorTimer = undefined;
+}

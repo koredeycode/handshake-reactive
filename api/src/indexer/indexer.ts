@@ -1,0 +1,239 @@
+import { eq, sql } from 'drizzle-orm';
+import {
+  createPublicClient,
+  http,
+  toHex,
+  webSocket,
+  type Address,
+  type Hex,
+} from 'viem';
+import { env, httpUrlFor, wsUrlFor } from '../config.js';
+import { CHAIN_CONFIGS, type ChainConfig } from '../contracts.js';
+import { db } from '../db/client.js';
+import { indexerState } from '../db/schema.js';
+import { alertWsFailure } from '../alerts/resend.js';
+import { log } from '../lib/log.js';
+import { metrics } from '../lib/metrics.js';
+import { backoffDelay, isRateLimitError, withRetry } from '../lib/retry.js';
+import { decodeRawLog, type RawLog } from './decode.js';
+import { emitTransferBalances, handleReorg, ingestLog, updateIndexerStatus } from './ingest.js';
+import { indexerStats } from './stats.js';
+
+type WsClient = ReturnType<typeof createWsClient>;
+type HttpClient = ReturnType<typeof createHttpClient>;
+
+function createWsClient(url: string) {
+  return createPublicClient({
+    transport: webSocket(url, { reconnect: { attempts: 10, delay: 2_000 } }),
+    pollingInterval: 1_000,
+  });
+}
+
+function createHttpClient(url: string) {
+  return createPublicClient({ transport: http(url) });
+}
+
+const httpClients = new Map<number, HttpClient>(
+  CHAIN_CONFIGS.map((chain) => [chain.chainId, createHttpClient(httpUrlFor(chain.chainId))]),
+);
+const wsClients = new Map<number, WsClient>();
+const subscriptions = new Map<number, { unsubscribe: () => Promise<unknown> }>();
+const backfilling = new Set<number>();
+let reconcileTimer: ReturnType<typeof setInterval> | undefined;
+let started = false;
+
+function isRangeError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+  return message.includes('range') || message.includes('too many') || message.includes('block not found');
+}
+
+async function handleLog(chain: ChainConfig, raw: RawLog): Promise<void> {
+  const event = decodeRawLog(raw, chain.chainId);
+  if (!event) return;
+  try {
+    if (event.removed) await handleReorg(event);
+    else if (event.name === 'transfer') await emitTransferBalances(event);
+    else await ingestLog(event);
+    const now = Date.now();
+    indexerStats.set(chain.chainId, {
+      status: 'live',
+      lastEventAt: now,
+      lastBlock: Math.max(indexerStats.get(chain.chainId)?.lastBlock ?? 0, event.blockNumber),
+    });
+    metrics.indexerLastEventAge.set({ chain: String(chain.chainId) }, 0);
+    metrics.indexerBlockLag.set({ chain: String(chain.chainId) }, 0);
+    if (event.name === 'cron10') {
+      await updateIndexerStatus(chain.chainId, 'live', event.blockNumber, event.blockHash);
+    }
+  } catch (error) {
+    log.error({ err: error, chainId: chain.chainId, txHash: event.txHash }, 'log handling failed');
+    throw error;
+  }
+}
+
+/** Bounded HTTP eth_getLogs gap fill; one subscription but many chunked requests. */
+export async function backfill(chain: ChainConfig): Promise<void> {
+  if (backfilling.has(chain.chainId)) return;
+  backfilling.add(chain.chainId);
+  const client = httpClients.get(chain.chainId)!;
+  const method = 'eth_getLogs';
+  try {
+    const headRaw = await withRetry(async () => {
+      metrics.rpcRequests.inc({ chain: String(chain.chainId), method: 'eth_blockNumber' });
+      return client.request({ method: 'eth_blockNumber' });
+    }, {
+      label: `blockNumber:${chain.chainId}`,
+      onRetry: (error, attempt, delay) => log.warn({ err: error, chainId: chain.chainId, attempt, delay }, 'blockNumber retry'),
+    });
+    const head = Number(headRaw);
+    const [state] = await db.select().from(indexerState).where(eq(indexerState.chainId, chain.chainId)).limit(1);
+    const startOverride = env[`START_BLOCK_${chain.chainId}` as keyof typeof env];
+    let from = state && state.lastBlock > 0
+      ? state.lastBlock + 1
+      : typeof startOverride === 'number'
+        ? startOverride
+        : Math.max(0, head - Math.max(1_000, chain.logChunkSize * 5));
+    if (from > head) from = head;
+    let chunk = chain.logChunkSize;
+    let scanned = 0;
+    while (from <= head) {
+      const to = Math.min(head, from + chunk - 1);
+      try {
+        const logs = await withRetry(async () => {
+          metrics.rpcRequests.inc({ chain: String(chain.chainId), method });
+          const result = await client.request({
+            method: 'eth_getLogs',
+            params: [{
+              fromBlock: toHex(BigInt(from)),
+              toBlock: toHex(BigInt(to)),
+              address: chain.addresses as Address[],
+              topics: [chain.topic0s as Hex[]],
+            }],
+          });
+          return (result ?? []) as RawLog[];
+        }, {
+          label: `getLogs:${chain.chainId}`,
+          isRangeError,
+          onRetry: (error, attempt, delay) => {
+            log.warn({ err: error, chainId: chain.chainId, attempt, delay, from, to }, 'getLogs retry');
+            if (isRateLimitError(error)) alertWsFailure(chain.chainId, `getLogs rate limited: ${String(error)}`).catch(() => undefined);
+          },
+        });
+        for (const raw of logs) {
+          try {
+            await handleLog(chain, raw);
+          } catch {
+            // One bad log must not abandon the rest of the gap fill.
+          }
+        }
+        await updateIndexerStatus(chain.chainId, 'live', to);
+        scanned += logs.length;
+        from = to + 1;
+        // The provider may accept larger ranges once a few calls succeed.
+        if (chunk < chain.logChunkSize && scanned === 0 && from % (chunk * 4) === 0) {
+          chunk = Math.min(chain.logChunkSize, chunk * 2);
+        }
+      } catch (error) {
+        if (isRangeError(error) && chunk > 50) {
+          chunk = Math.max(50, Math.floor(chunk / 2));
+          continue;
+        }
+        throw error;
+      }
+    }
+    const lastEventAt = indexerStats.get(chain.chainId)?.lastEventAt ?? 0;
+    metrics.indexerBlockLag.set({
+      chain: String(chain.chainId),
+    }, lastEventAt > 0 ? (Date.now() - lastEventAt) / 1000 : 0);
+    log.info({ chainId: chain.chainId, from, head, chunk, scanned }, 'gap backfill complete');
+  } catch (error) {
+    log.error({ err: error, chainId: chain.chainId }, 'gap backfill failed');
+    await alertWsFailure(chain.chainId, `Gap backfill failed: ${String(error)}`).catch(() => undefined);
+  } finally {
+    backfilling.delete(chain.chainId);
+  }
+}
+
+async function onWsError(chain: ChainConfig, error: unknown): Promise<void> {
+  metrics.indexerReconnects.inc({ chain: String(chain.chainId) });
+  indexerStats.set(chain.chainId, {
+    status: 'reconnecting',
+    reconnectCount: (indexerStats.get(chain.chainId)?.reconnectCount ?? 0) + 1,
+  });
+  await db.update(indexerState).set({
+    status: 'reconnecting',
+    reconnectCount: sql`${indexerState.reconnectCount} + 1`,
+    updatedAt: new Date(),
+  }).where(eq(indexerState.chainId, chain.chainId)).catch(() => undefined);
+  log.warn({ err: error, chainId: chain.chainId }, 'WebSocket error; gap fill queued');
+  await alertWsFailure(chain.chainId, String(error));
+  // viem reconnects + re-subscribes internally; replay anything missed since
+  // the last committed block once the socket has had time to come back.
+  setTimeout(() => void backfill(chain), backoffDelay(1, 1_000, 3_000)).unref();
+}
+
+export async function startIndexer(): Promise<void> {
+  if (started) return;
+  started = true;
+  for (const chain of CHAIN_CONFIGS) {
+    try {
+      await updateIndexerStatus(chain.chainId, 'connecting');
+      const client = createWsClient(wsUrlFor(chain.chainId));
+      wsClients.set(chain.chainId, client);
+      const subscription = await client.transport.subscribe({
+        params: ['logs', { address: chain.addresses, topics: [chain.topic0s] }],
+        onData: (data) => {
+          const logData = (data as { result?: RawLog }).result;
+          if (logData) void handleLog(chain, logData).catch((error) => {
+            log.error({ err: error, chainId: chain.chainId }, 'subscription log failed');
+          });
+        },
+        onError: (error) => void onWsError(chain, error),
+      });
+      subscriptions.set(chain.chainId, subscription);
+      indexerStats.set(chain.chainId, { status: 'live', subscriptions: 1 });
+      log.info({
+        chainId: chain.chainId, name: chain.name, addresses: chain.addresses.length, topics: chain.topic0s.length,
+      }, 'subscribed to logs');
+      void backfill(chain);
+    } catch (error) {
+      // A dead provider must not prevent the HTTP API from starting.
+      indexerStats.set(chain.chainId, { status: 'error', subscriptions: 0 });
+      log.error({ err: error, chainId: chain.chainId }, 'chain subscription failed');
+      await alertWsFailure(chain.chainId, `Subscription failed: ${String(error)}`).catch(() => undefined);
+      void backfill(chain);
+    }
+  }
+  const socketOpened = (chain: ChainConfig) => {
+    indexerStats.set(chain.chainId, { status: 'live' });
+  };
+  for (const chain of CHAIN_CONFIGS) {
+    const client = wsClients.get(chain.chainId);
+    if (!client) continue;
+    void client.transport.getRpcClient().then((rpc) => {
+      rpc.socket.addEventListener?.('open', () => socketOpened(chain));
+      rpc.socket.addEventListener?.('close', () => {
+        indexerStats.set(chain.chainId, { status: 'reconnecting' });
+      });
+    }).catch(() => undefined);
+  }
+  reconcileTimer = setInterval(() => {
+    for (const chain of CHAIN_CONFIGS) void backfill(chain);
+  }, 5 * 60_000);
+  reconcileTimer.unref();
+}
+
+export async function stopIndexer(): Promise<void> {
+  if (reconcileTimer) clearInterval(reconcileTimer);
+  reconcileTimer = undefined;
+  for (const [chainId, subscription] of subscriptions) {
+    await subscription.unsubscribe().catch(() => undefined);
+    indexerStats.set(chainId, { subscriptions: 0, status: 'connecting' });
+  }
+  subscriptions.clear();
+  for (const client of wsClients.values()) {
+    await client.transport.getRpcClient().then((rpc) => rpc.close()).catch(() => undefined);
+  }
+  wsClients.clear();
+  started = false;
+}
