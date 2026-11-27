@@ -2,20 +2,23 @@
 
 Cross-chain RFQ / OTC settlement primitives for the Handshake demo:
 
-See [TOOLING.md](docs/TOOLING.md) for deployment, funding, preflight, latency observation and proof tooling. The full operator/proof index is in [`docs/`](docs/README.md).
+See [TOOLING.md](docs/TOOLING.md) for deployment, funding, preflight, latency observation and proof tooling. The full operator/proof index is in [`docs/`](docs/README.md); the deployed API/indexer runbook is in [PLATFORM.md](docs/PLATFORM.md).
+
+The live system is **one reactive contract** with a venue registry, **three registered chains** and **24 directed routes** — not one contract per market. Canonical addresses and proof are in [DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 | Contract | Chain | Role |
 |---|---|---|
-| `src/HandshakeReactive.sol` | Reactive Lasna (5318007) | Neutral arbiter; order state machine; requests both callbacks in one `react()` |
-| `src/PaymentEscrow.sol` | Base Sepolia (84532) | Holds the buyer's payment leg |
-| `src/AssetEscrow.sol` | Unichain Sepolia (1301) | Holds the asset leg; keyed by `(orderId, seller)` for race mode |
-| `src/tokens/TestUSD.sol`, `src/tokens/TestAsset.sol` | Base / Unichain Sepolia | Public-mint demo ERC-20s |
+| `src/HandshakeReactive.sol` | Reactive Lasna (5318007) | Neutral arbiter; order state machine; registers a venue per chain; requests both callbacks in one `react()` |
+| `src/PaymentEscrow.sol`, `src/AssetEscrow.sol` | Base Sepolia (84532), Unichain Sepolia (1301), Ethereum Sepolia (11155111) | Token-agnostic escrows; one payment + one asset escrow per chain (six total) |
+| `src/tokens/TestUSD.sol`, `src/tokens/TestAsset.sol` | All three testnets | Public-mint demo ERC-20s |
 
 Design notes:
 
-- `setVenues()` installs 6 escrow event subscriptions plus `Cron10` from the legacy system
-  contract `0x0000000000000000000000000000000000fffFfF`. `react()` is guarded by
-  `onlySystem` and filters both the cron source address and its exact topic0.
+- `setVenue(chainId, paymentEscrow, assetEscrow)` registers a venue **per chain**;
+  6 escrow event topics × 3 chains + one `Cron10` from the legacy system contract
+  `0x0000000000000000000000000000000000fffFfF` = **19 subscriptions**. `react()`
+  is guarded by `onlySystem` and filters both the cron source address and its
+  exact topic0. `VenueInUse()` blocks venue rotation while orders are open.
 - One `uint64` nonce per order is bumped for every callback batch. Escrows require
   `nonce > leg.nonce`, accept callbacks only from the pinned proxy and injected reactive
   sender, and treat `RELEASED` / `REFUNDED` as terminal (repeat callbacks are no-ops).
@@ -33,8 +36,8 @@ Design notes:
 - `via_ir` is enabled because the public `orders` mapping getter returns the full 22-field
   `Order` struct, which exceeds the legacy EVM stack limit.
 
-Run `forge build && forge test -vv` (36 tests). No deployment or transaction scripts live
-in this package.
+Run `forge build && forge test -vv`. Deployment, funding and verification scripts
+live in `script/`, `scripts/` and `ts/`.
 
 ## Foundry
 
@@ -104,15 +107,15 @@ $ cast --help
 
 ## Architecture
 
-Handshake is a three-chain DvP: the buyer pays `tUSD`, the seller delivers `tASSET`, and a
-single arbiter on Reactive Lasna decides the settlement. The app serves three live market
-instances from `ui/public/markets.json`: the original named-seller Base→Unichain market, an
-**open-order** Base→Unichain market where any seller can match (`seller = address(0)` and a
-race refunds later sellers), and a **reverse** Unichain→Base market with chain-local tokens.
-There is no market selector: the trade ticket's arrow flips the direction, leaving the seller
-field blank creates an open order, and the order book aggregates all markets with direction
-and open filters. The sequence below shows the original named-seller flow; proofs and
-addresses for all three instances are in [DEPLOYMENT.md](docs/DEPLOYMENT.md), and the registry design in [MARKETS.md](docs/MARKETS.md).
+Handshake is a multi-chain DvP: the buyer pays `tUSD`, the seller delivers `tASSET`, and a
+single arbiter on Reactive Lasna decides the settlement. One RC registers a venue for each
+of Base Sepolia, Unichain Sepolia and Ethereum Sepolia; the six token-agnostic escrows
+support 24 directed routes, and `termsHash` is bound per order and venue. The UI reads that
+chain catalog from `ui/public/markets.json` and escrow addresses from the RC's on-chain
+venue registry. There is no market selector: the trade ticket's arrow flips the direction,
+leaving the seller field blank creates an open order, and the order book aggregates routes
+with direction and open filters. The sequence below shows a named-seller flow; proofs and
+addresses are in [DEPLOYMENT.md](docs/DEPLOYMENT.md), and the venue model in [MARKETS.md](docs/MARKETS.md).
 
 ### Components and event flow
 
@@ -123,7 +126,7 @@ flowchart LR
 
     subgraph LASNA["Reactive Lasna (5318007)"]
         RC["HandshakeReactive<br/>order state machine + arbiter"]
-        SUB["setVenues(): 7 subscriptions<br/>6 escrow topics + legacy Cron10"]
+        SUB["setVenue() per chain: 19 subscriptions<br/>6 topics x 3 chains + legacy Cron10"]
         RC --- SUB
     end
 
@@ -154,6 +157,9 @@ flowchart LR
     TASSET --- AE
 ```
 
+The third registered chain (Ethereum Sepolia, `11155111`) follows the same shape with its
+own payment/asset escrow pair and callback proxy; it is omitted from the diagram for clarity.
+
 ### Sequence — named-seller settlement
 
 ```mermaid
@@ -181,7 +187,7 @@ sequenceDiagram
     RC->>RC: assetSeen = true, winner = seller
 
     alt both valid locks observed before deadline
-        Note over RC: MONEY SHOT: this one react() tx emits TWO CallbackRequests<br/>with a single incremented nonce - 0xadce615f... (Lasna)
+        Note over RC: MONEY SHOT: this one react() tx emits TWO CallbackRequests<br/>with a single incremented nonce (Lasna; see DEPLOYMENT.md for hashes)
         RC->>SYS: requestCallbackV_1_0: PaymentEscrow.release(rc, orderId, seller, paymentAmount, nonce)
         RC->>SYS: requestCallbackV_1_0: AssetEscrow.release(rc, orderId, seller, buyer, assetAmount, nonce)
         SYS->>PE: chain callback proxy calls release(), injected rc arg = address(0)
@@ -212,6 +218,7 @@ batch, and escrows accept a callback only when `nonce > leg.nonce`. Each termina
 observed back on Lasna and closes only its own leg, so a dropped or late callback can be
 finished by `retry()` or the bounded cron sweep rather than silently closing the order.
 
-All three proven loops (payment-first, asset-first and timeout/refund) with their full
-transaction hashes are recorded in [DEPLOYMENT.md](docs/DEPLOYMENT.md); the on-chain measurement
-methodology and latency numbers are in [LATENCY.md](docs/LATENCY.md).
+Proven settlement loops (payment-first and asset-first) with their full transaction hashes
+are recorded in [DEPLOYMENT.md](docs/DEPLOYMENT.md); the on-chain measurement methodology and
+latency numbers are in [LATENCY.md](docs/LATENCY.md). The backend that indexes these events
+and serves the public REST/SSE API is documented in [PLATFORM.md](docs/PLATFORM.md).

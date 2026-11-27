@@ -1,6 +1,6 @@
 # Handshake UI
 
-React + Vite + TypeScript static console for Handshake — trust-minimized cross-chain OTC settlement on Reactive Omni (Reactive Lasna ↔ Base Sepolia ↔ Unichain Sepolia). No backend: the browser reads public RPCs directly and links to canonical explorers. Deployment proof, flows, tooling and operator notes are indexed in [`docs/`](../docs/README.md).
+React + Vite + TypeScript static console for Handshake — trust-minimized cross-chain OTC settlement on Reactive Omni (Reactive Lasna ↔ Base Sepolia ↔ Unichain Sepolia ↔ Ethereum Sepolia). Wallet writes stay in the browser via wagmi; a **separate** public REST/SSE backend is deployed at <https://handshake-reactive-api.fly.dev> (see [`docs/PLATFORM.md`](../docs/PLATFORM.md)). Deployment proof, flows, tooling and operator notes are indexed in [`docs/`](../docs/README.md).
 
 ## Run
 
@@ -25,7 +25,7 @@ Copy `.env.example` to `.env.local` for local development. Never commit a file w
 
 ## Configuration
 
-Live addresses are read at runtime from `public/contracts.json`. `public/tokens.json` holds display metadata (name, symbol, decimals, letter mark, color) keyed by chain and token address; its name/symbol/decimals mirror the deployed ERC-20s (`Test USD` / `tUSD` and `Test Asset` / `tASSET`, one of each on Base Sepolia and Unichain Sepolia). `public/markets.json` is the internal registry of the three live market instances; no screen exposes a market selector — direction comes from the trade ticket and links carry a hidden `?market=` id. Optional build-time overrides: `VITE_RC_ADDRESS`, `VITE_PAYMENT_ESCROW`, `VITE_ASSET_ESCROW`, `VITE_PAYMENT_TOKEN`, `VITE_ASSET_TOKEN`, `VITE_BASE_PROXY`, `VITE_UNICHAIN_PROXY`, `VITE_*_FROM_BLOCK`, `VITE_LOOKBACK_BLOCKS`. `VITE_DEV_TOOLS=1` enables the hidden `/dev` route in a production build (it can also be opened with `?dev=1`). Never put private keys in any of these files.
+Live addresses are read at runtime from `public/contracts.json` (the one RC and its venue registry). `public/tokens.json` holds display metadata (name, symbol, decimals, letter mark, color) keyed by chain and token address; its name/symbol/decimals mirror the deployed ERC-20s (`Test USD` / `tUSD` and `Test Asset` / `tASSET` on Base Sepolia, Unichain Sepolia and Ethereum Sepolia). `public/markets.json` is the **chain/proxy catalog** for the single RC — it lists the three registered chains, not separate market instances; escrow addresses come from the on-chain venue registry. No screen exposes a market selector: direction comes from the trade ticket, and routes are chosen by direction and token pair. Optional build-time overrides: `VITE_RC_ADDRESS`, `VITE_PAYMENT_ESCROW`, `VITE_ASSET_ESCROW`, `VITE_PAYMENT_TOKEN`, `VITE_ASSET_TOKEN`, `VITE_BASE_PROXY`, `VITE_UNICHAIN_PROXY`, `VITE_*_FROM_BLOCK`, `VITE_LOOKBACK_BLOCKS`. `VITE_DEV_TOOLS=1` enables the hidden `/dev` route in a production build (it can also be opened with `?dev=1`). Never put private keys in any of these files.
 
 ### Wallet connections
 
@@ -39,12 +39,13 @@ VITE_WALLETCONNECT_PROJECT_ID=your-project-id npm run build
 
 ### Trade asset pairs
 
-Per-side pickers list the tokens present in `public/tokens.json` for that chain. Only pairs backed by a deployed `markets.json` instance are selectable:
+Per-side pickers list the tokens present in `public/tokens.json` for that chain. A pair is selectable when both chains are registered as venues on the single RC; the route is determined by direction and token pair, not by a separate deployment:
 
-- Base Sepolia **tUSD** → Unichain Sepolia **tASSET** (`forward-tusd-base-tasset-unichain`, or `open-tusd-base-tasset-unichain` when the seller is left blank).
-- Unichain Sepolia **tUSD** → Base Sepolia **tASSET** (`reverse-tusd-unichain-tasset-base`) — the same tUSD/tASSET pair flipped by the arrow.
+- Base Sepolia **tUSD** → Unichain Sepolia **tASSET** (or the same direction with a blank seller for an open order).
+- Unichain Sepolia **tUSD** → Base Sepolia **tASSET** — the same tUSD/tASSET pair flipped by the arrow.
+- Ethereum Sepolia participates as a third registered chain; see [`DEPLOYMENT.md`](../docs/DEPLOYMENT.md) for the full venue set and proven routes.
 
-Same-token pairs (tUSD ↔ tUSD, tASSET ↔ tASSET) have no settlement instance, so those options are disabled with a quiet hint and the last valid pair is kept.
+Same-token pairs (tUSD ↔ tUSD, tASSET ↔ tASSET) have no configured route, so those options are disabled with a quiet hint and the last valid pair is kept.
 
 ### Public RPCs are rate-limited
 

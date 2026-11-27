@@ -4,9 +4,22 @@
 
 https://handshake-reactive.vercel.app
 
+**Canonical alias is re-pointed manually after every production deploy (option 3).**
+Git integration builds each push, but Vercel's project-level domain association is
+unreliable after the project rename, so do not assume the short domain follows the
+new deployment. After a production build is `READY`, re-point it explicitly:
+
+```bash
+vercel alias set <new-prod-url> handshake-reactive.vercel.app
+```
+
+Then verify both URLs return the same JS bundle and HTTP 200. Do not re-point the
+alias before the production deploy finishes, and never run a `--prod` CLI deploy
+for the same change as a Git deploy (whichever finishes last wins the alias).
+
 Old auto-generated URL still resolves: https://ui-nine-gold.vercel.app
 - Latest production deployment: `handshake-reactive-ppy4nlpsg-koredeycodes-projects.vercel.app` (Git-triggered, serves the final UI: asset pickers, 10-row home preview with source/destination chain marks, chain→asset→mint faucet, and the WalletConnect connector; bundle `index-BL5Uj_Cq.js`). `VITE_WALLETCONNECT_PROJECT_ID` is set for Production and Preview. The RPC-optimised query layer is documented in `ui/RPC-AUDIT.md`.
-- The short alias `handshake-reactive.vercel.app` was re-pointed to that deployment after the Git deploy; Vercel's project-level domain association is inconsistent after the project rename, so re-check the alias after future deploys.
+- The short alias `handshake-reactive.vercel.app` was re-pointed to that deployment after the Git deploy (see the manual `vercel alias set` step above). Vercel's project-level domain association is inconsistent after the project rename, so re-point and re-check the alias after every future production deploy.
 - Inspector: https://vercel.com/koredeycodes-projects/ui/9SyYFbGRD9MEwh8R9JzSNF5tuRiF
 - Status: `READY`, target `production`
 
@@ -21,7 +34,7 @@ Old auto-generated URL still resolves: https://ui-nine-gold.vercel.app
   - SPA rewrite to `/index.html` (same rule that used to live only in `ui/vercel.json`)
 - Without that config, Git-triggered builds ran `vite build` at the repo root, where `vite` is not a dependency, and failed with `BUILD_UTILS_SPAWN_127` / `vite: command not found`. See [CI-REPORT.md](./CI-REPORT.md) for the failing deployment logs.
 - CLI deploys are now an **escape hatch only**, not the normal path. If you must use one, run it from the repo root (so the root `vercel.json` applies) or from `ui/`; do not run both the Git path and a `--prod` CLI deploy for the same change, or the production alias will point to whichever finished last.
-- The canonical subdomain was added as a project domain (`vercel domains add handshake-reactive.vercel.app ui`) and follows future production deployments.
+- The canonical subdomain was added as a project domain (`vercel domains add handshake-reactive.vercel.app ui`), but following production deployments is **not** guaranteed: use the explicit `vercel alias set` command above after each deploy.
 
 ## Build output summary
 
@@ -41,7 +54,15 @@ Only a chunk-size advisory was emitted (main JS bundle > 500 kB); no build error
 
 ## Contract configuration is runtime-editable
 
-`ui/public/contracts.json` holds the live addresses (Reactive Contract `0x6d1Da6e…`, escrows `0xc5ca1b…`). The app fetches `/contracts.json` at runtime with `cache: 'no-cache'` (`ui/src/lib/config.ts`), so address or scan-window changes can be picked up by updating that single static JSON asset — **no JS rebuild is required** for address changes. `VITE_*` env overrides take precedence over the JSON and do require a new build. No private keys are present in the repo or in this deployment.
+`ui/public/contracts.json` holds the live Reactive Contract address
+(`0x037cef4c…67474`); per-chain escrow addresses are read from its on-chain venue
+registry, and the chain/proxy catalog lives in `ui/public/markets.json`. The app
+fetches `/contracts.json` at runtime with `cache: 'no-cache'`
+(`ui/src/lib/config.ts`), so an RC address change can be picked up by updating
+that static JSON asset — **no JS rebuild is required** for address changes.
+`VITE_*` env overrides take precedence over the JSON and do require a new build.
+After any address change, still re-point the alias with the command above. No
+private keys are present in the repo or in this deployment.
 
 ## Public access
 
