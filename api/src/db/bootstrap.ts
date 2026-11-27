@@ -58,7 +58,9 @@ function sqlSet(column: string) {
 export async function pruneExpiredRows(): Promise<void> {
   const now = Date.now();
   await db.delete(outbox).where(lt(outbox.createdAt, new Date(now - env.OUTBOX_RETENTION_DAYS * 86_400_000)));
-  await db.delete(orderEvents).where(lt(orderEvents.receivedAt, new Date(now - 90 * 86_400_000)));
+  // Proof bundles live in docs/, so the DB is only a short-lived projection:
+  // keep order events for 14 days rather than the old 90-day window.
+  await db.delete(orderEvents).where(lt(orderEvents.receivedAt, new Date(now - 14 * 86_400_000)));
   await db.delete(keeperActions).where(lt(keeperActions.at, new Date(now - 30 * 86_400_000)));
   await db.delete(alertDeliveries).where(lt(alertDeliveries.createdAt, new Date(now - 30 * 86_400_000)));
   await db.delete(walletCache).where(lt(walletCache.fetchedAt, new Date(now - 86_400_000)));
