@@ -1,24 +1,8 @@
 {
-  "_comment": "Live testnet deployment (2026-11-26). No keys in this file.",
+  "_comment": "Optional build-time overrides. Full Option B uses ONE reactive contract and reads escrows from its venue registry, so there are no per-role escrow/token fields any more. Fill reactiveContract from the new deployment or set VITE_RC_ADDRESS.",
   "reactive": {
-    "reactiveContract": "0x6d1Da6e00066f4b3A16Fec64010478165BAb34E6",
+    "reactiveContract": "0x037cef4c80c7424b2c7fb45770990b5763f67474",
     "systemContract": "0x8888888888888888888888888888888888888888",
-    "legacySystemContract": "0x0000000000000000000000000000000000ffffff"
-  },
-  "base": {
-    "paymentEscrow": "0xc5ca1b349d214855aB62291C8990ECC63881bDAe",
-    "paymentToken": "0x6d1Da6e00066f4b3A16Fec64010478165BAb34E6",
-    "callbackProxy": "0x476F44b11F5C942c58f4c8E3d0300E5710743585"
-  },
-  "unichain": {
-    "assetEscrow": "0xc5ca1b349d214855aB62291C8990ECC63881bDAe",
-    "assetToken": "0x6d1Da6e00066f4b3A16Fec64010478165BAb34E6",
-    "callbackProxy": "0x775c9B990ADe401060B78D0e98684eEf8d2466C1"
-  },
-  "scan": {
-    "lasnaFromBlock": 9279105,
-    "baseFromBlock": 63775999,
-    "unichainFromBlock": 68824600,
-    "lookbackBlocks": 50000
+    "legacySystemContract": "0x0000000000000000000000000000000000fffFfF"
   }
 }

@@ -8,8 +8,10 @@ import {ISystemContract} from "@reactive/src/interfaces/ISystemContract.sol";
 
 /// @title HandshakeReactive
 /// @notice Neutral arbiter for cross-chain OTC settlement. Lives on Reactive Lasna.
-///         It watches both escrows, releases both legs only after both valid locks are
-///         observed before the deadline, and refunds locked legs after expiry.
+///         One instance serves every registered chain pair and every ERC-20 pair: the
+///         venue and token choice are stored per order and validated against the actual
+///         log source. Both legs are released from a single react() transaction, and
+///         once settlement has been requested the refund path is permanently closed.
 contract HandshakeReactive is AbstractReactive, Ownable {
     // ------------------------------------------------------------------ constants
 
@@ -25,6 +27,9 @@ contract HandshakeReactive is AbstractReactive, Ownable {
     uint64 private constant CALLBACK_GAS_LIMIT = 500_000;
 
     address private constant LEGACY_SYSTEM_ADDR = 0x0000000000000000000000000000000000fffFfF;
+
+    uint8 private constant ROLE_PAYMENT = 1;
+    uint8 private constant ROLE_ASSET = 2;
 
     // Topic0 values are computed from the exact event signatures so signature typos
     // cannot silently produce subscriptions that never match.
@@ -44,6 +49,15 @@ contract HandshakeReactive is AbstractReactive, Ownable {
     uint256 private constant CRON10_TOPIC_0 = uint256(keccak256("Cron10(uint256)"));
 
     // -------------------------------------------------------------------- structs
+
+    /// @notice The two chains and escrows that settle one order. Stored per order so a
+    ///         venue change by the owner cannot move an in-flight order.
+    struct Venue {
+        uint256 paymentChainId;
+        address paymentEscrow;
+        uint256 assetChainId;
+        address assetEscrow;
+    }
 
     struct Order {
         address buyer;
@@ -71,12 +85,26 @@ contract HandshakeReactive is AbstractReactive, Ownable {
         uint8 assetLockCount;
         uint64 paymentRequestNonce;
         uint64 assetRequestNonce;
+        Venue venue;
+    }
+
+    struct VenueRegistration {
+        address paymentEscrow;
+        address assetEscrow;
+        bool registered;
+    }
+
+    struct EscrowMeta {
+        uint256 chainId;
+        uint8 role; // ROLE_PAYMENT or ROLE_ASSET
+        bool registered;
     }
 
     // --------------------------------------------------------------------- events
 
     event OrderStateChanged(bytes32 indexed orderId, string stage, uint64 nonce);
-    event VenuesSet(uint256 paymentChainId, address paymentEscrow, uint256 assetChainId, address assetEscrow);
+    event VenueRegistered(uint256 indexed chainId, address paymentEscrow, address assetEscrow);
+    event VenueUnregistered(uint256 indexed chainId, address paymentEscrow, address assetEscrow);
 
     // --------------------------------------------------------------------- errors
 
@@ -87,12 +115,14 @@ contract HandshakeReactive is AbstractReactive, Ownable {
     error InvalidDuration();
     error UnknownOrder();
     error InvalidVenue();
+    error VenueNotFound();
     error CooldownActive();
     error NotBuyer();
     error NotOpenOrder();
     error OrderMatched();
     error DeadlineReached();
     error NoWinner();
+    error VenueInUse();
 
     // --------------------------------------------------------------------- state
 
@@ -100,13 +130,124 @@ contract HandshakeReactive is AbstractReactive, Ownable {
     bytes32[] private _orderIds;
     uint256 public sweepCursor;
 
-    uint256 public paymentChainId;
-    address public paymentEscrow;
-    uint256 public assetChainId;
-    address public assetEscrow;
-    bool public venuesSet;
+    /// @notice chainId => the single payment/asset escrow pair registered for that chain.
+    mapping(uint256 => VenueRegistration) private _venueRegistry;
+    uint256[] private _registeredChainIds;
+
+    /// @notice escrow address => (chainId, role). Used in react() to derive the venue
+    ///         from the *actual* log source instead of trusting the order's claim.
+    mapping(address => EscrowMeta) public escrows;
+
+    bool public cronSubscribed;
 
     constructor() payable Ownable(msg.sender) {}
+
+    // -------------------------------------------------------------- venue registry
+
+    /// @notice Register (or replace) the payment + asset escrows for one testnet chain.
+    ///         Installing the first venue also installs the single Cron10 subscription.
+    function setVenue(uint256 chainId_, address paymentEscrow_, address assetEscrow_) external onlyOwner {
+        if (!_isTestnet(chainId_)) revert InvalidVenue();
+        if (paymentEscrow_ == address(0) || assetEscrow_ == address(0)) revert InvalidVenue();
+        if (paymentEscrow_ == assetEscrow_) revert InvalidVenue();
+
+        VenueRegistration storage v = _venueRegistry[chainId_];
+        if (v.registered) {
+            // A new escrow may not already be in use by a different chain/role.
+            if (paymentEscrow_ != v.paymentEscrow && escrows[paymentEscrow_].registered) revert InvalidVenue();
+            if (assetEscrow_ != v.assetEscrow && escrows[assetEscrow_].registered) revert InvalidVenue();
+            // Replacing a venue with in-flight orders would make those orders
+            // unprocessable: react() validates logs against the live escrow map.
+            _requireVenueIdle(chainId_);
+            _unsubscribeEscrow(chainId_, v.paymentEscrow, ROLE_PAYMENT);
+            _unsubscribeEscrow(chainId_, v.assetEscrow, ROLE_ASSET);
+            delete escrows[v.paymentEscrow];
+            delete escrows[v.assetEscrow];
+        } else {
+            if (escrows[paymentEscrow_].registered || escrows[assetEscrow_].registered) revert InvalidVenue();
+            _registeredChainIds.push(chainId_);
+        }
+
+        v.paymentEscrow = paymentEscrow_;
+        v.assetEscrow = assetEscrow_;
+        v.registered = true;
+
+        escrows[paymentEscrow_] = EscrowMeta({chainId: chainId_, role: ROLE_PAYMENT, registered: true});
+        escrows[assetEscrow_] = EscrowMeta({chainId: chainId_, role: ROLE_ASSET, registered: true});
+
+        _subscribe(chainId_, paymentEscrow_, PAYMENT_LOCKED_TOPIC_0);
+        _subscribe(chainId_, paymentEscrow_, PAYMENT_RELEASED_TOPIC_0);
+        _subscribe(chainId_, paymentEscrow_, PAYMENT_REFUNDED_TOPIC_0);
+        _subscribe(chainId_, assetEscrow_, ASSET_LOCKED_TOPIC_0);
+        _subscribe(chainId_, assetEscrow_, ASSET_RELEASED_TOPIC_0);
+        _subscribe(chainId_, assetEscrow_, ASSET_REFUNDED_TOPIC_0);
+
+        if (!cronSubscribed) {
+            cronSubscribed = true;
+            _subscribe(block.chainid, LEGACY_SYSTEM_ADDR, CRON10_TOPIC_0);
+        }
+
+        emit VenueRegistered(chainId_, paymentEscrow_, assetEscrow_);
+    }
+
+    function venue(uint256 chainId_)
+        external
+        view
+        returns (address paymentEscrow_, address assetEscrow_, bool registered_)
+    {
+        VenueRegistration storage v = _venueRegistry[chainId_];
+        return (v.paymentEscrow, v.assetEscrow, v.registered);
+    }
+
+    function registeredChainIds() external view returns (uint256[] memory) {
+        return _registeredChainIds;
+    }
+
+    function subscriptionCount() external view returns (uint256) {
+        return _registeredChainIds.length * 6 + (cronSubscribed ? 1 : 0);
+    }
+
+    /// @notice Removes every subscription (e.g. after the demo, to stop cron billing).
+    /// @dev Refuses to unregister while any order on that venue is still open, so
+    ///      in-flight funds can always be settled or refunded.
+    function unsubscribeAll() external onlyOwner {
+        // Snapshot the ids before we start mutating the registry array.
+        uint256 len = _registeredChainIds.length;
+        uint256[] memory chainIds = new uint256[](len);
+        for (uint256 i = 0; i < len; ++i) chainIds[i] = _registeredChainIds[i];
+
+        for (uint256 i = 0; i < len; ++i) {
+            uint256 chainId = chainIds[i];
+            _requireVenueIdle(chainId);
+        }
+
+        for (uint256 i = 0; i < len; ++i) {
+            uint256 chainId = chainIds[i];
+            VenueRegistration storage v = _venueRegistry[chainId];
+            if (!v.registered) continue;
+            // Cache before delete so the event carries the real addresses.
+            address paymentEscrow = v.paymentEscrow;
+            address assetEscrow = v.assetEscrow;
+            _unsubscribeEscrow(chainId, paymentEscrow, ROLE_PAYMENT);
+            _unsubscribeEscrow(chainId, assetEscrow, ROLE_ASSET);
+            delete escrows[paymentEscrow];
+            delete escrows[assetEscrow];
+            delete _venueRegistry[chainId];
+            emit VenueUnregistered(chainId, paymentEscrow, assetEscrow);
+        }
+        delete _registeredChainIds;
+
+        if (cronSubscribed) {
+            SYSTEM.unsubscribe(
+                block.chainid, LEGACY_SYSTEM_ADDR, CRON10_TOPIC_0, REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE
+            );
+            cronSubscribed = false;
+        }
+    }
+
+    function coverDebt() external {
+        _coverDebt();
+    }
 
     // --------------------------------------------------------------- order lifecycle
 
@@ -115,8 +256,12 @@ contract HandshakeReactive is AbstractReactive, Ownable {
         address seller_,
         address paymentToken_,
         uint256 paymentAmount_,
+        uint256 paymentChainId_,
+        address paymentEscrow_,
         address assetToken_,
         uint256 assetAmount_,
+        uint256 assetChainId_,
+        address assetEscrow_,
         uint256 durationSeconds_
     ) external {
         if (orders[orderId_].buyer != address(0)) revert DuplicateOrder();
@@ -125,6 +270,10 @@ contract HandshakeReactive is AbstractReactive, Ownable {
         if (paymentToken_ == address(0) || assetToken_ == address(0)) revert InvalidToken();
         if (paymentAmount_ == 0 || assetAmount_ == 0) revert ZeroAmount();
         if (durationSeconds_ < MIN_DURATION || durationSeconds_ > MAX_DURATION) revert InvalidDuration();
+        if (!_isTestnet(paymentChainId_) || !_isTestnet(assetChainId_)) revert InvalidVenue();
+        if (paymentChainId_ == assetChainId_) revert InvalidVenue();
+        if (!_validEscrow(paymentEscrow_, paymentChainId_, ROLE_PAYMENT)) revert InvalidVenue();
+        if (!_validEscrow(assetEscrow_, assetChainId_, ROLE_ASSET)) revert InvalidVenue();
 
         Order storage o = orders[orderId_];
         o.buyer = msg.sender;
@@ -134,6 +283,12 @@ contract HandshakeReactive is AbstractReactive, Ownable {
         o.assetToken = assetToken_;
         o.assetAmount = assetAmount_;
         o.deadline = block.timestamp + durationSeconds_;
+        o.venue = Venue({
+            paymentChainId: paymentChainId_,
+            paymentEscrow: paymentEscrow_,
+            assetChainId: assetChainId_,
+            assetEscrow: assetEscrow_
+        });
         _orderIds.push(orderId_);
 
         emit OrderStateChanged(orderId_, "CREATED", 0);
@@ -141,8 +296,7 @@ contract HandshakeReactive is AbstractReactive, Ownable {
 
     /// @notice Buyer-only cancellation of an open order before any seller matches it.
     ///         Reuses `invalid` (so cron never settles) and `refundRequested` (so a late
-    ///         PaymentLocked log goes through _refundLateLeg) without touching the 22-field
-    ///         Order tuple the UI decodes.
+    ///         PaymentLocked log goes through _refundLateLeg) without touching the Order tuple.
     function cancelOrder(bytes32 orderId_) external {
         Order storage o = orders[orderId_];
         if (o.buyer == address(0)) revert UnknownOrder();
@@ -151,6 +305,7 @@ contract HandshakeReactive is AbstractReactive, Ownable {
         if (o.winner != address(0)) revert OrderMatched();
         if (block.timestamp >= o.deadline) revert DeadlineReached();
         if (o.invalid || o.refundRequested) return; // already cancelled / refund-pending
+        if (o.settleRequested) return; // hard invariant: settlement already requested
 
         o.invalid = true;
         o.refundRequested = true;
@@ -160,68 +315,25 @@ contract HandshakeReactive is AbstractReactive, Ownable {
     }
 
     /// @notice Canonical terms hash both escrow legs must carry. The UI computes this
-    ///         from getOrder(orderId) before enabling the lock buttons.
+    ///         from getOrder(orderId) before enabling the lock buttons. Venue fields are
+    ///         included so a deposit cannot be replayed against another venue.
     function termsHash(bytes32 orderId_) public view returns (bytes32) {
         Order storage o = orders[orderId_];
         return keccak256(
-            abi.encode(o.buyer, o.seller, o.paymentToken, o.paymentAmount, o.assetToken, o.assetAmount, o.deadline)
+            abi.encode(
+                o.buyer,
+                o.seller,
+                o.paymentToken,
+                o.paymentAmount,
+                o.assetToken,
+                o.assetAmount,
+                o.deadline,
+                o.venue.paymentChainId,
+                o.venue.paymentEscrow,
+                o.venue.assetChainId,
+                o.venue.assetEscrow
+            )
         );
-    }
-
-    /// @notice Installs all subscriptions. Escrow addresses are unknown at deploy time.
-    function setVenues(uint256 paymentChainId_, address paymentEscrow_, uint256 assetChainId_, address assetEscrow_)
-        external
-        onlyOwner
-    {
-        if (venuesSet) revert InvalidVenue(); // duplicate subscriptions waste lREACT reserves
-        if (!_isTestnet(paymentChainId_) || !_isTestnet(assetChainId_)) revert InvalidVenue();
-        if (paymentEscrow_ == address(0) || assetEscrow_ == address(0)) revert InvalidVenue();
-
-        paymentChainId = paymentChainId_;
-        paymentEscrow = paymentEscrow_;
-        assetChainId = assetChainId_;
-        assetEscrow = assetEscrow_;
-        venuesSet = true;
-
-        _subscribe(paymentChainId_, paymentEscrow_, PAYMENT_LOCKED_TOPIC_0);
-        _subscribe(assetChainId_, assetEscrow_, ASSET_LOCKED_TOPIC_0);
-        _subscribe(paymentChainId_, paymentEscrow_, PAYMENT_RELEASED_TOPIC_0);
-        _subscribe(paymentChainId_, paymentEscrow_, PAYMENT_REFUNDED_TOPIC_0);
-        _subscribe(assetChainId_, assetEscrow_, ASSET_RELEASED_TOPIC_0);
-        _subscribe(assetChainId_, assetEscrow_, ASSET_REFUNDED_TOPIC_0);
-        _subscribe(block.chainid, LEGACY_SYSTEM_ADDR, CRON10_TOPIC_0);
-
-        emit VenuesSet(paymentChainId_, paymentEscrow_, assetChainId_, assetEscrow_);
-    }
-
-    /// @notice Removes every subscription (e.g. after the demo, to stop cron billing).
-    function unsubscribeAll() external onlyOwner {
-        SYSTEM.unsubscribe(
-            paymentChainId, paymentEscrow, PAYMENT_LOCKED_TOPIC_0, REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE
-        );
-        SYSTEM.unsubscribe(
-            assetChainId, assetEscrow, ASSET_LOCKED_TOPIC_0, REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE
-        );
-        SYSTEM.unsubscribe(
-            paymentChainId, paymentEscrow, PAYMENT_RELEASED_TOPIC_0, REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE
-        );
-        SYSTEM.unsubscribe(
-            paymentChainId, paymentEscrow, PAYMENT_REFUNDED_TOPIC_0, REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE
-        );
-        SYSTEM.unsubscribe(
-            assetChainId, assetEscrow, ASSET_RELEASED_TOPIC_0, REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE
-        );
-        SYSTEM.unsubscribe(
-            assetChainId, assetEscrow, ASSET_REFUNDED_TOPIC_0, REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE
-        );
-        SYSTEM.unsubscribe(
-            block.chainid, LEGACY_SYSTEM_ADDR, CRON10_TOPIC_0, REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE
-        );
-        venuesSet = false;
-    }
-
-    function coverDebt() external {
-        _coverDebt();
     }
 
     // -------------------------------------------------------------------- react()
@@ -248,8 +360,12 @@ contract HandshakeReactive is AbstractReactive, Ownable {
 
     function _handleLocked(IReactive.LogRecord calldata log_, bool isPayment_) internal {
         if (log_.opCode != 4) return;
-        address expectedEscrow = isPayment_ ? paymentEscrow : assetEscrow;
-        if (expectedEscrow == address(0) || log_.contractAddress != expectedEscrow) return;
+
+        // Derive role and venue from the actual log source. Logs from lookalike or
+        // unregistered escrows, and logs whose venue does not match the order, are ignored.
+        EscrowMeta memory meta = escrows[log_.contractAddress];
+        if (!meta.registered) return;
+        if (isPayment_ ? meta.role != ROLE_PAYMENT : meta.role != ROLE_ASSET) return;
         if (log_.data.length < 128) return;
 
         bytes32 id = bytes32(log_.topic1);
@@ -260,7 +376,20 @@ contract HandshakeReactive is AbstractReactive, Ownable {
 
         Order storage o = orders[id];
         if (o.buyer == address(0)) return; // no order: ignore logs from lookalike contracts
-        if (!isPayment_) o.assetLockCount += 1; // every observed asset lock, winner or loser
+        if (isPayment_) {
+            if (o.venue.paymentChainId != meta.chainId || o.venue.paymentEscrow != log_.contractAddress) return;
+        } else {
+            if (o.venue.assetChainId != meta.chainId || o.venue.assetEscrow != log_.contractAddress) return;
+            o.assetLockCount += 1; // every observed asset lock, winner or loser
+        }
+
+        // Hard safety invariant: after settlement has been requested the order can
+        // never enter the refund path. A late asset lock can only be a race loser and
+        // is refunded to its own depositor without changing the winner's settlement.
+        if (o.settleRequested) {
+            if (!isPayment_ && depositor != o.winner) _refundRaceLoser(id, o, depositor);
+            return;
+        }
 
         // A lock that arrives after a refund decision or after both legs closed cannot
         // settle: refund that leg right away so its depositor is never stranded.
@@ -342,8 +471,10 @@ contract HandshakeReactive is AbstractReactive, Ownable {
 
     function _handleTerminal(IReactive.LogRecord calldata log_, bool isPayment_, bool isRelease_) internal {
         if (log_.opCode != 3) return;
-        address expectedEscrow = isPayment_ ? paymentEscrow : assetEscrow;
-        if (expectedEscrow == address(0) || log_.contractAddress != expectedEscrow) return;
+
+        EscrowMeta memory meta = escrows[log_.contractAddress];
+        if (!meta.registered) return;
+        if (isPayment_ ? meta.role != ROLE_PAYMENT : meta.role != ROLE_ASSET) return;
         if (log_.data.length < 64) return;
 
         bytes32 id = bytes32(log_.topic1);
@@ -352,6 +483,11 @@ contract HandshakeReactive is AbstractReactive, Ownable {
 
         Order storage o = orders[id];
         if (o.buyer == address(0)) return;
+        if (isPayment_) {
+            if (o.venue.paymentChainId != meta.chainId || o.venue.paymentEscrow != log_.contractAddress) return;
+        } else {
+            if (o.venue.assetChainId != meta.chainId || o.venue.assetEscrow != log_.contractAddress) return;
+        }
 
         // Accept the global nonce or the last nonce requested for this specific leg;
         // older nonces are stale and never close a leg.
@@ -377,10 +513,12 @@ contract HandshakeReactive is AbstractReactive, Ownable {
     // --------------------------------------------------------- callback request helpers
 
     function _requestSettle(bytes32 id_, Order storage o_, bool payment_, bool asset_) internal {
+        if (o_.refundRequested) return; // never mix a settlement with a refund decision
         o_.nonce += 1;
         o_.lastActionTimestamp = block.timestamp;
         o_.settleRequested = true;
         uint64 nonce = o_.nonce;
+        Venue storage v = o_.venue;
 
         if (payment_ && !o_.paymentClosed) {
             // A named seller receives payment directly. An open order's seller field is
@@ -390,8 +528,8 @@ contract HandshakeReactive is AbstractReactive, Ownable {
             o_.paymentRequestNonce = nonce;
             SYSTEM.requestCallbackV_1_0(
                 ISystemContract.CallbackConfiguration_V_1_0({
-                    chainId: paymentChainId,
-                    recipient: paymentEscrow,
+                    chainId: v.paymentChainId,
+                    recipient: v.paymentEscrow,
                     gasLimit: CALLBACK_GAS_LIMIT,
                     payload: abi.encodeWithSignature(
                         "release(address,bytes32,address,uint256,uint64)",
@@ -409,8 +547,8 @@ contract HandshakeReactive is AbstractReactive, Ownable {
             address seller = o_.winner == address(0) ? o_.seller : o_.winner;
             SYSTEM.requestCallbackV_1_0(
                 ISystemContract.CallbackConfiguration_V_1_0({
-                    chainId: assetChainId,
-                    recipient: assetEscrow,
+                    chainId: v.assetChainId,
+                    recipient: v.assetEscrow,
                     gasLimit: CALLBACK_GAS_LIMIT,
                     payload: abi.encodeWithSignature(
                         "release(address,bytes32,address,address,uint256,uint64)",
@@ -428,40 +566,44 @@ contract HandshakeReactive is AbstractReactive, Ownable {
     }
 
     function _requestRefundForLegs(bytes32 id_, Order storage o_, bool payment_, bool asset_) internal {
+        if (o_.settleRequested) return; // hard invariant: no refunds after settlement
         o_.nonce += 1;
         o_.lastActionTimestamp = block.timestamp;
         o_.refundRequested = true;
         uint64 nonce = o_.nonce;
+        Venue storage v = o_.venue;
 
         if (payment_ && o_.paymentSeen && !o_.paymentClosed) {
             o_.paymentRequestNonce = nonce;
             o_.paymentRefundRequested = true;
-            _requestPaymentRefund(id_, nonce);
+            _requestPaymentRefund(v, id_, nonce);
         }
         if (asset_ && o_.assetSeen && !o_.assetClosed) {
             o_.assetRequestNonce = nonce;
             o_.assetRefundRequested = true;
-            _requestAssetRefund(id_, o_.winner, nonce);
+            _requestAssetRefund(v, id_, o_.winner, nonce);
         }
         emit OrderStateChanged(id_, "REFUND_REQUESTED", nonce);
     }
 
     /// @notice Refund a leg whose Locked log arrived after the order entered refund mode.
     function _refundLateLeg(bytes32 id_, Order storage o_, bool isPayment_, address depositor_) internal {
+        if (o_.settleRequested) return; // hard invariant
         o_.nonce += 1;
         o_.lastActionTimestamp = block.timestamp;
         o_.refundRequested = true;
         uint64 nonce = o_.nonce;
+        Venue storage v = o_.venue;
 
         if (isPayment_) {
             o_.paymentSeen = true;
             o_.paymentRequestNonce = nonce;
             o_.paymentRefundRequested = true;
-            _requestPaymentRefund(id_, nonce);
+            _requestPaymentRefund(v, id_, nonce);
         } else {
             o_.assetRequestNonce = nonce;
             o_.assetRefundRequested = true;
-            _requestAssetRefund(id_, depositor_, nonce);
+            _requestAssetRefund(v, id_, depositor_, nonce);
         }
         emit OrderStateChanged(id_, "LATE_REFUND", nonce);
     }
@@ -471,26 +613,26 @@ contract HandshakeReactive is AbstractReactive, Ownable {
         o_.nonce += 1;
         o_.lastActionTimestamp = block.timestamp;
         uint64 nonce = o_.nonce;
-        _requestAssetRefund(id_, seller_, nonce);
+        _requestAssetRefund(o_.venue, id_, seller_, nonce);
         emit OrderStateChanged(id_, "RACE_LOSER_REFUND", nonce);
     }
 
-    function _requestPaymentRefund(bytes32 id_, uint64 nonce_) internal {
+    function _requestPaymentRefund(Venue storage v_, bytes32 id_, uint64 nonce_) internal {
         SYSTEM.requestCallbackV_1_0(
             ISystemContract.CallbackConfiguration_V_1_0({
-                chainId: paymentChainId,
-                recipient: paymentEscrow,
+                chainId: v_.paymentChainId,
+                recipient: v_.paymentEscrow,
                 gasLimit: CALLBACK_GAS_LIMIT,
                 payload: abi.encodeWithSignature("refund(address,bytes32,uint64)", address(0), id_, nonce_)
             })
         );
     }
 
-    function _requestAssetRefund(bytes32 id_, address seller_, uint64 nonce_) internal {
+    function _requestAssetRefund(Venue storage v_, bytes32 id_, address seller_, uint64 nonce_) internal {
         SYSTEM.requestCallbackV_1_0(
             ISystemContract.CallbackConfiguration_V_1_0({
-                chainId: assetChainId,
-                recipient: assetEscrow,
+                chainId: v_.assetChainId,
+                recipient: v_.assetEscrow,
                 gasLimit: CALLBACK_GAS_LIMIT,
                 payload: abi.encodeWithSignature("refund(address,bytes32,address,uint64)", address(0), id_, seller_, nonce_)
             })
@@ -499,8 +641,8 @@ contract HandshakeReactive is AbstractReactive, Ownable {
 
     // ------------------------------------------------------------------ retry/sweep
 
-    /// @notice Permissionless retry. Chooses release vs refund from order state and
-    ///         respects the same 30s cooldown as the cron sweep.
+    /// @notice Permissionless retry. Once settlement is requested it may only re-request
+    ///         settlement for unclosed legs — never a refund.
     function retry(bytes32 orderId_) external {
         Order storage o = orders[orderId_];
         if (o.buyer == address(0)) revert UnknownOrder();
@@ -509,16 +651,16 @@ contract HandshakeReactive is AbstractReactive, Ownable {
             revert CooldownActive();
         }
 
+        if (o.settleRequested) {
+            if ((o.paymentSeen && !o.paymentClosed) || (o.assetSeen && !o.assetClosed)) {
+                _requestSettle(orderId_, o, o.paymentSeen && !o.paymentClosed, o.assetSeen && !o.assetClosed);
+            }
+            return;
+        }
         if (o.refundRequested) {
             if ((o.paymentSeen && !o.paymentClosed) || (o.assetSeen && !o.assetClosed)) {
                 _requestRefundForLegs(orderId_, o, true, true);
             }
-            return;
-        }
-        // Cancelled orders carry invalid = true; never re-request settlement for them.
-        if (o.settleRequested && !o.invalid) {
-            _requestSettle(orderId_, o, o.paymentSeen && !o.paymentClosed, o.assetSeen && !o.assetClosed);
-            // neither requested yet: deliberate no-op
         }
     }
 
@@ -535,13 +677,17 @@ contract HandshakeReactive is AbstractReactive, Ownable {
 
             Order storage o = orders[id];
             if (o.buyer == address(0) || (o.paymentClosed && o.assetClosed)) continue;
+            if (o.lastActionTimestamp != 0 && block.timestamp < o.lastActionTimestamp + RETRY_COOLDOWN) continue;
 
-            if (block.timestamp >= o.deadline) {
-                if (o.lastActionTimestamp != 0 && block.timestamp < o.lastActionTimestamp + RETRY_COOLDOWN) continue;
-                if ((o.paymentSeen && !o.paymentClosed) || (o.assetSeen && !o.assetClosed)) {
-                    _requestRefundForLegs(id, o, true, true);
-                }
-            } else if (o.paymentSeen && o.assetSeen && !o.settleRequested && !o.invalid && !o.refundRequested) {
+            bool hasOpenLeg = (o.paymentSeen && !o.paymentClosed) || (o.assetSeen && !o.assetClosed);
+            if (!hasOpenLeg) continue;
+
+            if (o.settleRequested) {
+                // Hard invariant: expiry never converts a settling order into a refund.
+                _requestSettle(id, o, o.paymentSeen && !o.paymentClosed, o.assetSeen && !o.assetClosed);
+            } else if (block.timestamp >= o.deadline) {
+                _requestRefundForLegs(id, o, true, true);
+            } else if (o.paymentSeen && o.assetSeen && !o.invalid && !o.refundRequested) {
                 _requestSettle(id, o, true, true);
             }
         }
@@ -561,14 +707,6 @@ contract HandshakeReactive is AbstractReactive, Ownable {
         return orders[orderId_];
     }
 
-    function venues()
-        external
-        view
-        returns (uint256 paymentChainId_, address paymentEscrow_, uint256 assetChainId_, address assetEscrow_)
-    {
-        return (paymentChainId, paymentEscrow, assetChainId, assetEscrow);
-    }
-
     function isClosed(bytes32 orderId_) external view returns (bool) {
         Order storage o = orders[orderId_];
         return o.paymentClosed && o.assetClosed;
@@ -578,6 +716,34 @@ contract HandshakeReactive is AbstractReactive, Ownable {
 
     function _subscribe(uint256 chainId_, address contract_, uint256 topic0_) internal {
         SYSTEM.subscribe(chainId_, contract_, topic0_, REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE);
+    }
+
+    function _unsubscribeEscrow(uint256 chainId_, address escrow_, uint8 role_) internal {
+        uint256 locked = role_ == ROLE_PAYMENT ? PAYMENT_LOCKED_TOPIC_0 : ASSET_LOCKED_TOPIC_0;
+        uint256 released = role_ == ROLE_PAYMENT ? PAYMENT_RELEASED_TOPIC_0 : ASSET_RELEASED_TOPIC_0;
+        uint256 refunded = role_ == ROLE_PAYMENT ? PAYMENT_REFUNDED_TOPIC_0 : ASSET_REFUNDED_TOPIC_0;
+        SYSTEM.unsubscribe(chainId_, escrow_, locked, REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE);
+        SYSTEM.unsubscribe(chainId_, escrow_, released, REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE);
+        SYSTEM.unsubscribe(chainId_, escrow_, refunded, REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE);
+    }
+
+    function _validEscrow(address escrow_, uint256 chainId_, uint8 role_) internal view returns (bool) {
+        EscrowMeta storage meta = escrows[escrow_];
+        return meta.registered && meta.chainId == chainId_ && meta.role == role_;
+    }
+
+    /// @notice A venue may not be replaced or removed while an order that uses it
+    ///         can still receive callbacks. Removing the escrow metadata would make
+    ///         react() ignore that order's events, stranding locked funds.
+    function _requireVenueIdle(uint256 chainId_) internal view {
+        uint256 len = _orderIds.length;
+        for (uint256 i = 0; i < len; ++i) {
+            Order storage o = orders[_orderIds[i]];
+            if (o.paymentClosed && o.assetClosed) continue;
+            if (o.venue.paymentChainId == chainId_ || o.venue.assetChainId == chainId_) {
+                revert VenueInUse();
+            }
+        }
     }
 
     function _isTestnet(uint256 chainId_) internal pure returns (bool) {

@@ -2,61 +2,76 @@ import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { usePublicClient } from 'wagmi'
 import type { Hex } from 'viem'
-import { CHAIN_IDS, CHAIN_LABELS, EXPLORER_NAMES, txUrl, type ChainKey } from './chains'
-
+import {
+  CHAIN_IDS,
+  CHAIN_LABELS,
+  EXPLORER_NAMES,
+  txUrl,
+  type ChainKey,
+  type TradingChainKey,
+} from './chains'
+import { tradingChainKeyFromId } from './chains'
+import { configuredAddress, useConfig } from './config'
 import { formatTimestamp, isZeroAddress, truncate } from './format'
-import { chainKeyFromId, marketToAppConfig, useMarket, type Market } from './markets'
-import { logClient, resolveProof, type ProofChainKeys, type ProofClients } from './logs'
+import { logClient, proofVenue, resolveProof, type ProofChainKeys, type ProofClients } from './logs'
 import { useOrder } from './queries'
 import { isOrderTerminal } from './status'
 import type { Order, ProofData, ProofEvent } from './types'
 
-export function useProofClients(marketOverride?: Market | null): ProofClients {
-  const { market: current } = useMarket()
-  const target = marketOverride ?? current
-  const paymentChain = chainKeyFromId(target.payment.chainId, target.payment.chainKey)
-  const assetChain = chainKeyFromId(target.asset.chainId, target.asset.chainKey)
-  const lasna = usePublicClient({ chainId: CHAIN_IDS.lasna })
-  const payment = usePublicClient({ chainId: CHAIN_IDS[paymentChain] })
-  const asset = usePublicClient({ chainId: CHAIN_IDS[assetChain] })
-  return { lasna: logClient(lasna), payment: logClient(payment), asset: logClient(asset) }
+/** All three EVM clients are fixed hook slots; each call picks by venue. */
+export function useProofClients(payment?: TradingChainKey, asset?: TradingChainKey): ProofClients & {
+  byChain: Record<TradingChainKey, ReturnType<typeof logClient>>
+} {
+  const base = logClient(usePublicClient({ chainId: CHAIN_IDS.base }))
+  const unichain = logClient(usePublicClient({ chainId: CHAIN_IDS.unichain }))
+  const sepolia = logClient(usePublicClient({ chainId: CHAIN_IDS.sepolia }))
+  const lasna = logClient(usePublicClient({ chainId: CHAIN_IDS.lasna }))
+  const byChain = { base, unichain, sepolia }
+  return {
+    lasna,
+    payment: payment ? byChain[payment] : null,
+    asset: asset ? byChain[asset] : null,
+    byChain,
+  }
+}
+
+/** Chain keys for an order come only from its own per-order venue tuple. */
+export function orderChainKeys(order?: Order | null): ProofChainKeys {
+  if (!order) return { payment: 'base', asset: 'unichain' }
+  return {
+    payment: tradingChainKeyFromId(order.venue.paymentChainId) ?? 'base',
+    asset: tradingChainKeyFromId(order.venue.assetChainId) ?? 'unichain',
+  }
 }
 
 /**
- * One cached proof query per order, shared by order detail, verify, raw state
- * and My Orders (identical queryKey). Polling only happens while the order can
- * still change: terminal orders keep their already-observed hashes forever
- * with `staleTime: Infinity` and `refetchInterval: false`.
+ * One cached proof query per order + venue, shared by detail, verify, raw
+ * state and My Orders. Polling only while the order can still change; a
+ * settled order keeps its hashes with staleTime Infinity and no refetch.
  */
-export function useProof(orderId?: Hex | null, providedOrder?: Order | null, marketOverride?: Market | null) {
-  const { registry, market: current } = useMarket()
-  const market = marketOverride ?? current
-  const config = marketToAppConfig(registry, market)
-  const clients = useProofClients(market)
-  // Callers that already have the order (e.g. My Orders) pass it through so we
-  // do not create a second getOrder poller for the same id.
+export function useProof(orderId?: Hex | null, providedOrder?: Order | null) {
+  const config = useConfig()
+  const rc = configuredAddress(config.reactive.reactiveContract)
   const orderQuery = useOrder(orderId, { enabled: !providedOrder })
   const order = providedOrder ?? orderQuery.data
   const terminal = isOrderTerminal(order)
-  const watch = `${market.id}:${config.reactive.reactiveContract}:${config.base.paymentEscrow}:${config.unichain.assetEscrow}`
-  const queryKey = ['proof', market.id, orderId, watch] as const
-  // Wait for getOrder: its deadline is what makes the log window narrow.
-  // Starting the proof with an unknown order would fall back to the global
-  // deployment-wide scan (the old ~90-call behaviour).
+  const keys = orderChainKeys(order)
+  const venue = order ? proofVenue(order.venue, config) : null
+  const venueKey = order
+    ? `${order.venue.paymentChainId}:${order.venue.paymentEscrow}:${order.venue.assetChainId}:${order.venue.assetEscrow}`
+    : 'unknown'
+  const queryKey = ['proof', rc, orderId, venueKey] as const
   const orderResolved = !!providedOrder || orderQuery.isSuccess || orderQuery.isError
+  const clients = useProofClients(keys.payment, keys.asset)
 
   return useQuery({
     queryKey,
-    enabled: !!orderId && orderResolved && !!order,
-    // 8s while pending (inside the requested 5–10s band), never when settled.
+    enabled: !!orderId && orderResolved && !!order && !!venue,
     refetchInterval: terminal ? false : 8_000,
     staleTime: terminal ? Infinity : 8_000,
     queryFn: async (context): Promise<ProofData> => {
       const previous = context.client.getQueryData<ProofData>(queryKey)
-      return resolveProof(orderId!, config, clients, order, previous, {
-        payment: chainKeyFromId(market.payment.chainId, market.payment.chainKey),
-        asset: chainKeyFromId(market.asset.chainId, market.asset.chainKey),
-      })
+      return resolveProof(orderId!, config, clients, order, previous, venue!)
     },
   })
 }
@@ -73,15 +88,11 @@ export interface HopStep {
 export function buildHops(
   order: Order | null | undefined,
   proof?: ProofData | null,
-  chainKeys: ProofChainKeys = { payment: 'base', asset: 'unichain' },
+  chainKeys: ProofChainKeys = orderChainKeys(order),
 ): HopStep[] {
   const refundMode = !!order?.refundRequested || !!proof?.paymentRefunded || !!proof?.assetRefunded
   const open = !!order && isZeroAddress(order.seller)
-  const paymentTitle = refundMode
-    ? 'Payment refunded'
-    : open
-      ? 'Payment to winner'
-      : 'Payment released'
+  const paymentTitle = refundMode ? 'Payment refunded' : open ? 'Payment to winner' : 'Payment released'
   const closing: Array<[string, string, ChainKey, ProofEvent | undefined]> = refundMode
     ? [
         ['paymentRefund', paymentTitle, chainKeys.payment, proof?.paymentRefunded],
@@ -95,13 +106,7 @@ export function buildHops(
   return [
     { n: '01', key: 'paymentLocked', title: 'Payment locked', chain: chainKeys.payment, event: proof?.paymentLocked },
     { n: '02', key: 'assetLocked', title: open ? 'Asset locked by winner' : 'Asset locked', chain: chainKeys.asset, event: proof?.assetLocked },
-    {
-      n: '03',
-      key: 'reactive',
-      title: 'Settlement decision',
-      chain: 'lasna',
-      event: proof?.reactive,
-    },
+    { n: '03', key: 'reactive', title: 'Settlement decision', chain: 'lasna', event: proof?.reactive },
     ...closing.map(([key, title, chain, event], i) => ({
       n: i === 0 ? '04' : '05',
       key,
@@ -125,24 +130,26 @@ export function buildProofMarkdown(
   orderId: Hex,
   order: Order | null | undefined,
   proof: ProofData | null | undefined,
-  chainKeys: ProofChainKeys = { payment: 'base', asset: 'unichain' },
+  chainKeys: ProofChainKeys = orderChainKeys(order),
 ): string {
   const hops = buildHops(order, proof, chainKeys)
   const lines = [
     `# Handshake settlement proof — \`${orderId}\``,
     '',
-    'Trust-minimized cross-chain OTC settlement · Reactive Omni arbiter',
+    'Trust-minimized cross-chain OTC settlement · one reactive arbiter',
     '',
     '| Hop | Chain | Transaction hash | Block / time | Explorer |',
     '| --- | --- | --- | --- | --- |',
     ...hops.map(markdownRow),
     '',
-    '## Observed terms',
+    '## Observed terms and venue',
     '',
     `- Buyer: \`${order?.buyer ?? '—'}\``,
     `- Seller: \`${order?.seller ?? '—'}\``,
     `- Payment: ${order?.paymentAmount?.toString() ?? '—'} (${CHAIN_LABELS[chainKeys.payment]})`,
     `- Asset: ${order?.assetAmount?.toString() ?? '—'} (${CHAIN_LABELS[chainKeys.asset]})`,
+    `- Payment escrow: \`${order?.venue.paymentEscrow ?? '—'}\``,
+    `- Asset escrow: \`${order?.venue.assetEscrow ?? '—'}\``,
     `- Deadline: \`${order?.deadline?.toString() ?? '—'}\``,
     `- RC nonce: \`${order?.nonce?.toString() ?? '—'}\``,
     '',

@@ -5,8 +5,9 @@ import { usePublicClient } from 'wagmi'
 import { CHAIN_IDS, CHAIN_LABELS } from '../../lib/chains'
 
 import { formatTimestamp, normalizeOrderId, truncate } from '../../lib/format'
-import { fetchEventFeed, logClient, type ProofClients } from '../../lib/logs'
+import { fetchEventFeed, logClient, proofVenue, type ProofClients } from '../../lib/logs'
 import { useMarket, useMarketConfig } from '../../lib/markets'
+import { useVenues } from '../../lib/venues'
 import { Button, ChainPill, CopyButton, EmptyState, Panel, Spinner, TxLink, inputClass } from '../ui'
 
 const EVENT_TYPES = [
@@ -23,7 +24,8 @@ const EVENT_TYPES = [
 
 export default function EventLog() {
   const config = useMarketConfig()
-  const { market, chainKeyFor } = useMarket()
+  const { chainKeyFor } = useMarket()
+  const venues = useVenues()
   const [params] = useSearchParams()
   const [orderFilter, setOrderFilter] = useState(params.get('order') ?? '')
   const [typeFilter, setTypeFilter] = useState('all')
@@ -31,19 +33,23 @@ export default function EventLog() {
   const payment = logClient(usePublicClient({ chainId: CHAIN_IDS[chainKeyFor('payment')] }))
   const asset = logClient(usePublicClient({ chainId: CHAIN_IDS[chainKeyFor('asset')] }))
   const clients: ProofClients = { lasna, payment, asset }
-  const chainKeys = { payment: chainKeyFor('payment'), asset: chainKeyFor('asset') }
+  const paymentKey = chainKeyFor('payment')
+  const assetKey = chainKeyFor('asset')
+  const chainKeys = { payment: paymentKey, asset: assetKey }
+  const paymentVenue = venues.byChain(paymentKey)
+  const assetVenue = venues.byChain(assetKey)
+  const venue = proofVenue({
+    paymentChainId: BigInt(paymentVenue?.chainId ?? 84532),
+    paymentEscrow: paymentVenue?.paymentEscrow ?? '0x',
+    assetChainId: BigInt(assetVenue?.chainId ?? 1301),
+    assetEscrow: assetVenue?.assetEscrow ?? '0x',
+  }, config)
 
   const feed = useQuery({
-    queryKey: [
-      'event-feed',
-      market.id,
-      config.reactive.systemContract,
-      config.base.paymentEscrow,
-      config.unichain.assetEscrow,
-    ],
+    queryKey: ['event-feed', config.reactive.reactiveContract, venue.payment.escrow, venue.asset.escrow, paymentKey, assetKey],
     staleTime: 20_000,
-    refetchInterval: 30_000, // dev-only; was 10s
-    queryFn: () => fetchEventFeed(config, clients, chainKeys),
+    refetchInterval: 30_000,
+    queryFn: () => fetchEventFeed(config, clients, chainKeys, venue),
   })
 
   const normalized = normalizeOrderId(orderFilter)

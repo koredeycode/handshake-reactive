@@ -1,58 +1,33 @@
-import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { Plus } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { useAccount } from 'wagmi'
 import OrderBoard from '../components/OrderBoard'
 import TradeTicket from '../components/TradeTicket'
 import { Button, ConvergenceMark, RouteStrip, icon } from '../components/ui'
-import { useAccount } from 'wagmi'
 import { useTicketAssetPairs } from '../lib/assetPairs'
 import { CHAIN_LABELS } from '../lib/chains'
 import { toUnitString } from '../lib/format'
-import { FORWARD_MARKET_ID, REVERSE_MARKET_ID, useMarket } from '../lib/markets'
-import { useTokenBalance } from '../lib/queries'
-import { useTokenDisplay } from '../lib/tokenDisplay'
+import { useErc20Balance } from '../lib/queries'
+import { useTradeTicket } from '../lib/tradeTicket'
 
 export default function OrdersPage() {
   const navigate = useNavigate()
   const { address } = useAccount()
-  const { chainKeyFor, market, setMarket } = useMarket()
-  const paymentChain = chainKeyFor('payment')
-  const assetChain = chainKeyFor('asset')
-  const paymentToken = useTokenDisplay('payment')
-  const assetToken = useTokenDisplay('asset')
-  const paymentBalance = useTokenBalance('payment', address)
-  const assetBalance = useTokenBalance('asset', address)
+  const ticket = useTradeTicket()
   const {
     paymentOptions,
     assetOptions,
-    selectedPayment,
-    selectedAsset,
-    selectPayment,
-    selectAsset,
+    setPaymentChain,
+    setAssetChain,
   } = useTicketAssetPairs()
-  const [pay, setPay] = useState('')
-  const [receive, setReceive] = useState('')
 
-  const paymentSymbol = paymentToken.symbol
-  const assetSymbol = assetToken.symbol
-  const paymentDecimals = paymentToken.decimals
-  const assetDecimals = assetToken.decimals
-
-  const reversed = market.direction === 'reverse'
-
-  function reverseDirection() {
-    setPay(receive)
-    setReceive(pay)
-    setMarket(reversed ? FORWARD_MARKET_ID : REVERSE_MARKET_ID)
-  }
+  const paymentToken = ticket.tokenFor('payment')
+  const assetToken = ticket.tokenFor('asset')
+  const paymentBalance = useErc20Balance(ticket.paymentChain, paymentToken?.address, address)
+  const assetBalance = useErc20Balance(ticket.assetChain, assetToken?.address, address)
 
   function startTrade() {
-    const params = new URLSearchParams()
-    params.set('market', market.id)
-    params.set('direction', reversed ? 'reverse' : 'forward')
-    if (pay.trim()) params.set('pay', pay.trim())
-    if (receive.trim()) params.set('get', receive.trim())
-    navigate(`/new?${params}`)
+    navigate('/new')
   }
 
   return (
@@ -76,43 +51,49 @@ export default function OrdersPage() {
           </div>
           <TradeTicket
             pay={{
-              symbol: paymentSymbol,
-              chain: paymentChain,
-              amount: pay,
-              onAmountChange: setPay,
+              symbol: paymentToken?.symbol,
+              chain: ticket.paymentChain,
+              amount: ticket.payAmount,
+              onAmountChange: ticket.setPayAmount,
               kind: 'payment',
-              mark: paymentToken.mark,
-              color: paymentToken.color,
+              mark: paymentToken?.mark,
+              color: paymentToken?.color,
               assetOptions: paymentOptions,
-              selectedAsset: selectedPayment,
-              onAssetChange: selectPayment,
+              selectedAddress: paymentToken?.address,
+              onAssetChange: (token) => ticket.selectToken('payment', token),
+              onChainChange: setPaymentChain,
+              tokenAddress: paymentToken?.address,
+              verified: paymentToken?.verified,
               hint: paymentBalance.data !== undefined && paymentBalance.data !== null
-                ? `${paymentToken.name} · balance ${toUnitString(paymentBalance.data, paymentDecimals)} ${paymentSymbol}`
-                : `${paymentToken.name} · ${CHAIN_LABELS[paymentChain]} testnet`,
+                ? `${paymentToken?.name} · balance ${toUnitString(paymentBalance.data, paymentToken?.decimals ?? 18)} ${paymentToken?.symbol}`
+                : `${paymentToken?.name ?? 'Token'} · ${CHAIN_LABELS[ticket.paymentChain]} testnet`,
             }}
             receive={{
-              symbol: assetSymbol,
-              chain: assetChain,
-              amount: receive,
-              onAmountChange: setReceive,
+              symbol: assetToken?.symbol,
+              chain: ticket.assetChain,
+              amount: ticket.receiveAmount,
+              onAmountChange: ticket.setReceiveAmount,
               kind: 'asset',
-              mark: assetToken.mark,
-              color: assetToken.color,
+              mark: assetToken?.mark,
+              color: assetToken?.color,
               assetOptions: assetOptions,
-              selectedAsset: selectedAsset,
-              onAssetChange: selectAsset,
+              selectedAddress: assetToken?.address,
+              onAssetChange: (token) => ticket.selectToken('asset', token),
+              onChainChange: setAssetChain,
+              tokenAddress: assetToken?.address,
+              verified: assetToken?.verified,
               hint: assetBalance.data !== undefined && assetBalance.data !== null
-                ? `${assetToken.name} · balance ${toUnitString(assetBalance.data, assetDecimals)} ${assetSymbol}`
-                : `${assetToken.name} · ${CHAIN_LABELS[assetChain]} testnet`,
+                ? `${assetToken?.name} · balance ${toUnitString(assetBalance.data, assetToken?.decimals ?? 18)} ${assetToken?.symbol}`
+                : `${assetToken?.name ?? 'Token'} · ${CHAIN_LABELS[ticket.assetChain]} testnet`,
             }}
-            onReverse={reverseDirection}
+            onReverse={ticket.flip}
             footer={
               <>
                 <Button variant="primary" className="w-full" icon={<Plus {...icon} />} onClick={startTrade}>
                   New trade
                 </Button>
                 <p className="mt-3 text-[11px] leading-relaxed text-ink-400">
-                  Amounts carry over to the trade form. Nothing is submitted until you sign.
+                  Amounts, chains and tokens carry over to the trade form. Nothing is submitted until you sign.
                 </p>
               </>
             }

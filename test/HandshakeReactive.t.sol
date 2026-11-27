@@ -9,8 +9,22 @@ import {MockSystemContract} from "./Mocks.sol";
 contract HandshakeReactiveTest is Test {
     address constant SYSTEM = 0x8888888888888888888888888888888888888888;
     address constant LEGACY_SYSTEM = 0x0000000000000000000000000000000000fffFfF;
-    address constant BASE_ESCROW = address(0xE5B);
-    address constant UNICHAIN_ESCROW = address(0xE5A);
+
+    uint256 constant BASE_CHAIN = 84532;
+    uint256 constant UNICHAIN_CHAIN = 1301;
+    uint256 constant SEPOLIA_CHAIN = 11155111;
+
+    // Six distinct escrows: one payment + one asset per registered chain.
+    address constant BASE_ESCROW = address(0xE5B); // base payment (the default payment leg)
+    address constant BASE_ASSET_ESCROW = address(0xE5B2);
+    address constant UNICHAIN_PAYMENT_ESCROW = address(0xE5A2);
+    address constant UNICHAIN_ESCROW = address(0xE5A); // unichain asset (the default asset leg)
+    address constant SEPOLIA_PAYMENT_ESCROW = address(0xE5E1);
+    address constant SEPOLIA_ASSET_ESCROW = address(0xE5E2);
+
+    // Fresh escrows for the venue-replacement test.
+    address constant NEW_PAYMENT_ESCROW = address(0xE5C1);
+    address constant NEW_ASSET_ESCROW = address(0xE5C2);
 
     address constant BUYER = address(0xB0B);
     address constant SELLER = address(0x51E);
@@ -46,6 +60,8 @@ contract HandshakeReactiveTest is Test {
         bytes payload;
     }
 
+    event VenueUnregistered(uint256 indexed chainId, address paymentEscrow, address assetEscrow);
+
     MockSystemContract sys;
     HandshakeReactive rc;
     bytes32 id;
@@ -56,14 +72,71 @@ contract HandshakeReactiveTest is Test {
         vm.etch(SYSTEM, address(new MockSystemContract()).code);
         sys = MockSystemContract(payable(SYSTEM));
         rc = new HandshakeReactive{value: 1 ether}();
-        rc.setVenues(84532, BASE_ESCROW, 1301, UNICHAIN_ESCROW);
+        rc.setVenue(BASE_CHAIN, BASE_ESCROW, BASE_ASSET_ESCROW);
+        rc.setVenue(UNICHAIN_CHAIN, UNICHAIN_PAYMENT_ESCROW, UNICHAIN_ESCROW);
+        rc.setVenue(SEPOLIA_CHAIN, SEPOLIA_PAYMENT_ESCROW, SEPOLIA_ASSET_ESCROW);
         _createOrder(keccak256("order-1"), 120);
         _useOrder(keccak256("order-1"));
     }
 
-    function _createOrder(bytes32 orderId_, uint256 duration_) internal {
+    // ------------------------------------------------------------------- helpers
+
+    function _createOrderWith(
+        bytes32 orderId_,
+        address seller_,
+        address paymentToken_,
+        uint256 paymentAmount_,
+        uint256 paymentChainId_,
+        address paymentEscrow_,
+        address assetToken_,
+        uint256 assetAmount_,
+        uint256 assetChainId_,
+        address assetEscrow_,
+        uint256 duration_
+    ) internal {
         vm.prank(BUYER);
-        rc.createOrder(orderId_, SELLER, PAYMENT_TOKEN, PAYMENT_AMOUNT, ASSET_TOKEN, ASSET_AMOUNT, duration_);
+        rc.createOrder(
+            orderId_,
+            seller_,
+            paymentToken_,
+            paymentAmount_,
+            paymentChainId_,
+            paymentEscrow_,
+            assetToken_,
+            assetAmount_,
+            assetChainId_,
+            assetEscrow_,
+            duration_
+        );
+    }
+
+    function _createOrderAt(
+        bytes32 orderId_,
+        address seller_,
+        uint256 paymentChainId_,
+        address paymentEscrow_,
+        uint256 assetChainId_,
+        address assetEscrow_,
+        uint256 duration_
+    ) internal {
+        _createOrderWith(
+            orderId_,
+            seller_,
+            PAYMENT_TOKEN,
+            PAYMENT_AMOUNT,
+            paymentChainId_,
+            paymentEscrow_,
+            ASSET_TOKEN,
+            ASSET_AMOUNT,
+            assetChainId_,
+            assetEscrow_,
+            duration_
+        );
+    }
+
+    /// @dev The default order: payment on Base, asset on Unichain.
+    function _createOrder(bytes32 orderId_, uint256 duration_) internal {
+        _createOrderAt(orderId_, SELLER, BASE_CHAIN, BASE_ESCROW, UNICHAIN_CHAIN, UNICHAIN_ESCROW, duration_);
     }
 
     function _useOrder(bytes32 orderId_) internal {
@@ -91,14 +164,17 @@ contract HandshakeReactiveTest is Test {
         return out_;
     }
 
-    function _lockedLog(bool payment_, address depositor_, address counterparty_)
-        internal
-        view
-        returns (IReactive.LogRecord memory)
-    {
+    /// @dev Build a Locked log from an explicit chain + escrow (for venue-filter tests).
+    function _lockedLogFrom(
+        bool payment_,
+        address depositor_,
+        address counterparty_,
+        uint256 chainId_,
+        address escrow_
+    ) internal view returns (IReactive.LogRecord memory) {
         return IReactive.LogRecord({
-            chainId: payment_ ? uint256(84532) : uint256(1301),
-            contractAddress: payment_ ? BASE_ESCROW : UNICHAIN_ESCROW,
+            chainId: chainId_,
+            contractAddress: escrow_,
             topic0: payment_ ? PAYMENT_LOCKED_TOPIC : ASSET_LOCKED_TOPIC,
             topic1: uint256(id),
             topic2: uint256(uint160(depositor_)),
@@ -114,14 +190,35 @@ contract HandshakeReactiveTest is Test {
         });
     }
 
-    function _terminalLog(bool payment_, bool release_, address recipient_, uint256 amount_, uint64 nonce_)
+    /// @dev Locked logs follow the *order's venue*, not a hardcoded chain/escrow pair.
+    function _lockedLog(bool payment_, address depositor_, address counterparty_)
         internal
         view
         returns (IReactive.LogRecord memory)
     {
+        HandshakeReactive.Venue memory v = rc.getOrder(id).venue;
+        return _lockedLogFrom(
+            payment_,
+            depositor_,
+            counterparty_,
+            payment_ ? v.paymentChainId : v.assetChainId,
+            payment_ ? v.paymentEscrow : v.assetEscrow
+        );
+    }
+
+    /// @dev Build a terminal log from an explicit chain + escrow.
+    function _terminalLogFrom(
+        bool payment_,
+        bool release_,
+        address recipient_,
+        uint256 amount_,
+        uint64 nonce_,
+        uint256 chainId_,
+        address escrow_
+    ) internal view returns (IReactive.LogRecord memory) {
         return IReactive.LogRecord({
-            chainId: payment_ ? uint256(84532) : uint256(1301),
-            contractAddress: payment_ ? BASE_ESCROW : UNICHAIN_ESCROW,
+            chainId: chainId_,
+            contractAddress: escrow_,
             topic0: payment_
                 ? (release_ ? PAYMENT_RELEASED_TOPIC : PAYMENT_REFUNDED_TOPIC)
                 : (release_ ? ASSET_RELEASED_TOPIC : ASSET_REFUNDED_TOPIC),
@@ -135,6 +232,23 @@ contract HandshakeReactiveTest is Test {
             txHash: 0,
             logIndex: 0
         });
+    }
+
+    function _terminalLog(bool payment_, bool release_, address recipient_, uint256 amount_, uint64 nonce_)
+        internal
+        view
+        returns (IReactive.LogRecord memory)
+    {
+        HandshakeReactive.Venue memory v = rc.getOrder(id).venue;
+        return _terminalLogFrom(
+            payment_,
+            release_,
+            recipient_,
+            amount_,
+            nonce_,
+            payment_ ? v.paymentChainId : v.assetChainId,
+            payment_ ? v.paymentEscrow : v.assetEscrow
+        );
     }
 
     function _cronLog() internal pure returns (IReactive.LogRecord memory) {
@@ -168,6 +282,36 @@ contract HandshakeReactiveTest is Test {
         _react(_lockedLog(false, SELLER, BUYER));
     }
 
+    /// @dev The six subscriptions a venue contributes, in the order setVenue() installs them.
+    function _fillVenueExpectations(
+        uint256[] memory topics_,
+        uint256[] memory chains_,
+        address[] memory contracts_,
+        uint256 offset_,
+        uint256 chainId_,
+        address paymentEscrow_,
+        address assetEscrow_
+    ) internal pure {
+        topics_[offset_] = PAYMENT_LOCKED_TOPIC;
+        chains_[offset_] = chainId_;
+        contracts_[offset_] = paymentEscrow_;
+        topics_[offset_ + 1] = PAYMENT_RELEASED_TOPIC;
+        chains_[offset_ + 1] = chainId_;
+        contracts_[offset_ + 1] = paymentEscrow_;
+        topics_[offset_ + 2] = PAYMENT_REFUNDED_TOPIC;
+        chains_[offset_ + 2] = chainId_;
+        contracts_[offset_ + 2] = paymentEscrow_;
+        topics_[offset_ + 3] = ASSET_LOCKED_TOPIC;
+        chains_[offset_ + 3] = chainId_;
+        contracts_[offset_ + 3] = assetEscrow_;
+        topics_[offset_ + 4] = ASSET_RELEASED_TOPIC;
+        chains_[offset_ + 4] = chainId_;
+        contracts_[offset_ + 4] = assetEscrow_;
+        topics_[offset_ + 5] = ASSET_REFUNDED_TOPIC;
+        chains_[offset_ + 5] = chainId_;
+        contracts_[offset_ + 5] = assetEscrow_;
+    }
+
     // ------------------------------------------------------------ order creation
 
     function testCreateOrderStoresBuyerTermsAndDeadline() public {
@@ -180,6 +324,10 @@ contract HandshakeReactiveTest is Test {
         assertEq(o.assetToken, ASSET_TOKEN);
         assertEq(o.assetAmount, ASSET_AMOUNT);
         assertEq(o.deadline, block.timestamp + 120);
+        assertEq(o.venue.paymentChainId, BASE_CHAIN);
+        assertEq(o.venue.paymentEscrow, BASE_ESCROW);
+        assertEq(o.venue.assetChainId, UNICHAIN_CHAIN);
+        assertEq(o.venue.assetEscrow, UNICHAIN_ESCROW);
         assertEq(rc.orderCount(), 1);
         assertEq(rc.orderIds(0), id);
         assertEq(o.nonce, 0);
@@ -193,48 +341,78 @@ contract HandshakeReactiveTest is Test {
         _createOrder(duplicate, 120);
 
         vm.expectRevert(abi.encodeWithSignature("ZeroAmount()"));
-        vm.prank(BUYER);
-        rc.createOrder(keccak256("zero"), SELLER, PAYMENT_TOKEN, 0, ASSET_TOKEN, ASSET_AMOUNT, 120);
+        _createOrderWith(
+            keccak256("zero"), SELLER, PAYMENT_TOKEN, 0, BASE_CHAIN, BASE_ESCROW, ASSET_TOKEN, ASSET_AMOUNT,
+            UNICHAIN_CHAIN, UNICHAIN_ESCROW, 120
+        );
+
+        vm.expectRevert(abi.encodeWithSignature("ZeroAmount()"));
+        _createOrderWith(
+            keccak256("zero-asset"), SELLER, PAYMENT_TOKEN, PAYMENT_AMOUNT, BASE_CHAIN, BASE_ESCROW, ASSET_TOKEN, 0,
+            UNICHAIN_CHAIN, UNICHAIN_ESCROW, 120
+        );
+
+        vm.expectRevert(abi.encodeWithSignature("InvalidToken()"));
+        _createOrderWith(
+            keccak256("bad-token"), SELLER, address(0), PAYMENT_AMOUNT, BASE_CHAIN, BASE_ESCROW, ASSET_TOKEN,
+            ASSET_AMOUNT, UNICHAIN_CHAIN, UNICHAIN_ESCROW, 120
+        );
 
         vm.expectRevert(abi.encodeWithSignature("InvalidDuration()"));
-        vm.prank(BUYER);
-        rc.createOrder(keccak256("short"), SELLER, PAYMENT_TOKEN, PAYMENT_AMOUNT, ASSET_TOKEN, ASSET_AMOUNT, 29);
+        _createOrder(keccak256("short"), 29);
 
         vm.expectRevert(abi.encodeWithSignature("InvalidDuration()"));
-        vm.prank(BUYER);
-        rc.createOrder(keccak256("long"), SELLER, PAYMENT_TOKEN, PAYMENT_AMOUNT, ASSET_TOKEN, ASSET_AMOUNT, 31 days);
+        _createOrder(keccak256("long"), 31 days);
 
         vm.expectRevert(abi.encodeWithSignature("InvalidSeller()"));
-        vm.prank(BUYER);
-        rc.createOrder(keccak256("self"), BUYER, PAYMENT_TOKEN, PAYMENT_AMOUNT, ASSET_TOKEN, ASSET_AMOUNT, 120);
+        _createOrderAt(keccak256("self"), BUYER, BASE_CHAIN, BASE_ESCROW, UNICHAIN_CHAIN, UNICHAIN_ESCROW, 120);
 
         assertEq(rc.orderCount(), 1);
     }
 
     // --------------------------------------------------------------- subscriptions
 
-    function testSetVenuesOwnerOnlyAndInstallsSevenSubscriptions() public view {
-        (uint256 paymentChain, address paymentAddr, uint256 assetChain, address assetAddr) = rc.venues();
-        assertEq(paymentChain, 84532);
-        assertEq(paymentAddr, BASE_ESCROW);
-        assertEq(assetChain, 1301);
-        assertEq(assetAddr, UNICHAIN_ESCROW);
-        assertTrue(rc.venuesSet());
-        assertEq(sys.subscriptionCount(), 7);
+    function testSetVenueOwnerOnlyAndInstallsNineteenSubscriptions() public view {
+        (address paymentEscrow, address assetEscrow, bool registered) = rc.venue(BASE_CHAIN);
+        assertEq(paymentEscrow, BASE_ESCROW);
+        assertEq(assetEscrow, BASE_ASSET_ESCROW);
+        assertTrue(registered);
+        (paymentEscrow, assetEscrow, registered) = rc.venue(UNICHAIN_CHAIN);
+        assertEq(paymentEscrow, UNICHAIN_PAYMENT_ESCROW);
+        assertEq(assetEscrow, UNICHAIN_ESCROW);
+        assertTrue(registered);
+        (paymentEscrow, assetEscrow, registered) = rc.venue(SEPOLIA_CHAIN);
+        assertEq(paymentEscrow, SEPOLIA_PAYMENT_ESCROW);
+        assertEq(assetEscrow, SEPOLIA_ASSET_ESCROW);
+        assertTrue(registered);
 
-        uint256[7] memory expectedTopics = [
-            PAYMENT_LOCKED_TOPIC,
-            ASSET_LOCKED_TOPIC,
-            PAYMENT_RELEASED_TOPIC,
-            PAYMENT_REFUNDED_TOPIC,
-            ASSET_RELEASED_TOPIC,
-            ASSET_REFUNDED_TOPIC,
-            CRON10_TOPIC
-        ];
-        uint256[7] memory expectedChains = [uint256(84532), 1301, 84532, 84532, 1301, 1301, block.chainid];
-        address[7] memory expectedContracts =
-            [BASE_ESCROW, UNICHAIN_ESCROW, BASE_ESCROW, BASE_ESCROW, UNICHAIN_ESCROW, UNICHAIN_ESCROW, LEGACY_SYSTEM];
-        for (uint256 i = 0; i < 7; i++) {
+        uint256[] memory chains = rc.registeredChainIds();
+        assertEq(chains.length, 3);
+        assertEq(chains[0], BASE_CHAIN);
+        assertEq(chains[1], UNICHAIN_CHAIN);
+        assertEq(chains[2], SEPOLIA_CHAIN);
+        assertTrue(rc.cronSubscribed());
+        assertEq(rc.subscriptionCount(), 19);
+        assertEq(sys.subscriptionCount(), 19);
+
+        uint256[] memory expectedTopics = new uint256[](19);
+        uint256[] memory expectedChains = new uint256[](19);
+        address[] memory expectedContracts = new address[](19);
+
+        _fillVenueExpectations(expectedTopics, expectedChains, expectedContracts, 0, BASE_CHAIN, BASE_ESCROW, BASE_ASSET_ESCROW);
+        // Cron is installed once, immediately after the first venue.
+        expectedTopics[6] = CRON10_TOPIC;
+        expectedChains[6] = block.chainid;
+        expectedContracts[6] = LEGACY_SYSTEM;
+        _fillVenueExpectations(
+            expectedTopics, expectedChains, expectedContracts, 7, UNICHAIN_CHAIN, UNICHAIN_PAYMENT_ESCROW, UNICHAIN_ESCROW
+        );
+        _fillVenueExpectations(
+            expectedTopics, expectedChains, expectedContracts, 13, SEPOLIA_CHAIN, SEPOLIA_PAYMENT_ESCROW,
+            SEPOLIA_ASSET_ESCROW
+        );
+
+        for (uint256 i = 0; i < 19; i++) {
             (uint256 chain, address contract_, uint256 topic0, uint256 t1, uint256 t2, uint256 t3) =
                 sys.subscriptions(i);
             assertEq(topic0, expectedTopics[i]);
@@ -249,23 +427,151 @@ contract HandshakeReactiveTest is Test {
     function testNonOwnerCannotChangeVenuesOrUnsubscribe() public {
         vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", STRANGER));
         vm.prank(STRANGER);
-        rc.setVenues(84532, STRANGER, 1301, STRANGER);
+        rc.setVenue(BASE_CHAIN, STRANGER, STRANGER);
 
         vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", STRANGER));
         vm.prank(STRANGER);
         rc.unsubscribeAll();
     }
 
-    function testSetVenuesRejectsMainnetChainIds() public {
+    function testSetVenueRejectsMainnetChainIds() public {
         vm.expectRevert(abi.encodeWithSignature("InvalidVenue()"));
-        rc.setVenues(1, BASE_ESCROW, 1301, UNICHAIN_ESCROW);
+        rc.setVenue(1, BASE_ESCROW, BASE_ASSET_ESCROW);
+        vm.expectRevert(abi.encodeWithSignature("InvalidVenue()"));
+        rc.setVenue(11155110, SEPOLIA_PAYMENT_ESCROW, SEPOLIA_ASSET_ESCROW);
+        assertEq(sys.subscriptionCount(), 19);
     }
 
-    function testSetVenuesCannotBeCalledTwice() public {
-        assertEq(sys.subscriptionCount(), 7);
+    function testSetVenueRejectsInvalidEscrowConfigurations() public {
         vm.expectRevert(abi.encodeWithSignature("InvalidVenue()"));
-        rc.setVenues(84532, BASE_ESCROW, 1301, UNICHAIN_ESCROW);
-        assertEq(sys.subscriptionCount(), 7); // no duplicate subscriptions installed
+        rc.setVenue(BASE_CHAIN, address(0), BASE_ASSET_ESCROW);
+
+        vm.expectRevert(abi.encodeWithSignature("InvalidVenue()"));
+        rc.setVenue(BASE_CHAIN, BASE_ESCROW, address(0));
+
+        vm.expectRevert(abi.encodeWithSignature("InvalidVenue()"));
+        rc.setVenue(BASE_CHAIN, BASE_ESCROW, BASE_ESCROW);
+
+        // An escrow already registered for another chain cannot be reused.
+        vm.expectRevert(abi.encodeWithSignature("InvalidVenue()"));
+        rc.setVenue(SEPOLIA_CHAIN, BASE_ESCROW, SEPOLIA_ASSET_ESCROW);
+
+        // An asset escrow cannot be re-registered as a payment escrow.
+        vm.expectRevert(abi.encodeWithSignature("InvalidVenue()"));
+        rc.setVenue(BASE_CHAIN, BASE_ASSET_ESCROW, NEW_PAYMENT_ESCROW);
+
+        assertEq(sys.subscriptionCount(), 19);
+        assertEq(rc.registeredChainIds().length, 3);
+    }
+
+    function testReplaceVenueRejectedWhileOrderInFlight() public {
+        // setUp created an active order on Base -> Unichain. Replacing either
+        // venue now strands that order because react() validates live escrow meta.
+        vm.expectRevert(abi.encodeWithSignature("VenueInUse()"));
+        rc.setVenue(BASE_CHAIN, NEW_PAYMENT_ESCROW, NEW_ASSET_ESCROW);
+        vm.expectRevert(abi.encodeWithSignature("VenueInUse()"));
+        rc.setVenue(UNICHAIN_CHAIN, NEW_PAYMENT_ESCROW, NEW_ASSET_ESCROW);
+        // A chain with no in-flight orders can still be replaced.
+        rc.setVenue(SEPOLIA_CHAIN, NEW_PAYMENT_ESCROW, NEW_ASSET_ESCROW);
+    }
+
+    function testReplaceVenueUnsubscribesOldAndSubscribesNew() public {
+        // Fresh RC with venues but no orders so the venue is idle.
+        HandshakeReactive fresh = new HandshakeReactive{value: 1 ether}();
+        fresh.setVenue(BASE_CHAIN, BASE_ESCROW, BASE_ASSET_ESCROW);
+        fresh.setVenue(UNICHAIN_CHAIN, UNICHAIN_PAYMENT_ESCROW, UNICHAIN_ESCROW);
+        fresh.setVenue(SEPOLIA_CHAIN, SEPOLIA_PAYMENT_ESCROW, SEPOLIA_ASSET_ESCROW);
+        rc = fresh;
+
+        uint256 subscriptionsBefore = sys.subscriptionCount();
+        uint256 unsubscriptionsBefore = sys.unsubscriptionCount();
+
+        rc.setVenue(BASE_CHAIN, NEW_PAYMENT_ESCROW, NEW_ASSET_ESCROW);
+
+        assertEq(sys.unsubscriptionCount(), unsubscriptionsBefore + 6);
+        // The mock logs every subscribe call; it never prunes replaced ones.
+        assertEq(sys.subscriptionCount(), subscriptionsBefore + 6);
+        // The RC's net active count is unchanged: 6 removed, 6 added, cron untouched.
+        assertEq(rc.subscriptionCount(), 19);
+        assertTrue(rc.cronSubscribed());
+
+        (address paymentEscrow, address assetEscrow, bool registered) = rc.venue(BASE_CHAIN);
+        assertEq(paymentEscrow, NEW_PAYMENT_ESCROW);
+        assertEq(assetEscrow, NEW_ASSET_ESCROW);
+        assertTrue(registered);
+
+        (uint256 chain, uint8 role, bool escrowRegistered) = rc.escrows(BASE_ESCROW);
+        assertEq(chain, 0);
+        assertEq(role, 0);
+        assertFalse(escrowRegistered);
+        (, role, escrowRegistered) = rc.escrows(BASE_ASSET_ESCROW);
+        assertFalse(escrowRegistered);
+        (chain, role, escrowRegistered) = rc.escrows(NEW_PAYMENT_ESCROW);
+        assertEq(chain, BASE_CHAIN);
+        assertEq(role, 1);
+        assertTrue(escrowRegistered);
+        (chain, role, escrowRegistered) = rc.escrows(NEW_ASSET_ESCROW);
+        assertEq(chain, BASE_CHAIN);
+        assertEq(role, 2);
+        assertTrue(escrowRegistered);
+
+        uint256[] memory oldTopics = new uint256[](6);
+        oldTopics[0] = PAYMENT_LOCKED_TOPIC;
+        oldTopics[1] = PAYMENT_RELEASED_TOPIC;
+        oldTopics[2] = PAYMENT_REFUNDED_TOPIC;
+        oldTopics[3] = ASSET_LOCKED_TOPIC;
+        oldTopics[4] = ASSET_RELEASED_TOPIC;
+        oldTopics[5] = ASSET_REFUNDED_TOPIC;
+        for (uint256 i = 0; i < 6; i++) {
+            (uint256 removedChain, address removedContract, uint256 removedTopic,,,) = sys.unsubscriptions(i);
+            assertEq(removedChain, BASE_CHAIN);
+            assertEq(removedTopic, oldTopics[i]);
+            assertEq(removedContract, i < 3 ? BASE_ESCROW : BASE_ASSET_ESCROW);
+        }
+    }
+
+    function testCreateOrderRejectsMismatchedOrUnregisteredEscrows() public {
+        vm.expectRevert(abi.encodeWithSignature("InvalidVenue()"));
+        _createOrderAt(
+            keccak256("unregistered"), SELLER, BASE_CHAIN, STRANGER, UNICHAIN_CHAIN, UNICHAIN_ESCROW, 120
+        );
+
+        // Registered, but with the wrong role.
+        vm.expectRevert(abi.encodeWithSignature("InvalidVenue()"));
+        _createOrderAt(
+            keccak256("payment-role"), SELLER, BASE_CHAIN, BASE_ASSET_ESCROW, UNICHAIN_CHAIN, UNICHAIN_ESCROW, 120
+        );
+        vm.expectRevert(abi.encodeWithSignature("InvalidVenue()"));
+        _createOrderAt(
+            keccak256("asset-role"), SELLER, BASE_CHAIN, BASE_ESCROW, UNICHAIN_CHAIN, UNICHAIN_PAYMENT_ESCROW, 120
+        );
+
+        // Registered with the right role, but on a different chain.
+        vm.expectRevert(abi.encodeWithSignature("InvalidVenue()"));
+        _createOrderAt(
+            keccak256("payment-chain"), SELLER, BASE_CHAIN, UNICHAIN_PAYMENT_ESCROW, UNICHAIN_CHAIN, UNICHAIN_ESCROW, 120
+        );
+        vm.expectRevert(abi.encodeWithSignature("InvalidVenue()"));
+        _createOrderAt(
+            keccak256("asset-chain"), SELLER, BASE_CHAIN, BASE_ESCROW, UNICHAIN_CHAIN, SEPOLIA_ASSET_ESCROW, 120
+        );
+
+        // Same-chain pairs are never allowed, even with valid per-chain escrows.
+        vm.expectRevert(abi.encodeWithSignature("InvalidVenue()"));
+        _createOrderAt(
+            keccak256("same-chain-base"), SELLER, BASE_CHAIN, BASE_ESCROW, BASE_CHAIN, BASE_ASSET_ESCROW, 120
+        );
+        vm.expectRevert(abi.encodeWithSignature("InvalidVenue()"));
+        _createOrderAt(
+            keccak256("same-chain-sepolia"), SELLER, SEPOLIA_CHAIN, SEPOLIA_PAYMENT_ESCROW, SEPOLIA_CHAIN,
+            SEPOLIA_ASSET_ESCROW, 120
+        );
+
+        // Mainnet is not a venue.
+        vm.expectRevert(abi.encodeWithSignature("InvalidVenue()"));
+        _createOrderAt(keccak256("mainnet"), SELLER, 1, BASE_ESCROW, UNICHAIN_CHAIN, UNICHAIN_ESCROW, 120);
+
+        assertEq(rc.orderCount(), 1);
     }
 
     // --------------------------------------------------------------- happy paths
@@ -286,7 +592,7 @@ contract HandshakeReactiveTest is Test {
         assertEq(sys.callbackCount(), 2);
 
         CallbackRecord memory p = _callback(0);
-        assertEq(p.chainId, 84532);
+        assertEq(p.chainId, BASE_CHAIN);
         assertEq(p.recipient, BASE_ESCROW);
         assertEq(p.gasLimit, 500_000);
         assertEq(bytes4(p.payload), RELEASE_PAYMENT_SELECTOR);
@@ -299,7 +605,7 @@ contract HandshakeReactiveTest is Test {
         assertEq(nonce, 1);
 
         CallbackRecord memory a = _callback(1);
-        assertEq(a.chainId, 1301);
+        assertEq(a.chainId, UNICHAIN_CHAIN);
         assertEq(a.recipient, UNICHAIN_ESCROW);
         assertEq(a.gasLimit, 500_000);
         assertEq(bytes4(a.payload), RELEASE_ASSET_SELECTOR);
@@ -353,9 +659,10 @@ contract HandshakeReactiveTest is Test {
 
     function testReactFromEoaReverts() public {
         _useOrder(id);
+        IReactive.LogRecord memory log_ = _lockedLog(true, BUYER, SELLER);
         vm.expectRevert();
         vm.prank(STRANGER);
-        rc.react(_lockedLog(true, BUYER, SELLER));
+        rc.react(log_);
     }
 
     function testUnknownTopicAndUnknownOrderAreNoOps() public {
@@ -373,7 +680,125 @@ contract HandshakeReactiveTest is Test {
         assertFalse(rc.getOrder(id).paymentSeen);
     }
 
+    // ------------------------------------------------------ venue filtering in react
+
+    function testReactIgnoresLogsFromUnregisteredEscrow() public {
+        _useOrder(id);
+
+        IReactive.LogRecord memory lockLog = _lockedLogFrom(true, BUYER, SELLER, BASE_CHAIN, STRANGER);
+        _react(lockLog);
+        assertEq(sys.callbackCount(), 0);
+        assertFalse(rc.getOrder(id).paymentSeen);
+
+        // An unregistered terminal source cannot close a leg either.
+        _paymentLock();
+        assertEq(sys.callbackCount(), 0);
+        _react(_terminalLogFrom(true, true, SELLER, PAYMENT_AMOUNT, 1, BASE_CHAIN, STRANGER));
+        assertFalse(rc.getOrder(id).paymentClosed);
+    }
+
+    function testReactIgnoresLogsFromDifferentRegisteredEscrow() public {
+        _useOrder(id);
+
+        // Correct role, wrong chain/escrow for this order's asset venue.
+        _react(_lockedLogFrom(false, SELLER, BUYER, SEPOLIA_CHAIN, SEPOLIA_ASSET_ESCROW));
+        assertFalse(rc.getOrder(id).assetSeen);
+        assertEq(sys.callbackCount(), 0);
+
+        // Correct role, but the other chain's payment escrow.
+        _react(_lockedLogFrom(true, BUYER, SELLER, UNICHAIN_CHAIN, UNICHAIN_PAYMENT_ESCROW));
+        assertFalse(rc.getOrder(id).paymentSeen);
+        assertEq(sys.callbackCount(), 0);
+
+        // Login from a registered escrow with the wrong role is ignored too.
+        _react(_lockedLogFrom(true, BUYER, SELLER, BASE_CHAIN, BASE_ASSET_ESCROW));
+        assertFalse(rc.getOrder(id).paymentSeen);
+
+        _paymentLock();
+        _react(_terminalLogFrom(true, true, SELLER, PAYMENT_AMOUNT, 1, UNICHAIN_CHAIN, UNICHAIN_PAYMENT_ESCROW));
+        assertFalse(rc.getOrder(id).paymentClosed);
+
+        // The genuine venue still works.
+        _react(_lockedLog(false, SELLER, BUYER));
+        assertTrue(rc.getOrder(id).settleRequested);
+        assertEq(sys.callbackCount(), 2);
+    }
+
+    function testNonDefaultVenuesAreUsedInCallbackChainIdAndRecipient() public {
+        bytes32 sepoliaPaymentId = keccak256("venue-sepolia-payment");
+        _createOrderAt(
+            sepoliaPaymentId, SELLER, SEPOLIA_CHAIN, SEPOLIA_PAYMENT_ESCROW, BASE_CHAIN, BASE_ASSET_ESCROW, 120
+        );
+        _useOrder(sepoliaPaymentId);
+        _paymentLock();
+        _assetLock();
+
+        assertEq(sys.callbackCount(), 2);
+        assertEq(_callback(0).chainId, SEPOLIA_CHAIN);
+        assertEq(_callback(0).recipient, SEPOLIA_PAYMENT_ESCROW);
+        assertEq(_callback(1).chainId, BASE_CHAIN);
+        assertEq(_callback(1).recipient, BASE_ASSET_ESCROW);
+        _react(_terminalLog(true, true, SELLER, PAYMENT_AMOUNT, 1));
+        _react(_terminalLog(false, true, BUYER, ASSET_AMOUNT, 1));
+        assertTrue(rc.isClosed(id));
+
+        bytes32 sepoliaAssetId = keccak256("venue-sepolia-asset");
+        _createOrderAt(
+            sepoliaAssetId, SELLER, BASE_CHAIN, BASE_ESCROW, SEPOLIA_CHAIN, SEPOLIA_ASSET_ESCROW, 120
+        );
+        _useOrder(sepoliaAssetId);
+        sys.resetCallbacks();
+        _paymentLock();
+        _assetLock();
+
+        assertEq(sys.callbackCount(), 2);
+        assertEq(_callback(0).chainId, BASE_CHAIN);
+        assertEq(_callback(0).recipient, BASE_ESCROW);
+        assertEq(_callback(1).chainId, SEPOLIA_CHAIN);
+        assertEq(_callback(1).recipient, SEPOLIA_ASSET_ESCROW);
+        _react(_terminalLog(true, true, SELLER, PAYMENT_AMOUNT, 1));
+        _react(_terminalLog(false, true, BUYER, ASSET_AMOUNT, 1));
+        assertTrue(rc.isClosed(id));
+    }
+
     // -------------------------------------------------------------- invalid terms
+
+    function testTermsHashIncludesVenueFields() public {
+        bytes32 first = keccak256("terms-venue-a");
+        bytes32 second = keccak256("terms-venue-b");
+        _createOrderAt(first, SELLER, BASE_CHAIN, BASE_ESCROW, UNICHAIN_CHAIN, UNICHAIN_ESCROW, 120);
+        _createOrderAt(second, SELLER, BASE_CHAIN, BASE_ESCROW, SEPOLIA_CHAIN, SEPOLIA_ASSET_ESCROW, 120);
+
+        HandshakeReactive.Order memory a = rc.getOrder(first);
+        HandshakeReactive.Order memory b = rc.getOrder(second);
+        assertEq(a.buyer, b.buyer);
+        assertEq(a.seller, b.seller);
+        assertEq(a.paymentToken, b.paymentToken);
+        assertEq(a.paymentAmount, b.paymentAmount);
+        assertEq(a.assetToken, b.assetToken);
+        assertEq(a.assetAmount, b.assetAmount);
+        assertEq(a.deadline, b.deadline); // identical terms and timing, different venue
+
+        assertEq(
+            rc.termsHash(first),
+            keccak256(
+                abi.encode(
+                    BUYER,
+                    SELLER,
+                    PAYMENT_TOKEN,
+                    PAYMENT_AMOUNT,
+                    ASSET_TOKEN,
+                    ASSET_AMOUNT,
+                    a.deadline,
+                    BASE_CHAIN,
+                    BASE_ESCROW,
+                    UNICHAIN_CHAIN,
+                    UNICHAIN_ESCROW
+                )
+            )
+        );
+        assertNotEq(rc.termsHash(first), rc.termsHash(second));
+    }
 
     function testTermsHashMismatchMarksInvalidAndRefundsBothLegs() public {
         _useOrder(id);
@@ -395,6 +820,75 @@ contract HandshakeReactiveTest is Test {
         assertEq(injected, address(0));
         assertEq(cbOrder, id);
         assertEq(paymentNonce, 1);
+    }
+
+    /// @dev A valid counterpart leg must never produce a release callback for a
+    ///      deposit whose token/amount/terms/depositor/counterparty differ from
+    ///      the order. This is the core fund-safety invariant of the token-agnostic
+    ///      escrows: the RC is the only authority, so it must never get it wrong.
+    /// @param mismatchedField_ 0=token, 1=amount, 2=terms, 3=depositor, 4=counterparty.
+    /// @param paymentFirst_ Which leg is locked first.
+    /// @param pair_ Which ordered venue the order uses.
+    function testNoReleaseCallbackForMismatchedLeg(
+        uint8 mismatchedField_,
+        bool paymentFirst_,
+        uint8 pair_
+    ) public {
+        mismatchedField_ = uint8(mismatchedField_ % 5);
+        pair_ = uint8(pair_ % 6);
+
+        // Fresh RC so each fuzz case starts with no other orders.
+        rc = new HandshakeReactive{value: 1 ether}();
+        rc.setVenue(BASE_CHAIN, BASE_ESCROW, BASE_ASSET_ESCROW);
+        rc.setVenue(UNICHAIN_CHAIN, UNICHAIN_PAYMENT_ESCROW, UNICHAIN_ESCROW);
+        rc.setVenue(SEPOLIA_CHAIN, SEPOLIA_PAYMENT_ESCROW, SEPOLIA_ASSET_ESCROW);
+
+        (uint256 pChain, address pEscrow, uint256 aChain, address aEscrow) = _venueForPair(pair_);
+        id = keccak256(abi.encode("invariant", mismatchedField_, paymentFirst_, pair_));
+        _createOrderAt(id, SELLER, pChain, pEscrow, aChain, aEscrow, 120);
+        _useOrder(id);
+
+        IReactive.LogRecord memory bad = _lockedLog(!paymentFirst_, paymentFirst_ ? SELLER : BUYER, paymentFirst_ ? BUYER : SELLER);
+        bool isPaymentLeg = !paymentFirst_;
+        if (mismatchedField_ == 0) {
+            bad.data = abi.encode(address(0xBEEF), isPaymentLeg ? PAYMENT_AMOUNT : ASSET_AMOUNT, terms, deadline);
+        } else if (mismatchedField_ == 1) {
+            bad.data = abi.encode(isPaymentLeg ? PAYMENT_TOKEN : ASSET_TOKEN, 1, terms, deadline);
+        } else if (mismatchedField_ == 2) {
+            bad.data = abi.encode(isPaymentLeg ? PAYMENT_TOKEN : ASSET_TOKEN, isPaymentLeg ? PAYMENT_AMOUNT : ASSET_AMOUNT, bytes32("bad"), deadline);
+        } else if (mismatchedField_ == 3) {
+            bad.topic2 = uint256(uint160(STRANGER));
+        } else {
+            bad.topic3 = uint256(uint160(STRANGER));
+        }
+
+        // First a valid leg, then the deliberately mismatched counterpart.
+        IReactive.LogRecord memory good = _lockedLog(paymentFirst_, BUYER, SELLER);
+        // For an asset-first order the "good" depositor is the seller.
+        if (!paymentFirst_) good = _lockedLog(false, SELLER, BUYER);
+        _react(good);
+        _react(bad);
+
+        assertFalse(rc.getOrder(id).settleRequested, "mismatched leg must not request settlement");
+        assertTrue(rc.getOrder(id).refundRequested, "mismatched leg must enter refund path");
+        for (uint256 i = 0; i < sys.callbackCount(); ++i) {
+            bytes4 selector = bytes4(_callback(i).payload);
+            assertNotEq(selector, RELEASE_PAYMENT_SELECTOR, "no payment release for mismatched leg");
+            assertNotEq(selector, RELEASE_ASSET_SELECTOR, "no asset release for mismatched leg");
+        }
+    }
+
+    function _venueForPair(uint8 pair_)
+        internal
+        pure
+        returns (uint256 pChain, address pEscrow, uint256 aChain, address aEscrow)
+    {
+        if (pair_ == 0) return (BASE_CHAIN, BASE_ESCROW, UNICHAIN_CHAIN, UNICHAIN_ESCROW);
+        if (pair_ == 1) return (UNICHAIN_CHAIN, UNICHAIN_PAYMENT_ESCROW, BASE_CHAIN, BASE_ASSET_ESCROW);
+        if (pair_ == 2) return (BASE_CHAIN, BASE_ESCROW, SEPOLIA_CHAIN, SEPOLIA_ASSET_ESCROW);
+        if (pair_ == 3) return (SEPOLIA_CHAIN, SEPOLIA_PAYMENT_ESCROW, BASE_CHAIN, BASE_ASSET_ESCROW);
+        if (pair_ == 4) return (UNICHAIN_CHAIN, UNICHAIN_PAYMENT_ESCROW, SEPOLIA_CHAIN, SEPOLIA_ASSET_ESCROW);
+        return (SEPOLIA_CHAIN, SEPOLIA_PAYMENT_ESCROW, UNICHAIN_CHAIN, UNICHAIN_ESCROW);
     }
 
     // ------------------------------------------------------- deadline / cron logic
@@ -476,7 +970,7 @@ contract HandshakeReactiveTest is Test {
         assertFalse(o.settleRequested);
 
         CallbackRecord memory a = _callback(1);
-        assertEq(a.chainId, 1301);
+        assertEq(a.chainId, UNICHAIN_CHAIN);
         assertEq(a.recipient, UNICHAIN_ESCROW);
         assertEq(a.gasLimit, 500_000);
         assertEq(bytes4(a.payload), REFUND_ASSET_SELECTOR);
@@ -583,6 +1077,78 @@ contract HandshakeReactiveTest is Test {
         assertEq(sys.callbackCount(), 0);
     }
 
+    // --------------------------------------------------------- hard safety invariant
+
+    function testSettleRequestedTerminalInvariant() public {
+        _useOrder(id);
+        _paymentLock();
+        _assetLock(); // settlement requested with nonce 1; both callbacks issued
+        HandshakeReactive.Order memory settled = rc.getOrder(id);
+        assertTrue(settled.settleRequested);
+        assertFalse(settled.refundRequested);
+        assertEq(settled.nonce, 1);
+        assertEq(sys.callbackCount(), 2);
+
+        sys.resetCallbacks();
+        vm.warp(deadline + 1);
+
+        // Expiry + cron may re-request settlement of open legs, never a refund.
+        _react(_cronLog());
+        assertEq(rc.getOrder(id).nonce, 2);
+        assertFalse(rc.getOrder(id).refundRequested);
+        assertGt(sys.callbackCount(), 0);
+        _assertAllCallbacksAreReleases();
+
+        // Permissionless retry is equally forbidden from entering the refund path.
+        sys.resetCallbacks();
+        vm.warp(block.timestamp + 31);
+        vm.prank(STRANGER);
+        rc.retry(id);
+        assertEq(rc.getOrder(id).nonce, 3);
+        assertFalse(rc.getOrder(id).refundRequested);
+        _assertAllCallbacksAreReleases();
+
+        // A late asset lock from a different seller is a race loser: refund that seller only.
+        sys.resetCallbacks();
+        _react(_lockedLog(false, SELLER_TWO, BUYER));
+        assertEq(sys.callbackCount(), 1);
+        assertEq(bytes4(_callback(0).payload), REFUND_ASSET_SELECTOR);
+        (,, address loser, uint64 loserNonce) =
+            abi.decode(_args(_callback(0).payload), (address, bytes32, address, uint64));
+        assertEq(loser, SELLER_TWO);
+        assertEq(loserNonce, 4);
+        assertFalse(rc.getOrder(id).refundRequested);
+        assertTrue(rc.getOrder(id).settleRequested);
+        assertEq(rc.getOrder(id).winner, SELLER);
+        assertEq(rc.getOrder(id).paymentRequestNonce, 3);
+        assertEq(rc.getOrder(id).assetRequestNonce, 3);
+
+        // A duplicate payment lock after settlement is ignored, not refunded.
+        sys.resetCallbacks();
+        _react(_lockedLog(true, BUYER, SELLER));
+        assertEq(sys.callbackCount(), 0);
+        assertFalse(rc.getOrder(id).refundRequested);
+
+        // The race loser's refund event cannot close the winner's asset leg.
+        _react(_terminalLog(false, false, SELLER_TWO, ASSET_AMOUNT, 4));
+        assertFalse(rc.getOrder(id).assetClosed);
+
+        // The winner's settlement callbacks (nonce 3) still confirm.
+        _react(_terminalLog(true, true, SELLER, PAYMENT_AMOUNT, 3));
+        _react(_terminalLog(false, true, BUYER, ASSET_AMOUNT, 3));
+        assertTrue(rc.isClosed(id));
+    }
+
+    function _assertAllCallbacksAreReleases() internal view {
+        for (uint256 i = 0; i < sys.callbackCount(); i++) {
+            bytes4 selector = bytes4(_callback(i).payload);
+            assertTrue(
+                selector == RELEASE_PAYMENT_SELECTOR || selector == RELEASE_ASSET_SELECTOR,
+                "settled order emitted a refund callback"
+            );
+        }
+    }
+
     // ------------------------------------------------------------------ race mode
 
     function testRaceModeWinnerAndLoserRefund() public {
@@ -629,16 +1195,29 @@ contract HandshakeReactiveTest is Test {
         rc.coverDebt();
         assertEq(sys.received(), 0.1 ether);
 
+        // The setUp order is in flight, so unsubscribing must be refused.
+        vm.expectRevert(abi.encodeWithSignature("VenueInUse()"));
         rc.unsubscribeAll();
-        assertFalse(rc.venuesSet());
-        assertEq(sys.unsubscriptionCount(), 7);
+
+        // With a fresh idle RC, unsubscribeAll succeeds and emits real addresses.
+        HandshakeReactive fresh = new HandshakeReactive{value: 1 ether}();
+        fresh.setVenue(BASE_CHAIN, BASE_ESCROW, BASE_ASSET_ESCROW);
+        fresh.setVenue(UNICHAIN_CHAIN, UNICHAIN_PAYMENT_ESCROW, UNICHAIN_ESCROW);
+        fresh.setVenue(SEPOLIA_CHAIN, SEPOLIA_PAYMENT_ESCROW, SEPOLIA_ASSET_ESCROW);
+        rc = fresh;
+        vm.expectEmit(true, true, true, true);
+        emit VenueUnregistered(SEPOLIA_CHAIN, SEPOLIA_PAYMENT_ESCROW, SEPOLIA_ASSET_ESCROW);
+        rc.unsubscribeAll();
+        assertFalse(rc.cronSubscribed());
+        assertEq(rc.registeredChainIds().length, 0);
+        assertEq(rc.subscriptionCount(), 0);
+        assertEq(sys.unsubscriptionCount(), 19); // 3 chains x 6 topics + cron
     }
 
     // --------------------------------------------------------------- open orders
 
     function _createOpenOrder(bytes32 orderId_, uint256 duration_) internal {
-        vm.prank(BUYER);
-        rc.createOrder(orderId_, address(0), PAYMENT_TOKEN, PAYMENT_AMOUNT, ASSET_TOKEN, ASSET_AMOUNT, duration_);
+        _createOrderAt(orderId_, address(0), BASE_CHAIN, BASE_ESCROW, UNICHAIN_CHAIN, UNICHAIN_ESCROW, duration_);
     }
 
     function _openPaymentLock() internal {
@@ -662,14 +1241,25 @@ contract HandshakeReactiveTest is Test {
         assertEq(
             terms,
             keccak256(
-                abi.encode(BUYER, address(0), PAYMENT_TOKEN, PAYMENT_AMOUNT, ASSET_TOKEN, ASSET_AMOUNT, o.deadline)
+                abi.encode(
+                    BUYER,
+                    address(0),
+                    PAYMENT_TOKEN,
+                    PAYMENT_AMOUNT,
+                    ASSET_TOKEN,
+                    ASSET_AMOUNT,
+                    o.deadline,
+                    o.venue.paymentChainId,
+                    o.venue.paymentEscrow,
+                    o.venue.assetChainId,
+                    o.venue.assetEscrow
+                )
             )
         );
 
         // Self-dealing is still rejected for open orders too.
         vm.expectRevert(abi.encodeWithSignature("InvalidSeller()"));
-        vm.prank(BUYER);
-        rc.createOrder(keccak256("open-self"), BUYER, PAYMENT_TOKEN, PAYMENT_AMOUNT, ASSET_TOKEN, ASSET_AMOUNT, 120);
+        _createOrderAt(keccak256("open-self"), BUYER, BASE_CHAIN, BASE_ESCROW, UNICHAIN_CHAIN, UNICHAIN_ESCROW, 120);
         assertEq(rc.orderCount(), 2);
     }
 
@@ -693,7 +1283,7 @@ contract HandshakeReactiveTest is Test {
         assertEq(sys.callbackCount(), 2); // both callbacks in one react tx
 
         CallbackRecord memory p = _callback(0);
-        assertEq(p.chainId, 84532);
+        assertEq(p.chainId, BASE_CHAIN);
         assertEq(p.recipient, BASE_ESCROW);
         assertEq(bytes4(p.payload), RELEASE_PAYMENT_SELECTOR);
         (address injected, bytes32 cbOrder, address recipient, uint256 amount, uint64 nonce) =
@@ -705,7 +1295,7 @@ contract HandshakeReactiveTest is Test {
         assertEq(nonce, 1);
 
         CallbackRecord memory a = _callback(1);
-        assertEq(a.chainId, 1301);
+        assertEq(a.chainId, UNICHAIN_CHAIN);
         assertEq(a.recipient, UNICHAIN_ESCROW);
         assertEq(bytes4(a.payload), RELEASE_ASSET_SELECTOR);
         (address injectedA, bytes32 cbOrderA, address seller, address buyer, uint256 assetAmount, uint64 nonceA) =

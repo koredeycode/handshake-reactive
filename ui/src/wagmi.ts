@@ -2,7 +2,7 @@ import { walletConnect } from '@wagmi/connectors'
 import { createConfig, fallback, http, injected, type CreateConnectorFn } from 'wagmi'
 import { shouldThrow as viemShouldThrow } from 'viem'
 import { baseSepolia } from 'viem/chains'
-import { lasna, unichainSepolia } from './lib/chains'
+import { ethereumSepolia, lasna, unichainSepolia } from './lib/chains'
 
 /**
  * Public RPCs are shared and rate-limited. Key points (see ui/RPC-AUDIT.md):
@@ -65,16 +65,16 @@ function urls(override: string | undefined, defaults: readonly string[]): string
 }
 
 export const wagmiConfig = createConfig({
-  chains: [lasna, baseSepolia, unichainSepolia],
-  // Multicall3 is deployed on Base Sepolia and Unichain Sepolia (verified at
-  // 0xcA11...CA11); Reactive Lasna has none. Chain-keyed batch config is
-  // resolved per client by @wagmi/core/createConfig, so the order board's
-  // parallel readContract calls collapse into one eth_call on the two EVM
-  // chains while Lasna keeps plain eth_calls.
+  chains: [lasna, baseSepolia, unichainSepolia, ethereumSepolia],
+  // Multicall3 is deployed on all three EVM settlement chains at the
+  // canonical 0xcA11...CA11 address; Reactive Lasna has none. Chain-keyed
+  // batch config is resolved per client, so catalog balance reads collapse
+  // into one eth_call where possible while Lasna keeps plain eth_calls.
   batch: {
     [lasna.id]: { multicall: false },
     [baseSepolia.id]: { multicall: true },
     [unichainSepolia.id]: { multicall: true },
+    [ethereumSepolia.id]: { multicall: true },
   },
   connectors: buildConnectors(),
   multiInjectedProviderDiscovery: true,
@@ -99,6 +99,14 @@ export const wagmiConfig = createConfig({
     ),
     // Lasna has only one working public endpoint. lasna.drpc.org does not
     // respond from this environment, so adding it would only add dead time.
+    [ethereumSepolia.id]: fallback(
+      urls(import.meta.env.VITE_SEPOLIA_RPC, [
+        'https://ethereum-sepolia-rpc.publicnode.com',
+        'https://rpc.sepolia.org',
+        'https://sepolia.drpc.org',
+      ]).map((url) => http(url, { timeout: RPC_TIMEOUT, retryCount: 0 })),
+      { rank: false, retryCount: 0, shouldThrow: failoverFast },
+    ),
     [lasna.id]: fallback(
       urls(import.meta.env.VITE_LASNA_RPC, ['https://lasna-rpc.rnk.dev/']).map((url) =>
         http(url, { timeout: RPC_TIMEOUT, retryCount: 0 }),

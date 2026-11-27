@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Handshake preflight — run before every demo/video take (PRD §9e item 9).
-# Checks: debt == 0 and reserves > 0 on all three contracts, wallet balances,
-# and active event subscriptions. All fix commands use Foundry keystore
+# One reactive contract (Lasna) + one venue per chain (Base Sepolia, Unichain
+# Sepolia, Ethereum Sepolia). Checks: debt == 0 and reserves > 0 on the RC and
+# every configured escrow, wallet balances, and the 19 active subscriptions
+# (6 per venue + the single Cron10). All fix commands use Foundry keystore
 # `--account` (no raw private keys, no key material in this file).
 
 set -uo pipefail
@@ -9,12 +11,10 @@ set -uo pipefail
 SYSTEM="0x8888888888888888888888888888888888888888"
 BASE_PROXY="0x476F44b11F5C942c58f4c8E3d0300E5710743585"
 UNICHAIN_PROXY="0x775c9B990ADe401060B78D0e98684eEf8d2466C1"
-# Role-based overrides. Defaults are the live forward market, so existing runs are unchanged.
-# For a reverse market set PAYMENT_* to Unichain and ASSET_* to Base (see docs/MARKETS.md).
+# Callback-proxy overrides per escrow role. Defaults are the live forward market;
+# a reverse market swaps PAYMENT_* / ASSET_* (venue registration itself is chain-wide).
 PAYMENT_PROXY="${PAYMENT_PROXY:-$BASE_PROXY}"
 ASSET_PROXY="${ASSET_PROXY:-$UNICHAIN_PROXY}"
-PAYMENT_CHAIN_ID="${PAYMENT_CHAIN_ID:-84532}"
-ASSET_CHAIN_ID="${ASSET_CHAIN_ID:-1301}"
 PAYMENT_CHAIN_LABEL="${PAYMENT_CHAIN_LABEL:-Base Sepolia}"
 ASSET_CHAIN_LABEL="${ASSET_CHAIN_LABEL:-Unichain Sepolia}"
 SUBSCRIBE_TOPIC="0xe9b38458922e1af481b2244c7c2bb32e465e90c352946042d2a09472fad6c246"
@@ -32,6 +32,13 @@ LASNA_FAUCET="0x9b9BB25f1A81078C544C829c5EB7822d747Cf434"
 RC="${RC_ADDRESS:-}"
 PAYMENT_ESCROW="${PAYMENT_ESCROW_ADDRESS:-}"
 ASSET_ESCROW="${ASSET_ESCROW_ADDRESS:-}"
+# The two counterpart escrows that complete the Base/Unichain venues, plus the
+# Ethereum Sepolia venue (deployed out of band).
+BASE_ASSET_ESCROW="${BASE_ASSET_ESCROW_ADDRESS:-}"
+UNICHAIN_PAYMENT_ESCROW="${UNICHAIN_PAYMENT_ESCROW_ADDRESS:-}"
+SEPOLIA_PAYMENT_ESCROW="${SEPOLIA_PAYMENT_ESCROW_ADDRESS:-}"
+SEPOLIA_ASSET_ESCROW="${SEPOLIA_ASSET_ESCROW_ADDRESS:-}"
+SEPOLIA_PROXY="${SEPOLIA_PROXY:-}"
 DEPLOYER="${DEPLOYER_ADDRESS:-}"
 BUYER="${BUYER_ADDRESS:-}"
 SELLER="${SELLER_ADDRESS:-}"
@@ -41,7 +48,8 @@ MIN_BASE="${MIN_BASE_BALANCE:-10000000000000000}"
 MIN_UNICHAIN="${MIN_UNICHAIN_BALANCE:-5000000000000000}"
 MIN_PAYMENT="${MIN_PAYMENT_BALANCE:-$MIN_BASE}"
 MIN_ASSET="${MIN_ASSET_BALANCE:-$MIN_UNICHAIN}"
-MIN_SUBS="${MIN_ACTIVE_SUBSCRIPTIONS:-7}"
+# 3 venues x 6 escrow topics + 1 Cron10 subscription on the single RC.
+MIN_SUBS="${MIN_ACTIVE_SUBSCRIPTIONS:-19}"
 LOOKBACK="${SUBSCRIPTION_LOOKBACK_BLOCKS:-300000}"
 
 FAILURES=0
@@ -147,16 +155,23 @@ def call(method, params):
 latest = int(call('eth_blockNumber', []), 16)
 start = int(explicit_from, 0) if explicit_from else max(0, latest - int(lookback))
 logs = []
-chunk = 30000  # Lasna caps eth_getLogs range at 30000 blocks.
+chunk = 30000  # Lasna caps eth_getLogs range at 30000 blocks; halve on RPC errors.
+MIN_CHUNK = 1000
 for topic in (subscribe_topic, unsubscribe_topic):
     block = start
     while block <= latest:
         end = min(block + chunk - 1, latest)
-        result = call('eth_getLogs', [{
-            'address': system,
-            'fromBlock': hex(block), 'toBlock': hex(end),
-            'topics': [topic, rc_topic],
-        }])
+        try:
+            result = call('eth_getLogs', [{
+                'address': system,
+                'fromBlock': hex(block), 'toBlock': hex(end),
+                'topics': [topic, rc_topic],
+            }])
+        except Exception:
+            if chunk <= MIN_CHUNK:
+                raise
+            chunk = max(MIN_CHUNK, chunk // 2)
+            continue
         for log in result:
             logs.append((int(log['blockNumber'], 16), int(log['logIndex'], 16), topic, log))
         block = end + 1
@@ -183,13 +198,18 @@ PY
     fail "subscription log query failed: $output" "set SUBSCRIPTION_FROM_BLOCK near the RC deployment block and retry"
     return
   fi
-  local count detail
+  local count detail fix
   count=$(printf '%s\n' "$output" | head -n 1)
   if [ "$count" -ge "$MIN_SUBS" ] 2>/dev/null; then
-    pass "active subscriptions == $count (>= $MIN_SUBS)"
+    pass "active subscriptions == $count (>= $MIN_SUBS; 3 venues x 6 + Cron10)"
   else
-    fail "active subscriptions == $count (< $MIN_SUBS)" \
-      "cast send --rpc-url $REACTIVE_RPC --account $ACCOUNT $RC \"setVenues(uint256,address,uint256,address)\" $PAYMENT_CHAIN_ID $PAYMENT_ESCROW $ASSET_CHAIN_ID $ASSET_ESCROW"
+    fix=$(cat <<EOF
+cast send --rpc-url $REACTIVE_RPC --account $ACCOUNT $RC "setVenue(uint256,address,address)" 84532 ${PAYMENT_ESCROW:-<base payment escrow>} ${BASE_ASSET_ESCROW:-<base asset escrow>}
+cast send --rpc-url $REACTIVE_RPC --account $ACCOUNT $RC "setVenue(uint256,address,address)" 1301 ${UNICHAIN_PAYMENT_ESCROW:-<unichain payment escrow>} ${ASSET_ESCROW:-<unichain asset escrow>}
+cast send --rpc-url $REACTIVE_RPC --account $ACCOUNT $RC "setVenue(uint256,address,address)" 11155111 ${SEPOLIA_PAYMENT_ESCROW:-<sepolia payment escrow>} ${SEPOLIA_ASSET_ESCROW:-<sepolia asset escrow>}
+EOF
+)
+    fail "active subscriptions == $count (< $MIN_SUBS; expected 19 = 6 x 3 venues + Cron10)" "$fix"
   fi
   detail=$(printf '%s\n' "$output" | tail -n +2)
   if [ -n "$detail" ]; then
@@ -204,6 +224,23 @@ printf 'Account (keystore): %s\n' "$ACCOUNT"
 check_health 'Reactive arbiter (Lasna)' "$REACTIVE_RPC" "$SYSTEM" "$RC"
 check_health "Payment escrow ($PAYMENT_CHAIN_LABEL)" "$PAYMENT_RPC" "$PAYMENT_PROXY" "$PAYMENT_ESCROW"
 check_health "Asset escrow ($ASSET_CHAIN_LABEL)" "$ASSET_RPC" "$ASSET_PROXY" "$ASSET_ESCROW"
+# Counterpart roles required by the per-chain venues.
+if [ -n "$BASE_ASSET_ESCROW" ]; then
+  check_health 'Base asset escrow (Base Sepolia)' "$BASE_RPC" "$BASE_PROXY" "$BASE_ASSET_ESCROW"
+fi
+if [ -n "$UNICHAIN_PAYMENT_ESCROW" ]; then
+  check_health 'Unichain payment escrow (Unichain Sepolia)' "$UNICHAIN_RPC" "$UNICHAIN_PROXY" "$UNICHAIN_PAYMENT_ESCROW"
+fi
+if [ -n "$SEPOLIA_PROXY" ]; then
+  if [ -n "$SEPOLIA_PAYMENT_ESCROW" ]; then
+    check_health 'Sepolia payment escrow (Ethereum Sepolia)' "$ETH_SEPOLIA_RPC" "$SEPOLIA_PROXY" "$SEPOLIA_PAYMENT_ESCROW"
+  fi
+  if [ -n "$SEPOLIA_ASSET_ESCROW" ]; then
+    check_health 'Sepolia asset escrow (Ethereum Sepolia)' "$ETH_SEPOLIA_RPC" "$SEPOLIA_PROXY" "$SEPOLIA_ASSET_ESCROW"
+  fi
+elif [ -n "$SEPOLIA_PAYMENT_ESCROW" ] || [ -n "$SEPOLIA_ASSET_ESCROW" ]; then
+  warn 'Ethereum Sepolia escrows configured but SEPOLIA_PROXY unset — skipping their debt/reserves checks'
+fi
 
 printf '\n[Wallet balances]\n'
 check_balance 'Deployer on Lasna' "$REACTIVE_RPC" "$DEPLOYER" "$MIN_LASNA" \

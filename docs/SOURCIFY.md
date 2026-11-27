@@ -1,122 +1,63 @@
-# Sourcify verification — live Handshake deployment (2026-11-26)
+# Sourcify verification — full Option B deployment (2026-11-27)
 
-All five deployed contracts from [`DEPLOYMENT.md`](./DEPLOYMENT.md) were submitted to Sourcify and **verified with an exact match**. No contracts were deployed and no transactions were sent during this work.
+All 11 newly deployed contracts were submitted to Sourcify and verified with an
+**exact match (creation and runtime)**. The two reused chain-local test tokens
+from the earlier deployment are already verified at their existing addresses.
 
-## Setup / diagnosis
+This document replaces the previous verification record; old proof hashes and
+match IDs are discarded per the cutover decision in `personal/EXPANSION-PLAN.md`.
 
-- The preinstalled `forge` (1.3.2-stable) uses Sourcify's **API v1**, which Sourcify removed on 2026-07-07. Both the "already verified" check and the submission endpoint return an HTML 404 page, which forge reports as `error decoding response body; expected value at line 1 column 1` after 5 retries. Verifying that failure is not transient: `GET https://sourcify.dev/server/check-all-by-addresses` returns an `API v1 is removed` response, while `GET /server/health` is healthy.
-- Verification was therefore retried with **forge 1.10.0** (Sourcify API v2 support, foundry-rs/foundry#11438), installed temporarily at `/tmp/handshake-forge/forge`. The system forge install was left unchanged.
-- Compiler: **solc 0.8.30** (`0.8.30+commit.73712a01`), read from the CBOR metadata of the deployed Lasna bytecode (`a2 ... 64solc 43 00 08 1e`) and passed explicitly with `--compiler-version 0.8.30`. Settings come from `foundry.toml` (`via_ir = true`, optimizer enabled, 200 runs, EVM version `prague`).
-- `--skip-is-verified-check` was used because forge's initial `/v2/contract/...` preflight lookup timed out once; the actual submission succeeded. `--creation-transaction-hash` was supplied from [DEPLOYMENT.md](./DEPLOYMENT.md) so Sourcify also could attempt a creation-code match.
-- No `ETHERSCAN_API_KEY` (or equivalent verifier key) is present in the environment, so the Etherscan fallback was neither needed nor possible.
+## Setup
 
-Constructor arguments for the escrows were built with `cast abi-encode`, e.g.:
+- `forge` **1.10.0** (temporarily installed at `/tmp/handshake-forge/forge`) is
+  required: the preinstalled 1.3.2 uses Sourcify's retired API v1.
+- Compiler **solc 0.8.30**, settings from `foundry.toml` (`via_ir = true`,
+  optimizer enabled, 200 runs, EVM version `prague`).
+- Submitted with `--verifier sourcify --skip-is-verified-check
+  --creation-transaction-hash <tx> --constructor-args <args>`.
+- Escrow constructor args are now **two** addresses:
+  `(callbackProxy, reactiveSender)`. ABI-encode with:
+  ```sh
+  cast abi-encode "constructor(address,address)" <PROXY> <RC>
+  ```
 
-```sh
-cast abi-encode "constructor(address,address,address)" \
-  0x476F44b11F5C942c58f4c8E3d0300E5710743585 \
-  0x6d1Da6e00066f4b3A16Fec64010478165BAb34E6 \
-  0x6d1Da6e00066f4b3A16Fec64010478165BAb34E6
-# PaymentEscrow:
-# 0x000000000000000000000000476f44b11f5c942c58f4c8e3d0300e57107435850000000000000000000000006d1da6e00066f4b3a16fec64010478165bab34e60000000000000000000000006d1da6e00066f4b3a16fec64010478165bab34e6
-# AssetEscrow (proxy 0x775c9B99...C1):
-# 0x000000000000000000000000775c9b990ade401060b78d0e98684eef8d2466c10000000000000000000000006d1da6e00066f4b3a16fec64010478165bab34e60000000000000000000000006d1da6e00066f4b3a16fec64010478165bab34e6
-```
+## Verified contracts
 
-## Per-contract results
+| Contract | Chain (ID) | Address | Match ID | Result |
+|---|---|---|---|---|
+| HandshakeReactive | Reactive Lasna (5318007) | `0x037cef4c80c7424b2c7fb45770990b5763f67474` | `60070049` | exact (creation + runtime) |
+| TestAsset | Base Sepolia (84532) | `0x1B07c8fc7FE5984a68b206152cC7d3352deD0f19` | `60059456` | exact (creation + runtime) |
+| PaymentEscrow | Base Sepolia (84532) | `0xebe1bd1c403158aa6a8375b7a63a87b47e8d08d0` | `60069149` | exact (creation + runtime) |
+| AssetEscrow | Base Sepolia (84532) | `0xA1493823ede37E1cE4e3c0B862FC3389e98Bf85b` | `60070039` | exact (creation + runtime) |
+| TestUSD | Unichain Sepolia (1301) | `0xbc2037b06278633968d869253f6f512562f86306` | `60061099` | exact (creation + runtime) |
+| PaymentEscrow | Unichain Sepolia (1301) | `0xa2ea651bd30Eb9212E5BCd272d3a9a877D6dFa38` | `60070047` | exact (creation + runtime) |
+| AssetEscrow | Unichain Sepolia (1301) | `0x037CeF4c80C7424b2c7Fb45770990b5763f67474` | `60070087` | exact (creation + runtime) |
+| TestUSD | Ethereum Sepolia (11155111) | `0xD894D5bAade0C06137D45C616Cb9D2e6cbFa5fD4` | `60059557` | exact (creation + runtime) |
+| TestAsset | Ethereum Sepolia (11155111) | `0x9ffd2f7795fa3c029548c9faeac8da5cdb79047d` | `60059596` | exact (creation + runtime) |
+| PaymentEscrow | Ethereum Sepolia (11155111) | `0x5Ee944ddc392a9729d52702AB4c2e327848533a1` | `60069695` | exact (creation + runtime) |
+| AssetEscrow | Ethereum Sepolia (11155111) | `0xbC2037B06278633968D869253F6F512562F86306` | `60069712` | exact (creation + runtime) |
 
-### 1. HandshakeReactive — Reactive Lasna (5318007)
+Lookup form: `https://sourcify.dev/server/v2/contract/<chainId>/<address>`
 
-- **Address:** `0x6d1Da6e00066f4b3A16Fec64010478165BAb34E6`
-- **Contract:** `src/HandshakeReactive.sol:HandshakeReactive` (no constructor args)
-- **Command:**
+## Creation transactions
 
-```sh
-forge verify-contract --verifier sourcify --compiler-version 0.8.30 \
-  -c 5318007 --skip-is-verified-check \
-  --creation-transaction-hash 0x313eaf094eab7af9626a3d877d600ad3637089c888c01adbcaae10ac1891ca11 \
-  0x6d1Da6e00066f4b3A16Fec64010478165BAb34E6 \
-  src/HandshakeReactive.sol:HandshakeReactive
-```
+| Contract | Chain | Creation tx |
+|---|---|---|
+| HandshakeReactive | Lasna | `0x9d077f8bec6d8cc0fc0370b1df8033cd5f75954af9a23d15a50ba7b516db8e49` |
+| TestAsset | Base Sepolia | `0x1b001602940d5bf6842dc8cda4aa250b7b5398e8356b148fff11db78a4502bf2` |
+| PaymentEscrow | Base Sepolia | `0x78c2bf660aa3c5989d0c869d0dd2a8efdb702b3dd1afb8eb1cfc25249dd08ef8` |
+| AssetEscrow | Base Sepolia | `0xa66616a894638ec407b95bc70d5fe7dd1aa2b31c835fefb0effad05cf0e392a9` |
+| TestUSD | Unichain Sepolia | `0x2e9c6d4b17554feee28697d3e32474e62dad4921b2b1c7e1d29894fff1846d58` |
+| PaymentEscrow | Unichain Sepolia | `0xe9252f36981a1eec01173d0448451fa9a487c3a531b3f5155f763cff5a8a7f86` |
+| AssetEscrow | Unichain Sepolia | `0x8e906fec2b8a924064225742e588262d1f72de8778c42358bc527fb05ced308d` |
+| TestUSD | Ethereum Sepolia | `0xdfab74164ba26524af5ab70dcf00eb87f8b591b879b86bef47e42cbd7f0756b5` |
+| TestAsset | Ethereum Sepolia | `0xdce340fa32242b8cdddb60ace3d24b8b53d8797c9f0531cdfde592761bce9e76` |
+| PaymentEscrow | Ethereum Sepolia | `0xeedb8a54fc4bdb7cc7ac5e2fc7908789de21ae24385cbbcad9e95789eba59ce1` |
+| AssetEscrow | Ethereum Sepolia | `0xa120f430e124dc1960583aad44e8299198e938dcb34d6e4f669fd2543056d739` |
 
-- **Result:** ✅ `exact_match` (runtime), `creationMatch: null` — Sourcify had no creation-code match entry for this chain/tx. Match ID **`59984681`**, verification job `bd0a38dd-8317-4501-ac76-22c53787e89a`, verified at `2026-11-26T07:57:26Z`. Lookup: https://sourcify.dev/server/v2/contract/5318007/0x6d1Da6e00066f4b3A16Fec64010478165BAb34E6
+## Constructor arguments (escrows)
 
-### 2. TestUSD — Base Sepolia (84532)
-
-- **Address:** `0x6d1Da6e00066f4b3A16Fec64010478165BAb34E6`
-- **Contract:** `src/tokens/TestUSD.sol:TestUSD` (no constructor args)
-- **Command:**
-
-```sh
-forge verify-contract --verifier sourcify --compiler-version 0.8.30 \
-  -c 84532 --skip-is-verified-check \
-  --creation-transaction-hash 0x4e7be6c5eb69bbdb8af5f39ba2a7270910d859526bb40bc8c01cbaf837aa8a0e \
-  0x6d1Da6e00066f4b3A16Fec64010478165BAb34E6 \
-  src/tokens/TestUSD.sol:TestUSD
-```
-
-- **Result:** ✅ `exact_match` (creation **and** runtime). Match ID **`59983236`**, verification job `f3287334-2e4c-47e8-9720-907e9fa213e8`, verified at `2026-11-26T07:57:40Z`. Lookup: https://sourcify.dev/server/v2/contract/84532/0x6d1Da6e00066f4b3A16Fec64010478165BAb34E6
-
-### 3. TestAsset — Unichain Sepolia (1301)
-
-- **Address:** `0x6d1Da6e00066f4b3A16Fec64010478165BAb34E6`
-- **Contract:** `src/tokens/TestAsset.sol:TestAsset` (no constructor args)
-- **Command:**
-
-```sh
-forge verify-contract --verifier sourcify --compiler-version 0.8.30 \
-  -c 1301 --skip-is-verified-check \
-  --creation-transaction-hash 0xd8a79e6e325d0709dedbad269849fab1afcefc8e90671f3c1a9897f01290ec3f \
-  0x6d1Da6e00066f4b3A16Fec64010478165BAb34E6 \
-  src/tokens/TestAsset.sol:TestAsset
-```
-
-- **Result:** ✅ `exact_match` (creation **and** runtime). Match ID **`59984701`**, verification job `9bb1bd91-0330-44ae-8f97-87909c5649a9`, verified at `2026-11-26T07:57:43Z`. Lookup: https://sourcify.dev/server/v2/contract/1301/0x6d1Da6e00066f4b3A16Fec64010478165BAb34E6
-
-### 4. PaymentEscrow — Base Sepolia (84532)
-
-- **Address:** `0xc5ca1b349d214855aB62291C8990ECC63881bDAe`
-- **Contract:** `src/PaymentEscrow.sol:PaymentEscrow`
-- **Constructor args:** `(address proxy, address reactive, address token)` = `0x476F44b11F5C942c58f4c8E3d0300E5710743585`, `0x6d1Da6e00066f4b3A16Fec64010478165BAb34E6`, `0x6d1Da6e00066f4b3A16Fec64010478165BAb34E6` (ABI-encoded value shown above).
-- **Command:**
-
-```sh
-forge verify-contract --verifier sourcify --compiler-version 0.8.30 \
-  -c 84532 --skip-is-verified-check \
-  --creation-transaction-hash 0x90fcba6f19109457a19c829757b57e7b92ffcab66b7a92ed1ee43b413ab904e1 \
-  --constructor-args 0x000000000000000000000000476f44b11f5c942c58f4c8e3d0300e57107435850000000000000000000000006d1da6e00066f4b3a16fec64010478165bab34e60000000000000000000000006d1da6e00066f4b3a16fec64010478165bab34e6 \
-  0xc5ca1b349d214855aB62291C8990ECC63881bDAe \
-  src/PaymentEscrow.sol:PaymentEscrow
-```
-
-- **Result:** ✅ `exact_match` (creation **and** runtime). Match ID **`59984702`**, verification job `04c9b662-decf-4a0e-93a3-4c1d2bc9da9a`, verified at `2026-11-26T07:57:44Z`. Lookup: https://sourcify.dev/server/v2/contract/84532/0xc5ca1b349d214855aB62291C8990ECC63881bDAe
-
-### 5. AssetEscrow — Unichain Sepolia (1301)
-
-- **Address:** `0xc5ca1b349d214855aB62291C8990ECC63881bDAe`
-- **Contract:** `src/AssetEscrow.sol:AssetEscrow`
-- **Constructor args:** `(address proxy, address reactive, address token)` = `0x775c9B990ADe401060B78D0e98684eEf8d2466C1`, `0x6d1Da6e00066f4b3A16Fec64010478165BAb34E6`, `0x6d1Da6e00066f4b3A16Fec64010478165BAb34E6` (ABI-encoded value shown above).
-- **Command:**
-
-```sh
-forge verify-contract --verifier sourcify --compiler-version 0.8.30 \
-  -c 1301 --skip-is-verified-check \
-  --creation-transaction-hash 0x9bd973daaca7cedd31eeb4aaf018733285d6b87552382987bdc237f1506e8c29 \
-  --constructor-args 0x000000000000000000000000775c9b990ade401060b78d0e98684eef8d2466c10000000000000000000000006d1da6e00066f4b3a16fec64010478165bab34e60000000000000000000000006d1da6e00066f4b3a16fec64010478165bab34e6 \
-  0xc5ca1b349d214855aB62291C8990ECC63881bDAe \
-  src/AssetEscrow.sol:AssetEscrow
-```
-
-- **Result:** ✅ `exact_match` (creation **and** runtime). Match ID **`59984703`**, verification job `7f854236-fcfb-4132-91fc-f9c3121845d4`, verified at `2026-11-26T07:57:46Z`. Lookup: https://sourcify.dev/server/v2/contract/1301/0xc5ca1b349d214855aB62291C8990ECC63881bDAe
-
-## Summary
-
-| Contract          | Chain (ID)               | Address                                      | Match                      | Match ID   | Job ID                                 |
-| ----------------- | ------------------------ | -------------------------------------------- | -------------------------- | ---------- | -------------------------------------- |
-| HandshakeReactive | Reactive Lasna (5318007) | `0x6d1Da6e00066f4b3A16Fec64010478165BAb34E6` | exact (runtime)            | `59984681` | `bd0a38dd-8317-4501-ac76-22c53787e89a` |
-| TestUSD           | Base Sepolia (84532)     | `0x6d1Da6e00066f4b3A16Fec64010478165BAb34E6` | exact (creation + runtime) | `59983236` | `f3287334-2e4c-47e8-9720-907e9fa213e8` |
-| TestAsset         | Unichain Sepolia (1301)  | `0x6d1Da6e00066f4b3A16Fec64010478165BAb34E6` | exact (creation + runtime) | `59984701` | `9bb1bd91-0330-44ae-8f97-87909c5649a9` |
-| PaymentEscrow     | Base Sepolia (84532)     | `0xc5ca1b349d214855aB62291C8990ECC63881bDAe` | exact (creation + runtime) | `59984702` | `04c9b662-decf-4a0e-93a3-4c1d2bc9da9a` |
-| AssetEscrow       | Unichain Sepolia (1301)  | `0xc5ca1b349d214855aB62291C8990ECC63881bDAe` | exact (creation + runtime) | `59984703` | `7f854236-fcfb-4132-91fc-f9c3121845d4` |
-
-**5/5 verified, all `exact_match`.** The retry succeeded after switching from forge 1.3.2 (removed Sourcify v1 API) to forge 1.10.0 (v2 API). Statuses were confirmed with `GET https://sourcify.dev/server/v2/verify/<job-id>` and `GET https://sourcify.dev/server/v2/contract/<chain>/<address>?fields=all`.
+- Base Sepolia proxy `0x476F44b11F5C942c58f4c8E3d0300E5710743585`
+- Unichain Sepolia proxy `0x775c9B990ADe401060B78D0e98684eEf8d2466C1`
+- Ethereum Sepolia proxy `0xAa14d9Cd0f788Ca23d11805986C1d8bd035D23b4`
+- Reactive sender for all six: `0x037cef4c80c7424b2c7fb45770990b5763f67474`

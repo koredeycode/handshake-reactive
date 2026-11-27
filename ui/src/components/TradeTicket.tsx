@@ -1,23 +1,29 @@
 import type { ReactNode } from 'react'
 import { ArrowDown, ArrowUpDown } from 'lucide-react'
-import type { ChainKey } from '../lib/chains'
-import type { AssetOption } from '../lib/assetPairs'
+import { CHAIN_LABELS, type TradingChainKey } from '../lib/chains'
+import type { ChainTokenOption, TokenSelection } from '../lib/tokenDisplay'
+import { UNVERIFIED_LABEL } from '../lib/tradeTicket'
+import type { TicketKind } from '../lib/tradeTicket'
 import AssetPicker from './AssetPicker'
-import { ChainPill, TokenMark, icon } from './ui'
+import { ChainPill, ChainSelect, TokenMark, icon } from './ui'
 
 export interface TicketSide {
   symbol?: string | null
-  chain: ChainKey
+  chain: TradingChainKey
   amount: string
   onAmountChange?: (value: string) => void
   hint?: ReactNode
-  kind?: 'payment' | 'asset'
+  kind?: TicketKind
   mark?: string | null
   color?: string | null
-  /** Optional compact selector; shown only on trade entry screens. */
-  assetOptions?: AssetOption[]
-  selectedAsset?: string | null
-  onAssetChange?: (address: string) => void
+  /** Curated + confirmed custom options; shown only on trade entry screens. */
+  assetOptions?: ChainTokenOption[]
+  selectedAddress?: string | null
+  onAssetChange?: (token: TokenSelection) => void
+  onChainChange?: (chain: TradingChainKey) => void
+  /** Full address of a custom token, shown next to the pill when selected. */
+  tokenAddress?: string | null
+  verified?: boolean
 }
 
 function AmountTile({ side, direction }: { side: TicketSide; direction: 'pay' | 'receive' }) {
@@ -33,21 +39,32 @@ function AmountTile({ side, direction }: { side: TicketSide; direction: 'pay' | 
       className="tnum w-full min-w-0 flex-1 border-0 bg-transparent p-0 font-mono text-[30px] font-medium leading-tight text-ink-900 outline-none placeholder:text-ink-400/50 sm:text-[34px]"
     />
   )
+  const picker = side.onAssetChange && side.assetOptions
   return (
     <div className="rounded-2xl border border-line bg-paper-50 p-5">
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-xs text-ink-500">{direction === 'pay' ? 'You pay' : 'You receive'}</span>
-        <ChainPill chain={side.chain} />
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-xs text-ink-500">{direction === 'pay' ? 'Payment leg' : 'Asset leg'}</span>
+        <div className="flex items-center gap-1.5">
+          {picker ? (
+            <ChainSelect
+              chain={side.chain}
+              label={direction === 'pay' ? 'Pay' : 'Receive'}
+              onSelect={side.onChainChange ?? (() => {})}
+            />
+          ) : (
+            <ChainPill chain={side.chain} />
+          )}
+        </div>
       </div>
       <div className="mt-3 flex items-center gap-4">
         {amount}
-        {side.onAssetChange && side.assetOptions ? (
+        {picker ? (
           <AssetPicker
             chain={side.chain}
+            kind={side.kind ?? 'payment'}
             label={direction === 'pay' ? 'Pay' : 'Receive'}
-            options={side.assetOptions}
-            selectedAddress={side.selectedAsset}
-            onSelect={side.onAssetChange}
+            options={side.assetOptions ?? []}
+            selectedAddress={side.selectedAddress}
           />
         ) : (
           <span className="flex shrink-0 items-center gap-2 rounded-full border border-line bg-paper-0 py-1.5 pl-1.5 pr-3">
@@ -56,7 +73,20 @@ function AmountTile({ side, direction }: { side: TicketSide; direction: 'pay' | 
           </span>
         )}
       </div>
-      <div className="mt-3 min-h-4 text-[11px] text-ink-400">{side.hint}</div>
+      <div className="mt-3 min-h-4 text-[11px] text-ink-400">
+        {side.hint}
+        {side.tokenAddress && !side.verified && (
+          <span className="ml-2 inline-flex items-center gap-1">
+            <span className="rounded-full border border-warn/25 bg-warn-soft px-1.5 py-0.5 text-[9px] text-warn">
+              {UNVERIFIED_LABEL}
+            </span>
+            <span className="tnum font-mono" title={side.tokenAddress}>{side.tokenAddress}</span>
+          </span>
+        )}
+      </div>
+      {picker && (
+        <p className="mt-1 text-[10px] text-ink-400">Chain: {CHAIN_LABELS[side.chain]}</p>
+      )}
     </div>
   )
 }
@@ -71,7 +101,6 @@ export default function TradeTicket({
   pay: TicketSide
   receive: TicketSide
   footer?: ReactNode
-  /** Set only on trade entry screens; read-only tickets keep a decorative arrow. */
   onReverse?: () => void
 }) {
   return (

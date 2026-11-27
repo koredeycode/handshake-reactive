@@ -2,10 +2,19 @@ import { parseAbi, parseAbiItem, type AbiParameter } from 'viem';
 
 /**
  * Single place for every ABI used by the TypeScript tooling.
- * After the contract branch is merged, compare these with `forge inspect <Contract> abi`
- * and adjust here only. The Solidity-side mirror is `script/HandshakeSupport.sol`.
+ * Mirrors src/HandshakeReactive.sol, src/PaymentEscrow.sol and src/AssetEscrow.sol.
+ * Keep in sync with ui/src/lib/contracts.ts (owned by the UI workstream).
  */
 
+/** `Venue` struct stored inside every Order on the single reactive contract. */
+const venueComponents = [
+  { name: 'paymentChainId', type: 'uint256' },
+  { name: 'paymentEscrow', type: 'address' },
+  { name: 'assetChainId', type: 'uint256' },
+  { name: 'assetEscrow', type: 'address' },
+] as const;
+
+/** 23-field Order tuple, including the trailing `venue` tuple. */
 const orderGetter = {
   type: 'function',
   name: 'getOrder',
@@ -35,11 +44,16 @@ const orderGetter = {
         { name: 'nonce', type: 'uint64' },
         { name: 'lastActionTimestamp', type: 'uint256' },
         { name: 'winner', type: 'address' },
+        { name: 'assetLockCount', type: 'uint8' },
+        { name: 'paymentRequestNonce', type: 'uint64' },
+        { name: 'assetRequestNonce', type: 'uint64' },
+        { name: 'venue', type: 'tuple', components: venueComponents },
       ],
     },
   ],
 } as const;
 
+/** Both escrows expose the same 8-field `Leg` tuple. */
 const legComponents = [
   { name: 'depositor', type: 'address' },
   { name: 'counterparty', type: 'address' },
@@ -72,23 +86,37 @@ const assetLegGetter = {
 
 export const reactiveAbi = [
   ...parseAbi([
-    'function setVenues(uint256 paymentChainId_, address paymentEscrow_, uint256 assetChainId_, address assetEscrow_)',
-    'function createOrder(bytes32 orderId_, address seller_, address paymentToken_, uint256 paymentAmount_, address assetToken_, uint256 assetAmount_, uint256 durationSeconds_)',
+    // Per-chain venue registry (one reactive contract serves every venue).
+    'function setVenue(uint256 chainId_, address paymentEscrow_, address assetEscrow_)',
+    'function venue(uint256 chainId_) view returns (address paymentEscrow_, address assetEscrow_, bool registered_)',
+    'function registeredChainIds() view returns (uint256[] chainIds_)',
+    'function subscriptionCount() view returns (uint256 count_)',
+    'function escrows(address escrow_) view returns (uint256 chainId_, uint8 role_, bool registered_)',
+    'function cronSubscribed() view returns (bool)',
+    // Order lifecycle. createOrder carries both venue chain ids and escrow addresses.
+    'function createOrder(bytes32 orderId_, address seller_, address paymentToken_, uint256 paymentAmount_, uint256 paymentChainId_, address paymentEscrow_, address assetToken_, uint256 assetAmount_, uint256 assetChainId_, address assetEscrow_, uint256 durationSeconds_)',
+    'function cancelOrder(bytes32 orderId_)',
     'function retry(bytes32 orderId_)',
-    'function coverDebt()',
-    'function unsubscribeAll()',
+    'function termsHash(bytes32 orderId_) view returns (bytes32)',
+    'function isClosed(bytes32 orderId_) view returns (bool)',
     'function orderCount() view returns (uint256)',
     'function orderIds(uint256 index_) view returns (bytes32)',
-    'function venues() view returns (uint256 paymentChainId, address paymentEscrow, uint256 assetChainId, address assetEscrow)',
-    'event OrderStateChanged(bytes32 indexed orderId, uint8 stage, uint64 nonce)',
+    'function sweepCursor() view returns (uint256)',
+    'function coverDebt()',
+    'function unsubscribeAll()',
+    // `stage` is a string ("CREATED", "PAYMENT_SEEN", "SETTLE_REQUESTED", ...).
+    'event OrderStateChanged(bytes32 indexed orderId, string stage, uint64 nonce)',
+    'event VenueRegistered(uint256 indexed chainId, address paymentEscrow, address assetEscrow)',
+    'event VenueUnregistered(uint256 indexed chainId, address paymentEscrow, address assetEscrow)',
   ]),
   orderGetter,
 ] as const;
 
-const escrowCommon = [
-  'function lock(bytes32 orderId_, address token_, uint256 amount_, address counterparty_, bytes32 termsHash_, uint256 deadline_)',
-  'function release(address reactive_, bytes32 orderId_, address recipient_, uint256 amount_, uint64 nonce_)',
-  'function refund(address reactive_, bytes32 orderId_, uint64 nonce_)',
+const escrowLock =
+  'function lock(bytes32 orderId_, address token_, uint256 amount_, address counterparty_, bytes32 termsHash_, uint256 deadline_)';
+
+/** Lock/terminal event shapes are identical on both escrows. */
+const escrowEvents = [
   'event PaymentLocked(bytes32 indexed orderId, address indexed depositor, address indexed counterparty, address token, uint256 amount, bytes32 termsHash, uint256 deadline)',
   'event AssetLocked(bytes32 indexed orderId, address indexed depositor, address indexed counterparty, address token, uint256 amount, bytes32 termsHash, uint256 deadline)',
   'event PaymentReleased(bytes32 indexed orderId, address indexed recipient, uint256 amount, uint64 nonce)',
@@ -97,8 +125,37 @@ const escrowCommon = [
   'event AssetRefunded(bytes32 indexed orderId, address indexed depositor, uint256 amount, uint64 nonce)',
 ] as const;
 
-export const paymentEscrowAbi = [...parseAbi(escrowCommon), paymentLegGetter] as const;
-export const assetEscrowAbi = [...parseAbi(escrowCommon), assetLegGetter] as const;
+export const paymentEscrowAbi = [
+  ...parseAbi([
+    escrowLock,
+    'function release(address reactive_, bytes32 orderId_, address recipient_, uint256 amount_, uint64 nonce_)',
+    'function refund(address reactive_, bytes32 orderId_, uint64 nonce_)',
+    ...escrowEvents,
+  ]),
+  paymentLegGetter,
+] as const;
+
+export const assetEscrowAbi = [
+  ...parseAbi([
+    escrowLock,
+    'function release(address reactive_, bytes32 orderId_, address seller_, address recipient_, uint256 amount_, uint64 nonce_)',
+    'function refund(address reactive_, bytes32 orderId_, address seller_, uint64 nonce_)',
+    'function sellersOf(bytes32 orderId_) view returns (address[] sellers_)',
+    ...escrowEvents,
+  ]),
+  assetLegGetter,
+] as const;
+
+/**
+ * Proxy-injected callback payloads from BOTH escrows. The first argument is the
+ * reactive address injected by the callback proxy; callers pass address(0).
+ */
+export const callbackPayloadAbi = parseAbi([
+  'function release(address reactive_, bytes32 orderId_, address recipient_, uint256 amount_, uint64 nonce_)',
+  'function release(address reactive_, bytes32 orderId_, address seller_, address recipient_, uint256 amount_, uint64 nonce_)',
+  'function refund(address reactive_, bytes32 orderId_, uint64 nonce_)',
+  'function refund(address reactive_, bytes32 orderId_, address seller_, uint64 nonce_)',
+]);
 
 /** System contract + callback proxy surface (SYSTEM/proxy share debt and depositTo). */
 export const systemAbi = parseAbi([
@@ -137,6 +194,12 @@ export const paymentRefundedEvent = parseAbiItem(
 );
 export const assetRefundedEvent = parseAbiItem(
   'event AssetRefunded(bytes32 indexed orderId, address indexed depositor, uint256 amount, uint64 nonce)',
+);
+export const orderStateChangedEvent = parseAbiItem(
+  'event OrderStateChanged(bytes32 indexed orderId, string stage, uint64 nonce)',
+);
+export const venueRegisteredEvent = parseAbiItem(
+  'event VenueRegistered(uint256 indexed chainId, address paymentEscrow, address assetEscrow)',
 );
 export const callbackRequestEvent = parseAbiItem(
   'event CallbackRequest(uint256 indexed chainId_, address indexed contract_, address indexed subscriber_, uint8 version_, bytes config_)',

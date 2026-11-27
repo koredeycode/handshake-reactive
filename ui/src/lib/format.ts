@@ -1,4 +1,4 @@
-import { encodeAbiParameters, keccak256, type Hex } from 'viem'
+import type { Hex } from 'viem'
 import type { Order } from './types'
 
 export const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
@@ -44,34 +44,7 @@ export function isEmptyOrder(order?: Order | null): boolean {
   return isZeroAddress(order.buyer) && isZeroAddress(order.seller)
 }
 
-/** Canonical terms preimage: abi.encode(buyer, seller, paymentToken, paymentAmount, assetToken, assetAmount, deadline). */
-export function computeTermsHash(order: Pick<
-  Order,
-  'buyer' | 'seller' | 'paymentToken' | 'paymentAmount' | 'assetToken' | 'assetAmount' | 'deadline'
->): Hex {
-  return keccak256(
-    encodeAbiParameters(
-      [
-        { type: 'address' },
-        { type: 'address' },
-        { type: 'address' },
-        { type: 'uint256' },
-        { type: 'address' },
-        { type: 'uint256' },
-        { type: 'uint256' },
-      ],
-      [
-        order.buyer,
-        order.seller,
-        order.paymentToken,
-        order.paymentAmount,
-        order.assetToken,
-        order.assetAmount,
-        order.deadline,
-      ],
-    ),
-  )
-}
+/** Canonical terms hashing lives in lib/terms.ts (venue-aware) — never duplicate it here. */
 
 export function formatAmount(value: bigint | undefined | null, decimals = 18, symbol?: string): string {
   if (value === undefined || value === null) return '—'
@@ -181,5 +154,8 @@ export async function copyText(text: string): Promise<boolean> {
 }
 
 export function explorerLabel(chain: string): string {
-  return chain === 'lasna' ? 'Reactscan' : chain === 'base' ? 'BaseScan' : 'Uniscan'
+  if (chain === 'lasna') return 'Reactscan'
+  if (chain === 'base') return 'BaseScan'
+  if (chain === 'sepolia') return 'Etherscan'
+  return 'Uniscan'
 }

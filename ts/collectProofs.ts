@@ -11,14 +11,15 @@ import {
   assetRefundedEvent,
   assetReleasedEvent,
   callbackConfigAbi,
+  callbackPayloadAbi,
   callbackRequestEvent,
-  paymentEscrowAbi,
   paymentLockedEvent,
   paymentRefundedEvent,
   paymentReleasedEvent,
 } from './abis.js';
 import {
   BASE_SEPOLIA_CHAIN_ID,
+  ETHEREUM_SEPOLIA_CHAIN_ID,
   LASNA_CHAIN_ID,
   SYSTEM_CONTRACT,
   UNICHAIN_SEPOLIA_CHAIN_ID,
@@ -68,6 +69,7 @@ const clients = {
   [LASNA_CHAIN_ID]: createPublicClient({ chain: undefined, transport: http(rpcUrl(LASNA_CHAIN_ID)) }),
   [BASE_SEPOLIA_CHAIN_ID]: createPublicClient({ chain: undefined, transport: http(rpcUrl(BASE_SEPOLIA_CHAIN_ID)) }),
   [UNICHAIN_SEPOLIA_CHAIN_ID]: createPublicClient({ chain: undefined, transport: http(rpcUrl(UNICHAIN_SEPOLIA_CHAIN_ID)) }),
+  [ETHEREUM_SEPOLIA_CHAIN_ID]: createPublicClient({ chain: undefined, transport: http(rpcUrl(ETHEREUM_SEPOLIA_CHAIN_ID)) }),
 } as const;
 
 function lookback(): bigint {
@@ -161,7 +163,7 @@ export async function collectProofs(orderIdInput: string): Promise<Proof> {
     }
     let decoded: { functionName: string; args: readonly unknown[] } | undefined;
     try {
-      decoded = decodeFunctionData({ abi: paymentEscrowAbi, data: config.payload });
+      decoded = decodeFunctionData({ abi: callbackPayloadAbi, data: config.payload });
     } catch {
       continue;
     }

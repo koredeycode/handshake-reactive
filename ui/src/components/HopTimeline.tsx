@@ -1,7 +1,6 @@
 import { CHAIN_LABELS, type ChainKey } from '../lib/chains'
 import { isZeroAddress, truncate } from '../lib/format'
-import { useMarket } from '../lib/markets'
-import { buildHops } from '../lib/proofs'
+import { buildHops, orderChainKeys } from '../lib/proofs'
 import type { ProofChainKeys } from '../lib/logs'
 import { ChainMark, ChainPill, ConvergenceMark, Panel, TxLink } from './ui'
 import type { Order, ProofData } from '../lib/types'
@@ -113,11 +112,7 @@ export default function HopTimeline({
   order?: Order | null
   proof?: ProofData | null
 }) {
-  const { chainKeyFor } = useMarket()
-  const chainKeys: ProofChainKeys = {
-    payment: chainKeyFor('payment'),
-    asset: chainKeyFor('asset'),
-  }
+  const chainKeys: ProofChainKeys = orderChainKeys(order)
   const hops = buildHops(order, proof, chainKeys)
   const done = hops.filter((hop) => hop.event).length
 

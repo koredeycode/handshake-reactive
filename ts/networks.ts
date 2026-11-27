@@ -5,10 +5,12 @@ import { defineChain, type Address } from 'viem';
 export const LASNA_CHAIN_ID = 5318007;
 export const BASE_SEPOLIA_CHAIN_ID = 84532;
 export const UNICHAIN_SEPOLIA_CHAIN_ID = 1301;
+export const ETHEREUM_SEPOLIA_CHAIN_ID = 11155111;
 
 export const SYSTEM_CONTRACT = '0x8888888888888888888888888888888888888888' as const satisfies Address;
 export const BASE_CALLBACK_PROXY = '0x476F44b11F5C942c58f4c8E3d0300E5710743585' as const satisfies Address;
 export const UNICHAIN_CALLBACK_PROXY = '0x775c9B990ADe401060B78D0e98684eEf8d2466C1' as const satisfies Address;
+export const SEPOLIA_CALLBACK_PROXY = '0xAa14d9Cd0f788Ca23d11805986C1d8bd035D23b4' as const satisfies Address;
 
 export const lasna = defineChain({
   id: LASNA_CHAIN_ID,
@@ -42,10 +44,22 @@ export const unichainSepolia = defineChain({
   testnet: true,
 });
 
+export const ethereumSepolia = defineChain({
+  id: ETHEREUM_SEPOLIA_CHAIN_ID,
+  name: 'Ethereum Sepolia',
+  nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+  rpcUrls: {
+    default: { http: ['https://ethereum-sepolia-rpc.publicnode.com'], webSocket: ['wss://ethereum-sepolia-rpc.publicnode.com'] },
+  },
+  blockExplorers: { default: { name: 'Etherscan', url: 'https://sepolia.etherscan.io' } },
+  testnet: true,
+});
+
 export const CHAINS = {
   [LASNA_CHAIN_ID]: lasna,
   [BASE_SEPOLIA_CHAIN_ID]: baseSepolia,
   [UNICHAIN_SEPOLIA_CHAIN_ID]: unichainSepolia,
+  [ETHEREUM_SEPOLIA_CHAIN_ID]: ethereumSepolia,
 } as const;
 
 export type SupportedChainId = keyof typeof CHAINS;
@@ -54,23 +68,27 @@ export const CHAIN_ENV: Record<SupportedChainId, string> = {
   [LASNA_CHAIN_ID]: 'REACTIVE_RPC',
   [BASE_SEPOLIA_CHAIN_ID]: 'BASE_RPC',
   [UNICHAIN_SEPOLIA_CHAIN_ID]: 'UNICHAIN_RPC',
+  [ETHEREUM_SEPOLIA_CHAIN_ID]: 'SEPOLIA_RPC',
 };
 
 export const WS_ENV: Record<SupportedChainId, string> = {
   [LASNA_CHAIN_ID]: 'REACTIVE_WS',
   [BASE_SEPOLIA_CHAIN_ID]: 'BASE_WS',
   [UNICHAIN_SEPOLIA_CHAIN_ID]: 'UNICHAIN_WS',
+  [ETHEREUM_SEPOLIA_CHAIN_ID]: 'SEPOLIA_WS',
 };
 
 export const EXPLORER_TX: Record<SupportedChainId, string> = {
   [LASNA_CHAIN_ID]: 'https://lasna.reactscan.net/tx',
   [BASE_SEPOLIA_CHAIN_ID]: 'https://sepolia.basescan.org/tx',
   [UNICHAIN_SEPOLIA_CHAIN_ID]: 'https://sepolia.uniscan.xyz/tx',
+  [ETHEREUM_SEPOLIA_CHAIN_ID]: 'https://sepolia.etherscan.io/tx',
 };
 
 export const CALLBACK_PROXY: Record<number, Address> = {
   [BASE_SEPOLIA_CHAIN_ID]: BASE_CALLBACK_PROXY,
   [UNICHAIN_SEPOLIA_CHAIN_ID]: UNICHAIN_CALLBACK_PROXY,
+  [ETHEREUM_SEPOLIA_CHAIN_ID]: SEPOLIA_CALLBACK_PROXY,
 };
 
 export function rpcUrl(chainId: SupportedChainId): string {
@@ -99,6 +117,10 @@ export function deployedAddresses(): {
   assetToken: Address;
   paymentEscrow: Address;
   assetEscrow: Address;
+  baseAssetEscrow: Address;
+  unichainPaymentEscrow: Address;
+  sepoliaPaymentEscrow: Address;
+  sepoliaAssetEscrow: Address;
 } {
   const zero = '0x0000000000000000000000000000000000000000' as Address;
   return {
@@ -107,6 +129,10 @@ export function deployedAddresses(): {
     assetToken: (process.env.ASSET_TOKEN_ADDRESS as Address) ?? zero,
     paymentEscrow: (process.env.PAYMENT_ESCROW_ADDRESS as Address) ?? zero,
     assetEscrow: (process.env.ASSET_ESCROW_ADDRESS as Address) ?? zero,
+    baseAssetEscrow: (process.env.BASE_ASSET_ESCROW_ADDRESS as Address) ?? zero,
+    unichainPaymentEscrow: (process.env.UNICHAIN_PAYMENT_ESCROW_ADDRESS as Address) ?? zero,
+    sepoliaPaymentEscrow: (process.env.SEPOLIA_PAYMENT_ESCROW_ADDRESS as Address) ?? zero,
+    sepoliaAssetEscrow: (process.env.SEPOLIA_ASSET_ESCROW_ADDRESS as Address) ?? zero,
   };
 }
 

@@ -1,7 +1,16 @@
 /**
- * Minimal ABIs for the surfaces the console reads and writes (PRD §6.1–6.3).
- * No bytecode addresses live here: see public/contracts.json + VITE_* overrides.
+ * Minimal ABIs for the surfaces the console reads and writes (full Option B).
+ * ONE HandshakeReactive on Lasna; escrows are token-agnostic and discovered
+ * from the reactive venue registry. No bytecode addresses live here: see
+ * public/markets.json + VITE_* overrides.
  */
+
+const venueComponents = [
+  { name: 'paymentChainId', type: 'uint256' },
+  { name: 'paymentEscrow', type: 'address' },
+  { name: 'assetChainId', type: 'uint256' },
+  { name: 'assetEscrow', type: 'address' },
+] as const
 
 export const reactiveAbi = [
   {
@@ -50,21 +59,53 @@ export const reactiveAbi = [
           { name: 'assetLockCount', type: 'uint8' },
           { name: 'paymentRequestNonce', type: 'uint64' },
           { name: 'assetRequestNonce', type: 'uint64' },
+          { name: 'venue', type: 'tuple', components: venueComponents },
         ],
       },
     ],
   },
   {
     type: 'function',
-    name: 'venues',
+    name: 'venue',
+    stateMutability: 'view',
+    inputs: [{ name: 'chainId_', type: 'uint256' }],
+    outputs: [
+      { name: 'paymentEscrow_', type: 'address' },
+      { name: 'assetEscrow_', type: 'address' },
+      { name: 'registered_', type: 'bool' },
+    ],
+  },
+  {
+    type: 'function',
+    name: 'registeredChainIds',
     stateMutability: 'view',
     inputs: [],
+    outputs: [{ name: '', type: 'uint256[]' }],
+  },
+  {
+    type: 'function',
+    name: 'subscriptionCount',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'escrows',
+    stateMutability: 'view',
+    inputs: [{ name: '', type: 'address' }],
     outputs: [
-      { name: 'paymentChainId', type: 'uint256' },
-      { name: 'paymentEscrow', type: 'address' },
-      { name: 'assetChainId', type: 'uint256' },
-      { name: 'assetEscrow', type: 'address' },
+      { name: '', type: 'uint256' },
+      { name: '', type: 'uint8' },
+      { name: '', type: 'bool' },
     ],
+  },
+  {
+    type: 'function',
+    name: 'termsHash',
+    stateMutability: 'view',
+    inputs: [{ name: '', type: 'bytes32' }],
+    outputs: [{ name: '', type: 'bytes32' }],
   },
   {
     type: 'function',
@@ -75,8 +116,12 @@ export const reactiveAbi = [
       { name: 'seller_', type: 'address' },
       { name: 'paymentToken_', type: 'address' },
       { name: 'paymentAmount_', type: 'uint256' },
+      { name: 'paymentChainId_', type: 'uint256' },
+      { name: 'paymentEscrow_', type: 'address' },
       { name: 'assetToken_', type: 'address' },
       { name: 'assetAmount_', type: 'uint256' },
+      { name: 'assetChainId_', type: 'uint256' },
+      { name: 'assetEscrow_', type: 'address' },
       { name: 'durationSeconds_', type: 'uint256' },
     ],
     outputs: [],
@@ -102,6 +147,35 @@ export const reactiveAbi = [
     inputs: [],
     outputs: [],
   },
+  {
+    type: 'function',
+    name: 'setVenue',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'chainId_', type: 'uint256' },
+      { name: 'paymentEscrow_', type: 'address' },
+      { name: 'assetEscrow_', type: 'address' },
+    ],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'unsubscribeAll',
+    stateMutability: 'nonpayable',
+    inputs: [],
+    outputs: [],
+  },
+] as const
+
+const legComponents = [
+  { name: 'depositor', type: 'address' },
+  { name: 'counterparty', type: 'address' },
+  { name: 'token', type: 'address' },
+  { name: 'amount', type: 'uint256' },
+  { name: 'termsHash', type: 'bytes32' },
+  { name: 'deadline', type: 'uint256' },
+  { name: 'state', type: 'uint8' },
+  { name: 'nonce', type: 'uint64' },
 ] as const
 
 export const paymentEscrowAbi = [
@@ -110,22 +184,7 @@ export const paymentEscrowAbi = [
     name: 'getLeg',
     stateMutability: 'view',
     inputs: [{ name: 'orderId_', type: 'bytes32' }],
-    outputs: [
-      {
-        name: '',
-        type: 'tuple',
-        components: [
-          { name: 'depositor', type: 'address' },
-          { name: 'counterparty', type: 'address' },
-          { name: 'token', type: 'address' },
-          { name: 'amount', type: 'uint256' },
-          { name: 'termsHash', type: 'bytes32' },
-          { name: 'deadline', type: 'uint256' },
-          { name: 'state', type: 'uint8' },
-          { name: 'nonce', type: 'uint64' },
-        ],
-      },
-    ],
+    outputs: [{ name: '', type: 'tuple', components: legComponents }],
   },
   {
     type: 'function',
@@ -143,7 +202,7 @@ export const paymentEscrowAbi = [
   },
 ] as const
 
-/** Race-mode asset escrow: legs keyed by (orderId, seller). Single-leg getter kept as fallback. */
+/** Race-mode asset escrow: legs keyed by (orderId, seller). */
 export const assetEscrowAbi = [
   {
     type: 'function',
@@ -153,44 +212,14 @@ export const assetEscrowAbi = [
       { name: 'orderId_', type: 'bytes32' },
       { name: 'seller_', type: 'address' },
     ],
-    outputs: [
-      {
-        name: '',
-        type: 'tuple',
-        components: [
-          { name: 'depositor', type: 'address' },
-          { name: 'counterparty', type: 'address' },
-          { name: 'token', type: 'address' },
-          { name: 'amount', type: 'uint256' },
-          { name: 'termsHash', type: 'bytes32' },
-          { name: 'deadline', type: 'uint256' },
-          { name: 'state', type: 'uint8' },
-          { name: 'nonce', type: 'uint64' },
-        ],
-      },
-    ],
+    outputs: [{ name: '', type: 'tuple', components: legComponents }],
   },
   {
     type: 'function',
-    name: 'getLeg',
+    name: 'sellersOf',
     stateMutability: 'view',
     inputs: [{ name: 'orderId_', type: 'bytes32' }],
-    outputs: [
-      {
-        name: '',
-        type: 'tuple',
-        components: [
-          { name: 'depositor', type: 'address' },
-          { name: 'counterparty', type: 'address' },
-          { name: 'token', type: 'address' },
-          { name: 'amount', type: 'uint256' },
-          { name: 'termsHash', type: 'bytes32' },
-          { name: 'deadline', type: 'uint256' },
-          { name: 'state', type: 'uint8' },
-          { name: 'nonce', type: 'uint64' },
-        ],
-      },
-    ],
+    outputs: [{ name: '', type: 'address[]' }],
   },
   {
     type: 'function',
@@ -250,9 +279,16 @@ export const erc20Abi = [
     inputs: [],
     outputs: [{ name: '', type: 'string' }],
   },
+  {
+    type: 'function',
+    name: 'name',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'string' }],
+  },
 ] as const
 
-/** Public testnet mint(address,uint256) exposed by both live demo tokens. */
+/** Public testnet mint(address,uint256) exposed by our own demo tokens only. */
 export const mintAbi = [
   {
     type: 'function',
@@ -356,6 +392,17 @@ export const assetRefundedEvent = {
   ],
 } as const
 
+/** OrderStateChanged(bytes32 indexed orderId, string stage, uint64 nonce). */
+export const orderStateChangedEvent = {
+  type: 'event',
+  name: 'OrderStateChanged',
+  inputs: [
+    { name: 'orderId', type: 'bytes32', indexed: true },
+    { name: 'stage', type: 'string', indexed: false },
+    { name: 'nonce', type: 'uint64', indexed: false },
+  ],
+} as const
+
 /**
  * CallbackRequest.configuration is `abi.encode(CallbackConfiguration_V_1_0)`:
  * a bytes blob containing an offset to a struct tuple, so it must be decoded
@@ -392,7 +439,7 @@ export const cron10Event = {
   inputs: [{ name: 'number', type: 'uint256', indexed: false }],
 } as const
 
-/** Callback payloads injected by the RC; first arg is always the authenticated sender slot. */
+/** Callback payloads injected by the RC; first arg is always the sender slot. */
 export const callbackPayloadAbi = [
   {
     type: 'function',
@@ -408,8 +455,6 @@ export const callbackPayloadAbi = [
     outputs: [],
   },
   {
-    // AssetEscrow.release carries seller AND recipient; the first arg is still
-    // the proxy-injected reactive sender slot.
     type: 'function',
     name: 'release',
     stateMutability: 'nonpayable',
@@ -424,7 +469,6 @@ export const callbackPayloadAbi = [
     outputs: [],
   },
   {
-    // AssetEscrow.refund is keyed by seller as well.
     type: 'function',
     name: 'refund',
     stateMutability: 'nonpayable',

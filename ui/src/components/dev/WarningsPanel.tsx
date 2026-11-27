@@ -4,7 +4,8 @@ import { CHAIN_LABELS } from '../../lib/chains'
 import { formatNative } from '../../lib/format'
 import { useMarket, useMarketConfig } from '../../lib/markets'
 import { useHealth, useNativeBalances } from '../../lib/queries'
-import { useTokenDisplay } from '../../lib/tokenDisplay'
+import { useTradeTicket } from '../../lib/tradeTicket'
+import { useVenues } from '../../lib/venues'
 import { AlertCircle, Wallet } from 'lucide-react'
 import { Metric, Panel, Spinner, icon } from '../ui'
 
@@ -30,14 +31,18 @@ const CAVEATS = [
 export default function WarningsPanel() {
   const config = useMarketConfig()
   const { chainKeyFor } = useMarket()
+  const venues = useVenues()
   const health = useHealth()
   const { address } = useAccount()
   const balances = useNativeBalances(address)
-  const paymentToken = useTokenDisplay('payment')
-  const assetToken = useTokenDisplay('asset')
+  const ticket = useTradeTicket()
+  const paymentChain = ticket.chainFor('payment')
+  const assetChain = ticket.chainFor('asset')
+  const paymentToken = ticket.tokenFor('payment')
+  const assetToken = ticket.tokenFor('asset')
 
   const indebted = (health.data ?? []).filter((row) => row.debt !== undefined && row.debt > 0n)
-  const tokenSymbols = [`${paymentToken.name} (${paymentToken.symbol})`, `${assetToken.name} (${assetToken.symbol})`]
+  const tokenSymbols = [`${paymentToken?.name ?? '—'} (${paymentToken?.symbol ?? '—'})`, `${assetToken?.name ?? '—'} (${assetToken?.symbol ?? '—'})`]
   const chainLabelFor = (key: 'lasna' | 'payment' | 'asset') =>
     key === 'lasna' ? CHAIN_LABELS.lasna : CHAIN_LABELS[chainKeyFor(key)]
 
@@ -87,11 +92,11 @@ export default function WarningsPanel() {
         <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {[
             { key: 'lasna' as const, symbol: 'lREACT', balance: balances.lasna?.value },
-            { key: 'payment' as const, symbol: 'ETH', balance: balances.payment?.value },
-            { key: 'asset' as const, symbol: 'ETH', balance: balances.asset?.value },
+            { key: paymentChain, symbol: 'ETH', balance: balances[paymentChain]?.value },
+            { key: assetChain, symbol: 'ETH', balance: balances[assetChain]?.value },
           ].map((item) => (
             <div key={item.key} className="rounded-xl border border-line bg-paper-50 p-4">
-              <div className="text-xs font-medium text-ink-900">{chainLabelFor(item.key)}</div>
+              <div className="text-xs font-medium text-ink-900">{CHAIN_LABELS[item.key]}</div>
               <div className="tnum mt-2 font-mono text-sm text-ink-700">
                 {item.balance !== undefined ? formatNative(item.balance, item.symbol) : '—'}
               </div>
@@ -125,8 +130,11 @@ export default function WarningsPanel() {
         <div className="mt-5 border-t border-line pt-4 font-mono text-[10px] text-ink-400">
           <div>RC {config.reactive.reactiveContract || '— not configured'}</div>
           <div>System {config.reactive.systemContract || '—'}</div>
-          <div>Payment escrow {config.base.paymentEscrow || '—'}</div>
-          <div>Asset escrow {config.unichain.assetEscrow || '—'}</div>
+          {venues.data.map((venue) => (
+            <div key={venue.chainId}>
+              {venue.chainKey} · payment {venue.paymentEscrow ?? '—'} · asset {venue.assetEscrow ?? '—'}
+            </div>
+          ))}
         </div>
       </Panel>
     </div>

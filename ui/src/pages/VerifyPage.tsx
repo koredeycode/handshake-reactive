@@ -16,13 +16,12 @@ import {
   icon,
 } from '../components/ui'
 import { CHAIN_LABELS, EXPLORER_NAMES, txUrl } from '../lib/chains'
-
+import { configuredAddress, useConfig } from '../lib/config'
 import { countdown, formatAmount, formatDeadline, normalizeOrderId, truncate } from '../lib/format'
-import { useEnsureMarket, useMarket, useMarketConfig } from '../lib/markets'
-import { useProof } from '../lib/proofs'
+import { orderChainKeys, useProof } from '../lib/proofs'
 import { useOrder } from '../lib/queries'
 import { deriveStatus } from '../lib/status'
-import { useTokenDisplay } from '../lib/tokenDisplay'
+import { useOrderTokenDisplay } from '../lib/tokenDisplay'
 import { useNow } from '../lib/useNow'
 import type { ChainKey } from '../lib/chains'
 import type { Hex } from 'viem'
@@ -57,35 +56,26 @@ function ExplorerCard({
   )
 }
 
-/** Public, wallet-free detail. Market comes from the hidden link param or inference. */
+/** Public, wallet-free detail. A bare order ID is enough: one RC holds all venues. */
 function VerifyDetail({ orderId }: { orderId: Hex }) {
-  const config = useMarketConfig()
-  const { chainKeyFor } = useMarket()
-  const paymentChain = chainKeyFor('payment')
-  const assetChain = chainKeyFor('asset')
+  const config = useConfig()
   const now = useNow()
-  const paymentToken = useTokenDisplay('payment')
-  const assetToken = useTokenDisplay('asset')
   const orderQuery = useOrder(orderId)
-  const proofQuery = useProof(orderId)
   const order = orderQuery.data
-  const proof = proofQuery.data
+  const proof = useProof(orderId).data
   const status = order ? deriveStatus(order, now) : null
   const notFound = !orderQuery.isLoading && !order
-  const paymentSymbol = paymentToken.symbol
-  const assetSymbol = assetToken.symbol
-  const paymentDecimals = paymentToken.decimals
-  const assetDecimals = assetToken.decimals
+  const paymentToken = useOrderTokenDisplay(order, 'payment')
+  const assetToken = useOrderTokenDisplay(order, 'asset')
+  const chainKeys = orderChainKeys(order)
 
-  if (!config.reactive.reactiveContract) {
+  if (!configuredAddress(config.reactive.reactiveContract)) {
     return <EmptyState title="Order unavailable" message="Order lookup is unavailable in this workspace." />
   }
   if (orderQuery.isLoading) {
     return (
       <Panel>
-        <div className="flex items-center justify-center gap-2 py-12 text-xs text-ink-500">
-          <Spinner /> Loading order
-        </div>
+        <div className="flex items-center justify-center gap-2 py-12 text-xs text-ink-500"><Spinner /> Loading order</div>
       </Panel>
     )
   }
@@ -95,29 +85,29 @@ function VerifyDetail({ orderId }: { orderId: Hex }) {
 
   return (
     <div className="space-y-6">
-      <Panel
-        title={`Order ${truncate(orderId, 12, 8)}`}
-        subtitle="Terms read from the reactive contract"
-        action={status && <StatusPill status={status} />}
-      >
+      <Panel title={`Order ${truncate(orderId, 12, 8)}`} subtitle="Terms read from the single reactive contract" action={status && <StatusPill status={status} />}>
         <TradeTicket
           pay={{
-            symbol: paymentSymbol,
-            chain: paymentChain,
+            symbol: paymentToken.symbol,
+            chain: chainKeys.payment,
             kind: 'payment',
             mark: paymentToken.mark,
             color: paymentToken.color,
-            amount: formatAmount(order?.paymentAmount, paymentDecimals),
-            hint: `You pay · ${CHAIN_LABELS[paymentChain]}`,
+            amount: formatAmount(order?.paymentAmount, paymentToken.decimals),
+            tokenAddress: paymentToken.address,
+            verified: paymentToken.verified,
+            hint: `You pay · ${paymentToken.chainLabel}`,
           }}
           receive={{
-            symbol: assetSymbol,
-            chain: assetChain,
+            symbol: assetToken.symbol,
+            chain: chainKeys.asset,
             kind: 'asset',
             mark: assetToken.mark,
             color: assetToken.color,
-            amount: formatAmount(order?.assetAmount, assetDecimals),
-            hint: `You receive · ${CHAIN_LABELS[assetChain]}`,
+            amount: formatAmount(order?.assetAmount, assetToken.decimals),
+            tokenAddress: assetToken.address,
+            verified: assetToken.verified,
+            hint: `You receive · ${assetToken.chainLabel}`,
           }}
         />
         <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -126,14 +116,19 @@ function VerifyDetail({ orderId }: { orderId: Hex }) {
           <Metric label="Deadline" value={formatDeadline(order?.deadline ?? null)} />
           <Metric label="Time remaining" value={countdown(order?.deadline ?? null, now)} />
         </div>
+        {order && (
+          <p className="mt-4 border-t border-line pt-4 text-[10px] leading-relaxed text-ink-400">
+            Venue · payment {CHAIN_LABELS[chainKeys.payment]} ({order.venue.paymentEscrow}) · asset {CHAIN_LABELS[chainKeys.asset]} ({order.venue.assetEscrow})
+          </p>
+        )}
       </Panel>
 
       <div>
         <h2 className="mb-3 text-sm font-medium text-ink-900">Explorers</h2>
         <div className="grid gap-4 md:grid-cols-3">
-          <ExplorerCard chain={paymentChain} event={proof?.paymentLocked} description={`Payment locked on ${CHAIN_LABELS[paymentChain]}`} />
+          <ExplorerCard chain={chainKeys.payment} event={proof?.paymentLocked} description={`Payment locked on ${CHAIN_LABELS[chainKeys.payment]}`} />
           <ExplorerCard chain="lasna" event={proof?.reactive} description={`Settlement decision on ${CHAIN_LABELS.lasna}`} />
-          <ExplorerCard chain={assetChain} event={proof?.assetLocked} description={`Asset locked on ${CHAIN_LABELS[assetChain]}`} />
+          <ExplorerCard chain={chainKeys.asset} event={proof?.assetLocked} description={`Asset locked on ${CHAIN_LABELS[chainKeys.asset]}`} />
         </div>
       </div>
 
@@ -148,7 +143,6 @@ export default function VerifyPage() {
   const [input, setInput] = useState(param ?? '')
   const [localError, setLocalError] = useState<string | null>(null)
   const orderId = normalizeOrderId(param)
-  const { ready, isLoading } = useEnsureMarket(orderId)
 
   useEffect(() => {
     setInput(param ?? '')
@@ -193,17 +187,7 @@ export default function VerifyPage() {
 
       {!param ? (
         <EmptyState title="Enter an order ID" message="Paste an ID above to see the settlement trail." />
-      ) : !orderId ? null : !ready ? (
-        <Panel>
-          {isLoading ? (
-            <div className="flex items-center justify-center gap-2 py-12 text-xs text-ink-500">
-              <Spinner /> Finding the order's market
-            </div>
-          ) : (
-            <EmptyState title="No order found" message="Check the order ID and try again." />
-          )}
-        </Panel>
-      ) : (
+      ) : !orderId ? null : (
         <VerifyDetail orderId={orderId} />
       )}
     </div>

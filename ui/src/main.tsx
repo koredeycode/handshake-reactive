@@ -5,6 +5,7 @@ import { WagmiProvider } from 'wagmi'
 import { BrowserRouter } from 'react-router-dom'
 import App from './App'
 import { wagmiConfig } from './wagmi'
+import { TradeTicketProvider } from './lib/tradeTicket'
 import './index.css'
 
 const queryClient = new QueryClient({
@@ -28,7 +29,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <WagmiProvider config={wagmiConfig}>
       <QueryClientProvider client={queryClient}>
         <BrowserRouter basename={import.meta.env.BASE_URL === '/' ? undefined : import.meta.env.BASE_URL}>
-          <App />
+          <TradeTicketProvider>
+            <App />
+          </TradeTicketProvider>
         </BrowserRouter>
       </QueryClientProvider>
     </WagmiProvider>
