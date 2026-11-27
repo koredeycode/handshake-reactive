@@ -58,10 +58,33 @@ npm install --prefix api
 cp api/.env.example api/.env          # fill DATABASE_URL and per-chain RPC/WS URLs
 npm run db:generate --prefix api      # regenerate SQL after schema edits
 npm run db:migrate --prefix api       # apply api/migrations/*.sql
+set -a && . ./api/.env && set +a      # REQUIRED: tsx does not auto-load .env
 npm run dev --prefix api              # API + indexer on :8080
 npm run typecheck --prefix api
 npm run build --prefix api
 ```
+
+**Always run the app locally before a Fly deploy.** The `set -a` export above is
+easy to miss — without it the API silently falls back to
+`postgresql://…/handshake` and exits with `database "handshake" does not exist`.
+Leave `RESEND_API_KEY` unset locally so smoke tests never send operator emails.
+
+Pre-deploy smoke checklist (all should pass locally before pushing to `main`):
+
+```bash
+curl -s localhost:8080/health | head -c 400                 # ok:true, database:true
+curl -s 'localhost:8080/orders?limit=2' | head -c 200       # valid JSON
+curl -s 'localhost:8080/tokens?chainId=84532' | head -c 200 # catalog
+timeout 6 curl -sN localhost:8080/stream                    # retry + event: hello
+npm run build --prefix api                                  # refresh dist/ for Fly
+```
+
+The UI dev server uses the API default `http://localhost:8080` when
+`VITE_API_URL` is unset; in Vercel it is set to the Fly URL. Expect the Lasna
+WSS subscription to fail locally and on Fly — its events arrive through the
+5-minute HTTP gap-fill. A missing `RESEND_API_KEY` locally logs
+`operator alert (Resend not configured)` instead of sending email; on Fly it is
+set, so verify `ALERT_FROM_EMAIL` is a verified Resend sender before deploying.
 
 `DATABASE_URL` must be the **Supabase transaction-pooler connection string**
 (with `?sslmode=require`), not the direct/session connection: the client uses
