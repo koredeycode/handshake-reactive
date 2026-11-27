@@ -1,7 +1,7 @@
 {
   "_comment": "Chain + token catalog for full Option B. ONE reactive contract on Lasna registers a payment/asset escrow pair per chain via setVenue(); escrow addresses are read from that registry at runtime and MUST NOT be hardcoded here. Set reactiveContract from the new deployment (or VITE_RC_ADDRESS). The Sepolia callback proxy is pinned by the deployment spec.",
   "version": 2,
-  "reactiveContract": "0xC23949a2d25bAA110306a0Adc3E5e0fcB6586989",
+  "reactiveContract": "0x037cef4c80c7424b2c7fb45770990b5763f67474",
   "systemContract": "0x8888888888888888888888888888888888888888",
   "legacySystemContract": "0x0000000000000000000000000000000000fffFfF",
   "scan": {

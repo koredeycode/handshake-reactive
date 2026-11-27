@@ -1,0 +1,21 @@
+import { chromium } from '/home/yusufakoredey/merview/node_modules/playwright/index.mjs';
+const browser = await chromium.launch({ headless: true, executablePath: '/usr/bin/google-chrome', args: ['--no-sandbox'] });
+const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+page.on('console', (m) => { if (m.type() === 'error') console.log('CONSOLE ERROR:', m.text().slice(0, 300)); });
+page.on('pageerror', (e) => console.log('PAGE ERROR:', e.message.slice(0, 300)));
+await page.goto('http://localhost:5173/new', { waitUntil: 'networkidle' });
+await page.waitForTimeout(2000);
+const tokens = await page.evaluate(async () => {
+  const r = await fetch('/tokens.json');
+  return { status: r.status, json: await r.json() };
+});
+console.log('tokens.json:', tokens.status, JSON.stringify(tokens.json).slice(0, 400));
+const btn = page.locator('button[aria-label*="asset on"]').nth(1);
+console.log('picker button:', await btn.count(), await btn.getAttribute('aria-label'), await btn.innerText().catch(() => ''));
+await btn.click();
+await page.waitForTimeout(500);
+const options = await page.locator('[role="option"]');
+console.log('option count:', await options.count());
+for (let i = 0; i < Math.min(await options.count(), 6); i++) console.log(' option:', (await options.nth(i).innerText()).replace(/\n/g, ' | ').slice(0, 160));
+await page.screenshot({ path: '/tmp/dropdown.png' });
+await browser.close();

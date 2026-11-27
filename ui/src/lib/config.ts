@@ -72,7 +72,7 @@ export function withOverrides(config: AppConfig): AppConfig {
 
 const FALLBACK: AppConfig = {
   reactive: {
-    reactiveContract: '0xC23949a2d25bAA110306a0Adc3E5e0fcB6586989',
+    reactiveContract: '0x037cef4c80c7424b2c7fb45770990b5763f67474',
     systemContract: '0x8888888888888888888888888888888888888888',
     legacySystemContract: '0x0000000000000000000000000000000000ffffff',
   },

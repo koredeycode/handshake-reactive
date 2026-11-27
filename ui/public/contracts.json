@@ -1,7 +1,7 @@
 {
   "_comment": "Optional build-time overrides. Full Option B uses ONE reactive contract and reads escrows from its venue registry, so there are no per-role escrow/token fields any more. Fill reactiveContract from the new deployment or set VITE_RC_ADDRESS.",
   "reactive": {
-    "reactiveContract": "0xC23949a2d25bAA110306a0Adc3E5e0fcB6586989",
+    "reactiveContract": "0x037cef4c80c7424b2c7fb45770990b5763f67474",
     "systemContract": "0x8888888888888888888888888888888888888888",
     "legacySystemContract": "0x0000000000000000000000000000000000fffFfF"
   }
