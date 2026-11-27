@@ -6,7 +6,7 @@ import { ArrowUpRight, RefreshCw } from 'lucide-react'
 import { CHAIN_IDS, EXPLORER_NAMES, addressUrl } from '../lib/chains'
 import { configuredAddress, useConfig } from '../lib/config'
 import { reactiveAbi } from '../lib/contracts'
-import { countdown, formatAmount, formatDeadline, isZeroAddress, truncate } from '../lib/format'
+import { countdown, dashIfMissing, formatAmount, formatDeadline, isZeroAddress, truncate } from '../lib/format'
 import { logClient } from '../lib/logs'
 import { orderChainKeys, useProof } from '../lib/proofs'
 import { useLeg, useOrder } from '../lib/queries'
@@ -138,7 +138,7 @@ export default function OrderDetail({ orderId }: { orderId: Hex }) {
             kind: 'payment',
             mark: paymentToken.mark,
             color: paymentToken.color,
-            amount: formatAmount(order.paymentAmount, paymentDecimals),
+            amount: dashIfMissing(order.missing?.paymentAmount, formatAmount(order.paymentAmount, paymentDecimals)),
             tokenAddress: paymentToken.address,
             verified: paymentToken.verified,
             hint: `${paymentToken.name} · payment leg on ${paymentToken.chainLabel}`,
@@ -149,7 +149,7 @@ export default function OrderDetail({ orderId }: { orderId: Hex }) {
             kind: 'asset',
             mark: assetToken.mark,
             color: assetToken.color,
-            amount: formatAmount(order.assetAmount, assetDecimals),
+            amount: dashIfMissing(order.missing?.assetAmount, formatAmount(order.assetAmount, assetDecimals)),
             tokenAddress: assetToken.address,
             verified: assetToken.verified,
             hint: `${assetToken.name} · asset leg on ${assetToken.chainLabel}`,
@@ -161,13 +161,13 @@ export default function OrderDetail({ orderId }: { orderId: Hex }) {
         <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <Metric
             label="Buyer"
-            value={truncate(order.buyer, 8, 6)}
-            hint={<ExternalLink href={addressUrl(chainKeys.payment, order.buyer)} className="inline-flex min-h-10 items-center text-[12px]">{EXPLORER_NAMES[chainKeys.payment]}</ExternalLink>}
+            value={dashIfMissing(order.missing?.buyer, truncate(order.buyer, 8, 6))}
+            hint={!order.missing?.buyer && <ExternalLink href={addressUrl(chainKeys.payment, order.buyer)} className="inline-flex min-h-10 items-center text-[12px]">{EXPLORER_NAMES[chainKeys.payment]}</ExternalLink>}
           />
           <Metric
             label="Seller"
-            value={open ? 'Open to any seller' : truncate(order.seller, 8, 6)}
-            hint={!open && <ExternalLink href={addressUrl(chainKeys.asset, order.seller)} className="inline-flex min-h-10 items-center text-[12px]">{EXPLORER_NAMES[chainKeys.asset]}</ExternalLink>}
+            value={open ? 'Open to any seller' : dashIfMissing(order.missing?.seller, truncate(order.seller, 8, 6))}
+            hint={!open && !order.missing?.seller && <ExternalLink href={addressUrl(chainKeys.asset, order.seller)} className="inline-flex min-h-10 items-center text-[12px]">{EXPLORER_NAMES[chainKeys.asset]}</ExternalLink>}
           />
           {open && (
             <>
@@ -234,9 +234,9 @@ export default function OrderDetail({ orderId }: { orderId: Hex }) {
           details={[
             { label: 'Order', value: truncate(orderId, 12, 10) },
             { label: 'Action', value: confirmAction === 'cancel' ? 'Cancel order' : 'Retry settlement' },
-            { label: 'Payment', value: `${formatAmount(order.paymentAmount, paymentDecimals, paymentSymbol)} · ${paymentToken.chainLabel}` },
-            { label: 'Asset', value: `${formatAmount(order.assetAmount, assetDecimals, assetSymbol)} · ${assetToken.chainLabel}` },
-            { label: 'Counterparty', value: open ? 'Open to any seller' : truncate(order.seller, 10, 8) },
+            { label: 'Payment', value: `${dashIfMissing(order.missing?.paymentAmount, formatAmount(order.paymentAmount, paymentDecimals, paymentSymbol))} · ${paymentToken.chainLabel}` },
+            { label: 'Asset', value: `${dashIfMissing(order.missing?.assetAmount, formatAmount(order.assetAmount, assetDecimals, assetSymbol))} · ${assetToken.chainLabel}` },
+            { label: 'Counterparty', value: open ? 'Open to any seller' : dashIfMissing(order.missing?.seller, truncate(order.seller, 10, 8)) },
             { label: 'Deadline', value: formatDeadline(order.deadline) },
             { label: 'Network', value: 'Reactive Lasna' },
           ]}

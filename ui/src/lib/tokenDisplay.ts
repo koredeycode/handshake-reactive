@@ -171,8 +171,14 @@ export function useOrderTokenDisplay(order?: Order | null, kind: 'payment' | 'as
   const chainId = kind === 'payment' ? order?.venue.paymentChainId : order?.venue.assetChainId
   const chain = (chainId ? chainKeyFromId(chainId) : null) ?? 'base'
   const address = (kind === 'payment' ? order?.paymentToken : order?.assetToken) ?? null
-  const entry = deriveTokenDisplay(chain, address, registry.data)
-  return { ...entry, address, chain, chainLabel: CHAIN_LABELS[chain] }
+  const field = kind === 'payment' ? 'paymentToken' : 'assetToken'
+  const missing = Boolean(order?.missing?.[field])
+  // A null token was mapped to the zero address by the API view model; do not
+  // turn that placeholder into a derived "00" mark or a truncated zero address.
+  const entry: TokenDisplayEntry = missing
+    ? { name: '—', symbol: '—', decimals: 18, mark: '—', color: '', verified: false }
+    : deriveTokenDisplay(chain, address, registry.data)
+  return { ...entry, address: missing ? null : address, chain, chainLabel: CHAIN_LABELS[chain], missing }
 }
 
 /** Presentation for the token currently selected on a trade ticket side. */

@@ -39,6 +39,11 @@ export function isZeroAddress(value?: string | null): boolean {
   return !value || value.toLowerCase() === ZERO_ADDRESS
 }
 
+/** Show a neutral placeholder only for API-null fields, never for a real zero. */
+export function dashIfMissing(missing: boolean | undefined, value: string): string {
+  return missing ? '—' : value
+}
+
 export function isEmptyOrder(order?: Order | null): boolean {
   if (!order) return true
   return isZeroAddress(order.buyer) && isZeroAddress(order.seller)

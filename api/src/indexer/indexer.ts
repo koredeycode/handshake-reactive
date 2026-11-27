@@ -8,15 +8,21 @@ import {
   type Hex,
 } from 'viem';
 import { env, httpUrlFor, wsUrlFor } from '../config.js';
-import { CHAIN_CONFIGS, type ChainConfig } from '../contracts.js';
+import { CHAIN_CONFIGS, REACTIVE_CONTRACT, type ChainConfig } from '../contracts.js';
 import { db } from '../db/client.js';
 import { indexerState } from '../db/schema.js';
 import { alertWsFailure } from '../alerts/resend.js';
 import { log } from '../lib/log.js';
 import { metrics } from '../lib/metrics.js';
 import { backoffDelay, isRateLimitError, withRetry } from '../lib/retry.js';
-import { decodeRawLog, type RawLog } from './decode.js';
-import { emitTransferBalances, handleReorg, ingestLog, updateIndexerStatus } from './ingest.js';
+import { decodeRawLog, type DecodedEvent, type RawLog } from './decode.js';
+import {
+  emitTransferBalances,
+  handleReorg,
+  ingestLog,
+  reconcilePartialOrderTerms,
+  updateIndexerStatus,
+} from './ingest.js';
 import { indexerStats } from './stats.js';
 
 type WsClient = ReturnType<typeof createWsClient>;
@@ -62,9 +68,22 @@ function isRangeError(error: unknown): boolean {
   return message.includes('range') || message.includes('too many') || message.includes('block not found');
 }
 
+/**
+ * CallbackRequest is emitted by the system contract for every subscriber, not
+ * just ours. The payload's orderId belongs to the subscriber that requested it,
+ * so a foreign subscriber must never become one of our orders.
+ */
+function isForeignCallback(event: DecodedEvent): boolean {
+  if (event.name !== 'callbackRequest') return false;
+  const subscriber = typeof event.fields.subscriber === 'string'
+    ? event.fields.subscriber.toLowerCase()
+    : undefined;
+  return subscriber !== REACTIVE_CONTRACT.toLowerCase();
+}
+
 async function handleLog(chain: ChainConfig, raw: RawLog): Promise<void> {
   const event = decodeRawLog(raw, chain.chainId);
-  if (!event) return;
+  if (!event || isForeignCallback(event)) return;
   try {
     // Cron10 is a liveness heartbeat, not event history: never persist an
     // order_events row, publish to the bus or fold it into an order. Ignore
@@ -224,6 +243,12 @@ export async function startIndexer(): Promise<void> {
   if (started) return;
   stopping = false;
   started = true;
+  // Repair pre-existing partial rows once per process; failure is non-fatal.
+  const reconciliation = reconcilePartialOrderTerms();
+  backfillTasks.add(reconciliation);
+  void reconciliation.finally(() => backfillTasks.delete(reconciliation)).catch((error) => {
+    log.warn({ err: error }, 'partial terms reconciliation task rejected');
+  });
   for (const chain of CHAIN_CONFIGS) {
     try {
       await updateIndexerStatus(chain.chainId, 'connecting');

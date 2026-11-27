@@ -58,6 +58,17 @@ function escrowPair(row: { paymentChainId: number | null; assetChainId: number |
 /** API row → the existing Order view model used across the UI. */
 export function mapApiOrder(row: ApiOrderRow, venues: VenueRegistration[]): Order {
   const seller = row.seller ?? ZERO_ADDRESS
+  // The view model uses zero-like placeholders for absent fields (it mirrors
+  // the on-chain tuple). Remember which ones were actually null so the UI can
+  // show "—" without hiding genuine numeric zero values.
+  const missing: NonNullable<Order['missing']> = {}
+  if (row.buyer == null) missing.buyer = true
+  if (row.seller == null) missing.seller = true
+  if (row.paymentToken == null) missing.paymentToken = true
+  if (row.assetToken == null) missing.assetToken = true
+  if (row.paymentAmount == null) missing.paymentAmount = true
+  if (row.assetAmount == null) missing.assetAmount = true
+  if (row.winner == null) missing.winner = true
   return {
     buyer: (row.buyer ?? ZERO_ADDRESS) as Hex,
     seller: seller as Hex,
@@ -83,6 +94,7 @@ export function mapApiOrder(row: ApiOrderRow, venues: VenueRegistration[]): Orde
     paymentRequestNonce: BigInt(row.paymentRequestNonce ?? 0),
     assetRequestNonce: BigInt(row.assetRequestNonce ?? 0),
     venue: escrowPair(row, venues),
+    missing: Object.keys(missing).length > 0 ? missing : undefined,
   }
 }
 

@@ -13,6 +13,16 @@ export interface Venue {
   assetEscrow: Hex
 }
 
+/** Fields that were null in the API row (as opposed to a real zero value). */
+export type MissingOrderField =
+  | 'buyer'
+  | 'seller'
+  | 'paymentToken'
+  | 'assetToken'
+  | 'paymentAmount'
+  | 'assetAmount'
+  | 'winner';
+
 /** Mirrors the Order tuple from src/HandshakeReactive.sol (Option B). */
 export interface Order {
   buyer: Hex
@@ -38,6 +48,9 @@ export interface Order {
   paymentRequestNonce: bigint
   assetRequestNonce: bigint
   venue: Venue
+  /** Null API fields keep their zero-like view-model placeholder, but are
+   *  flagged here so displays can show "—" instead of a misleading zero. */
+  missing?: Partial<Record<MissingOrderField, true>>
 }
 
 export interface Leg {
