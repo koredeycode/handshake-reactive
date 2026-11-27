@@ -5,7 +5,7 @@ import { useAccount } from 'wagmi'
 import { TRADING_CHAIN_KEYS, type TradingChainKey } from '../lib/chains'
 import { countdown, formatAmount, formatDeadline, isZeroAddress, truncate } from '../lib/format'
 import { useAllOrders, type AggregatedOrderRow } from '../lib/queries'
-import { deriveStatus, isOpenOrder } from '../lib/status'
+import { isOpenOrder, useOrderStatus } from '../lib/status'
 import { useOrderTokenDisplay } from '../lib/tokenDisplay'
 import { pairId, venueOfOrder } from '../lib/venue'
 import { useNow } from '../lib/useNow'
@@ -30,7 +30,7 @@ function OrderRow({ row, now }: { row: AggregatedOrderRow; now: number }) {
   const asset = useOrderTokenDisplay(order, 'asset')
   const paymentVenue = venueOfOrder(order, 'payment')
   const assetVenue = venueOfOrder(order, 'asset')
-  const status = deriveStatus(order, now)
+  const status = useOrderStatus(order)
   const steps = Number(order.paymentSeen) + Number(order.assetSeen) + (order.settleRequested ? 1 : 0)
   const expired = countdown(order.deadline, now) === 'expired'
   const open = isOpenOrder(order)
@@ -58,7 +58,7 @@ function OrderRow({ row, now }: { row: AggregatedOrderRow; now: number }) {
               </span>
             )}
           </span>
-          <StatusPill status={status} />
+          <StatusPill status={status!} />
         </div>
 
         <div className="mt-3 flex flex-wrap items-end justify-between gap-4">

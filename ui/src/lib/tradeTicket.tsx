@@ -6,9 +6,11 @@ import {
   useState,
   type ReactNode,
 } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { useReadContracts } from 'wagmi'
 import { isAddress, type Hex } from 'viem'
-import { CHAIN_IDS, CHAIN_LABELS, type TradingChainKey } from './chains'
+import { fetchTokens, useApiBaseUrl, validateToken } from './api'
+import { CHAIN_IDS, CHAIN_LABELS, chainKeyFromId, type TradingChainKey } from './chains'
 import {
   curatedSelection,
   customSelection,
@@ -62,6 +64,40 @@ export function TradeTicketProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<TradeTicketState>(initialState)
   const listPayment = useChainTokens(state.paymentChain)
   const listAsset = useChainTokens(state.assetChain)
+  const base = useApiBaseUrl()
+
+  /** Custom tokens already validated on the API are treated as confirmed. */
+  const catalog = useQuery({
+    queryKey: ['tokens'],
+    queryFn: () => fetchTokens({}, base),
+    staleTime: 60_000,
+    retry: 1,
+  })
+  const persistedCustom = useMemo(() => {
+    const out: Partial<Record<TradingChainKey, TokenSelection[]>> = {}
+    for (const row of catalog.data?.tokens ?? []) {
+      if (row.source !== 'custom' || !row.symbol || row.decimals === null) continue
+      const chain = chainKeyFromId(row.chainId)
+      if (!chain || chain === 'lasna') continue
+      out[chain] = [
+        ...(out[chain] ?? []),
+        customSelection(row.address as Hex, { name: row.symbol, symbol: row.symbol, decimals: row.decimals }),
+      ]
+    }
+    return out
+  }, [catalog.data])
+
+  const customTokens = useMemo(() => {
+    const out: Partial<Record<TradingChainKey, TokenSelection[]>> = { ...persistedCustom }
+    for (const [chain, tokens] of Object.entries(state.customTokens) as Array<[TradingChainKey, TokenSelection[]]>) {
+      const existing = out[chain] ?? []
+      out[chain] = [
+        ...existing,
+        ...tokens.filter((token) => !existing.some((item) => item.address.toLowerCase() === token.address.toLowerCase())),
+      ]
+    }
+    return out
+  }, [persistedCustom, state.customTokens])
 
   const setChain = useCallback((kind: TicketKind, chain: TradingChainKey) => {
     setState((previous) => {
@@ -97,8 +133,8 @@ export function TradeTicketProvider({ children }: { children: ReactNode }) {
 
   const isConfirmedCustom = useCallback(
     (chain: TradingChainKey, address: string) =>
-      (state.customTokens[chain] ?? []).some((entry) => entry.address.toLowerCase() === address.toLowerCase()),
-    [state.customTokens],
+      (customTokens[chain] ?? []).some((entry) => entry.address.toLowerCase() === address.toLowerCase()),
+    [customTokens],
   )
 
   const flip = useCallback(() => {
@@ -117,18 +153,20 @@ export function TradeTicketProvider({ children }: { children: ReactNode }) {
     (kind: TicketKind): ChainTokenOption[] => {
       const listed = kind === 'payment' ? listPayment : listAsset
       const chain = kind === 'payment' ? state.paymentChain : state.assetChain
-      const custom = (state.customTokens[chain] ?? []).map((token) => ({
-        address: token.address as string,
-        name: token.name,
-        symbol: token.symbol,
-        decimals: token.decimals,
-        mark: token.mark,
-        color: token.color,
-        verified: false,
-      }))
+      const custom = (customTokens[chain] ?? [])
+        .filter((token) => !listed.some((entry) => entry.address.toLowerCase() === token.address.toLowerCase()))
+        .map((token) => ({
+          address: token.address as string,
+          name: token.name,
+          symbol: token.symbol,
+          decimals: token.decimals,
+          mark: token.mark,
+          color: token.color,
+          verified: false,
+        }))
       return [...listed, ...custom]
     },
-    [listPayment, listAsset, state.paymentChain, state.assetChain, state.customTokens],
+    [listPayment, listAsset, state.paymentChain, state.assetChain, customTokens],
   )
 
   const tokenFor = useCallback(
@@ -144,6 +182,7 @@ export function TradeTicketProvider({ children }: { children: ReactNode }) {
   const value = useMemo<TradeTicketContextValue>(
     () => ({
       ...state,
+      customTokens,
       setChain,
       selectToken,
       confirmCustom,
@@ -156,7 +195,7 @@ export function TradeTicketProvider({ children }: { children: ReactNode }) {
       tokenFor,
       chainFor: (kind) => (kind === 'payment' ? state.paymentChain : state.assetChain),
     }),
-    [state, setChain, selectToken, confirmCustom, flip, isConfirmedCustom, optionsFor, tokenFor],
+    [state, customTokens, setChain, selectToken, confirmCustom, flip, isConfirmedCustom, optionsFor, tokenFor],
   )
 
   return <TradeTicketContext.Provider value={value}>{children}</TradeTicketContext.Provider>
@@ -181,42 +220,50 @@ export interface CustomTokenLookup {
 }
 
 /**
- * Fetch symbol()/name()/decimals() (+ balanceOf) for a user-pasted ERC-20.
- * Metadata is untrusted: callers must label it unverified and require an
- * explicit checkbox before using it as a leg. This hook never selects.
+ * Custom-token metadata comes from the persisted API catalog/validate route.
+ * A confirmed token is stored server-side and therefore survives a reload;
+ * the picker still labels it unverified and requires the explicit checkbox.
+ * Only the one-shot balanceOf preview stays on-chain (never polled).
  */
 export function useCustomTokenLookup(chain: TradingChainKey, address: string, owner?: Hex | null): CustomTokenLookup {
   const valid = !!address && isAddress(address)
   const chainId = CHAIN_IDS[chain]
-  const contracts = useMemo(() => {
-    if (!valid) return [] as Array<Record<string, unknown>>
-    const normalized = address as Hex
-    const base: Array<Record<string, unknown>> = [
-      { address: normalized, abi: erc20LookupAbi, functionName: 'symbol', chainId },
-      { address: normalized, abi: erc20LookupAbi, functionName: 'decimals', chainId },
-      { address: normalized, abi: erc20LookupAbi, functionName: 'name', chainId },
-    ]
-    if (owner) {
-      base.push({ address: normalized, abi: erc20LookupAbi, functionName: 'balanceOf', args: [owner], chainId })
-    }
-    return base
-  }, [valid, address, chainId, owner])
+  const base = useApiBaseUrl()
+  const normalized = valid ? address.toLowerCase() : ''
 
-  const query = useReadContracts({
+  const catalog = useQuery({
+    queryKey: ['tokens', { chainId }],
+    queryFn: () => fetchTokens({ chainId }, base),
+    enabled: valid,
+    staleTime: 60_000,
+    retry: 1,
+  })
+  const existing = catalog.data?.tokens.find((token) => token.address.toLowerCase() === normalized)
+
+  const validation = useQuery({
+    queryKey: ['token-validate', chainId, normalized],
+    queryFn: () => validateToken(chainId, address, base),
+    enabled: valid && !!catalog.data && !existing,
+    staleTime: Infinity,
+    retry: 1,
+  })
+
+  const contracts = useMemo(() => {
+    if (!valid || !owner) return [] as Array<Record<string, unknown>>
+    return [{ address: address as Hex, abi: erc20LookupAbi, functionName: 'balanceOf', args: [owner], chainId }]
+  }, [valid, address, chainId, owner])
+  const balanceQuery = useReadContracts({
     contracts,
-    query: { enabled: valid, staleTime: Infinity, gcTime: Infinity, retry: false },
-  }) as unknown as {
-    data?: readonly ReadResult[]
-    isLoading: boolean
-    isError: boolean
-  }
+    query: { enabled: contracts.length > 0, staleTime: 30_000, gcTime: Infinity, retry: false },
+  }) as unknown as { data?: readonly ReadResult[] }
+  const balance = typeof balanceQuery.data?.[0]?.result === 'bigint' ? balanceQuery.data[0].result : null
 
   if (!valid) return { status: 'idle', token: null, balance: null, error: null }
-  if (query.isLoading) return { status: 'loading', token: null, balance: null, error: null }
-  const [symbolResult, decimalsResult, nameResult, balanceResult] = query.data ?? []
-  const symbol = typeof symbolResult?.result === 'string' ? symbolResult.result : null
-  const decimals = decimalsResult?.result
-  if (symbol === null || typeof decimals !== 'number' || decimals < 0 || decimals > 36) {
+  const row = existing ?? validation.data?.token
+  if (catalog.isLoading || (!row && validation.isLoading)) {
+    return { status: 'loading', token: null, balance: null, error: null }
+  }
+  if (!row || !row.symbol || row.decimals === null || row.decimals < 0 || row.decimals > 36) {
     return {
       status: 'error',
       token: null,
@@ -224,16 +271,11 @@ export function useCustomTokenLookup(chain: TradingChainKey, address: string, ow
       error: 'Not a standard ERC-20: symbol()/decimals() could not be read.',
     }
   }
-  const name = typeof nameResult?.result === 'string' && nameResult.result ? nameResult.result : symbol
-  const token = customSelection(address as Hex, { name, symbol, decimals })
-  const balance = typeof balanceResult?.result === 'bigint' ? balanceResult.result : null
+  const token = customSelection(address as Hex, { name: row.symbol, symbol: row.symbol, decimals: row.decimals })
   return { status: 'ready', token, balance, error: null }
 }
 
 const erc20LookupAbi = [
-  { type: 'function', name: 'symbol', stateMutability: 'view', inputs: [], outputs: [{ type: 'string' }] },
-  { type: 'function', name: 'decimals', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint8' }] },
-  { type: 'function', name: 'name', stateMutability: 'view', inputs: [], outputs: [{ type: 'string' }] },
   {
     type: 'function',
     name: 'balanceOf',

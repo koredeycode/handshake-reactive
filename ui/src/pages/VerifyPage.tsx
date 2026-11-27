@@ -20,7 +20,7 @@ import { configuredAddress, useConfig } from '../lib/config'
 import { countdown, formatAmount, formatDeadline, normalizeOrderId, truncate } from '../lib/format'
 import { orderChainKeys, useProof } from '../lib/proofs'
 import { useOrder } from '../lib/queries'
-import { deriveStatus } from '../lib/status'
+import { useOrderStatus } from '../lib/status'
 import { useOrderTokenDisplay } from '../lib/tokenDisplay'
 import { useNow } from '../lib/useNow'
 import type { ChainKey } from '../lib/chains'
@@ -63,7 +63,7 @@ function VerifyDetail({ orderId }: { orderId: Hex }) {
   const orderQuery = useOrder(orderId)
   const order = orderQuery.data
   const proof = useProof(orderId).data
-  const status = order ? deriveStatus(order, now) : null
+  const status = useOrderStatus(order)
   const notFound = !orderQuery.isLoading && !order
   const paymentToken = useOrderTokenDisplay(order, 'payment')
   const assetToken = useOrderTokenDisplay(order, 'asset')

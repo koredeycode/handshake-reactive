@@ -19,10 +19,12 @@ import { logClient } from '../lib/logs'
 import { useTicketAssetPairs } from '../lib/assetPairs'
 import { useErc20Balance } from '../lib/queries'
 import { computeTermsHash } from '../lib/terms'
+import { txToast } from '../lib/toasts'
 import { useTradeTicket } from '../lib/tradeTicket'
 import { useVenues } from '../lib/venues'
 import { venueTuple } from '../lib/venue'
 import { Button, ConvergenceMark, Field, Metric, Panel, inputClass, icon } from './ui'
+import ConfirmModal from './ConfirmModal'
 import WriteButton from './WriteButton'
 import TradeTicket from './TradeTicket'
 
@@ -84,6 +86,7 @@ export default function NewOrderForm() {
   const [preset, setPreset] = useState<number | null>(120)
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [confirmOpen, setConfirmOpen] = useState(false)
 
   const normalizedSeller = normalizeAddress(seller)
   const openOrder = !normalizedSeller
@@ -188,7 +191,9 @@ export default function NewOrderForm() {
           BigInt(validDuration),
         ],
       })
+      txToast('Create trade', hash, 'lasna', 'pending')
       await lasnaClient?.waitForTransactionReceipt({ hash })
+      txToast('Create trade', hash, 'lasna', 'confirmed')
       navigate(`/orders/${orderId}?tx=${hash}`)
     } catch {
       setError('The trade could not be created. Check that both venues are registered and try again.')
@@ -359,7 +364,7 @@ export default function NewOrderForm() {
             <div className="border-t border-line pt-5">
               <WriteButton
                 targetChain="lasna"
-                onClick={submit}
+                onClick={() => setConfirmOpen(true)}
                 disabled={!!validation || isPending || submitting}
                 primary
               >
@@ -432,6 +437,32 @@ export default function NewOrderForm() {
           </p>
         </Panel>
       </div>
+
+      {confirmOpen && (
+        <ConfirmModal
+          title="Create this trade?"
+          description="The order ID and all terms are fixed once the transaction is signed."
+          details={[
+            { label: 'Order ID', value: truncate(orderId, 12, 10) },
+            { label: 'Payment', value: `${formatAmount(parsedPayment ?? 0n, paymentDecimals, paymentToken?.symbol)} · ${CHAIN_LABELS[ticket.paymentChain]}` },
+            { label: 'Payment token', value: paymentToken?.address ?? '—' },
+            { label: 'Asset', value: `${formatAmount(parsedAsset ?? 0n, assetDecimals, assetToken?.symbol)} · ${CHAIN_LABELS[ticket.assetChain]}` },
+            { label: 'Asset token', value: assetToken?.address ?? '—' },
+            { label: 'Counterparty', value: openOrder ? 'Open to any seller' : truncate(normalizedSeller ?? '', 10, 8) },
+            { label: 'Deadline', value: deadline !== null ? formatDeadline(BigInt(deadline)) : '—' },
+            { label: 'Terms hash', value: termsPreview ? truncate(termsPreview, 12, 10) : '—' },
+            { label: 'Network', value: 'Reactive Lasna' },
+          ]}
+          gasNote="You will pay gas on Reactive Lasna to create the order. The backend never signs or holds your keys."
+          confirmLabel="Create trade"
+          busy={submitting || isPending}
+          onCancel={() => setConfirmOpen(false)}
+          onConfirm={() => {
+            setConfirmOpen(false)
+            void submit()
+          }}
+        />
+      )}
     </div>
   )
 }

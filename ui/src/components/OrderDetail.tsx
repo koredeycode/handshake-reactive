@@ -14,11 +14,13 @@ import { canCancelOpenOrder, deriveStatus, isOpenOrder, isOrderTerminal } from '
 import { useOrderTokenDisplay } from '../lib/tokenDisplay'
 import { venueOfOrder } from '../lib/venue'
 import { useNow } from '../lib/useNow'
+import { txToast } from '../lib/toasts'
+import ConfirmModal from './ConfirmModal'
 import FlowExplainer from './FlowExplainer'
 import HopTimeline from './HopTimeline'
 import LegCard from './LegCard'
 import TradeTicket from './TradeTicket'
-import WriteButton, { type TxNotice } from './WriteButton'
+import WriteButton from './WriteButton'
 import {
   Button,
   CopyButton,
@@ -28,7 +30,6 @@ import {
   Panel,
   Spinner,
   StatusPill,
-  TxLink,
   icon,
 } from './ui'
 
@@ -51,7 +52,7 @@ export default function OrderDetail({ orderId }: { orderId: Hex }) {
   const assetToken = useOrderTokenDisplay(order, 'asset')
   const chainKeys = orderChainKeys(order)
   const now = useNow()
-  const [notice, setNotice] = useState<TxNotice | null>(null)
+  const [confirmAction, setConfirmAction] = useState<'retry' | 'cancel' | null>(null)
   const { writeContractAsync, isPending } = useWriteContract()
   const lasnaClient = logClient(usePublicClient({ chainId: CHAIN_IDS.lasna })) as unknown as {
     waitForTransactionReceipt: (args: { hash: Hex }) => Promise<unknown>
@@ -74,12 +75,12 @@ export default function OrderDetail({ orderId }: { orderId: Hex }) {
         functionName,
         args: [orderId],
       })
-      setNotice({ label, hash, chain: 'lasna', status: 'pending' })
+      txToast(label, hash, 'lasna', 'pending')
       await lasnaClient?.waitForTransactionReceipt({ hash })
-      setNotice({ label, hash, chain: 'lasna', status: 'confirmed' })
+      txToast(label, hash, 'lasna', 'confirmed')
       refresh()
     } catch {
-      setNotice({ label, hash: '0x', chain: 'lasna', status: 'error' })
+      txToast(label, '0x', 'lasna', 'error')
     }
   }
 
@@ -191,24 +192,9 @@ export default function OrderDetail({ orderId }: { orderId: Hex }) {
           />
         </div>
 
-        {notice && (
-          <p className="mt-4 text-[11px]">
-            {notice.status === 'error' ? (
-              <span className="text-bad">The transaction did not complete. Try again.</span>
-            ) : (
-              <>
-                <span className={notice.status === 'confirmed' ? 'text-good' : 'text-ink-500'}>
-                  {notice.label} {notice.status === 'confirmed' ? 'confirmed' : 'submitted'}
-                </span>
-                {notice.hash !== '0x' && <span className="ml-2"><TxLink chain={notice.chain} hash={notice.hash} /></span>}
-              </>
-            )}
-          </p>
-        )}
-
         {canRetry && (
           <div className="mt-6 flex flex-wrap items-center gap-3 border-t border-line pt-5">
-            <WriteButton targetChain="lasna" onClick={() => void send('Retry settlement', 'retry')} disabled={isPending}>
+            <WriteButton targetChain="lasna" onClick={() => setConfirmAction('retry')} disabled={isPending}>
               {isPending ? 'Submitting' : 'Retry settlement'}
             </WriteButton>
             <span className="text-[11px] text-ink-500">A leg is locked and settlement has not finished.</span>
@@ -219,7 +205,7 @@ export default function OrderDetail({ orderId }: { orderId: Hex }) {
           <div className="mt-6 flex flex-wrap items-center gap-3 border-t border-line pt-5">
             <WriteButton
               targetChain="lasna"
-              onClick={() => void send('Cancel order', 'cancelOrder')}
+              onClick={() => setConfirmAction('cancel')}
               disabled={isPending || !canCancel}
               title={canCancel ? undefined : 'Available while the order is unmatched and before the deadline.'}
             >
@@ -235,9 +221,36 @@ export default function OrderDetail({ orderId }: { orderId: Hex }) {
       <HopTimeline order={order} proof={proof.data} />
 
       <div className="grid gap-6 xl:grid-cols-2">
-        <LegCard kind="payment" order={order} leg={paymentLeg.data} orderId={orderId} notice={notice} setNotice={setNotice} refresh={refresh} />
-        <LegCard kind="asset" order={order} leg={assetLeg.data} orderId={orderId} notice={notice} setNotice={setNotice} refresh={refresh} />
+        <LegCard kind="payment" order={order} leg={paymentLeg.data} orderId={orderId} refresh={refresh} />
+        <LegCard kind="asset" order={order} leg={assetLeg.data} orderId={orderId} refresh={refresh} />
       </div>
+
+      {confirmAction && (
+        <ConfirmModal
+          title={confirmAction === 'cancel' ? 'Cancel this open order?' : 'Retry settlement?'}
+          description={confirmAction === 'cancel'
+            ? 'Cancellation is irreversible and releases the payment lock path.'
+            : 'Requests settlement again from the reactive contract. This submits a transaction.'}
+          details={[
+            { label: 'Order', value: truncate(orderId, 12, 10) },
+            { label: 'Action', value: confirmAction === 'cancel' ? 'Cancel order' : 'Retry settlement' },
+            { label: 'Payment', value: `${formatAmount(order.paymentAmount, paymentDecimals, paymentSymbol)} · ${paymentToken.chainLabel}` },
+            { label: 'Asset', value: `${formatAmount(order.assetAmount, assetDecimals, assetSymbol)} · ${assetToken.chainLabel}` },
+            { label: 'Counterparty', value: open ? 'Open to any seller' : truncate(order.seller, 10, 8) },
+            { label: 'Deadline', value: formatDeadline(order.deadline) },
+            { label: 'Network', value: 'Reactive Lasna' },
+          ]}
+          gasNote="You will pay gas on Reactive Lasna for this transaction. The backend never signs or holds your keys."
+          confirmLabel={confirmAction === 'cancel' ? 'Cancel order' : 'Retry settlement'}
+          busy={isPending}
+          onCancel={() => setConfirmAction(null)}
+          onConfirm={() => {
+            const action = confirmAction
+            setConfirmAction(null)
+            void send(action === 'cancel' ? 'Cancel order' : 'Retry settlement', action === 'cancel' ? 'cancelOrder' : 'retry')
+          }}
+        />
+      )}
     </div>
   )
 }

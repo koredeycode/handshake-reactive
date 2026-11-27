@@ -1,6 +1,8 @@
 /// <reference types="vite/client" />
 
 interface ImportMetaEnv {
+  /** Public read API + SSE origin. Defaults to http://localhost:8080 for local dev. */
+  readonly VITE_API_URL?: string
   readonly VITE_RC_ADDRESS?: string
   readonly VITE_SYSTEM_ADDRESS?: string
   readonly VITE_LEGACY_SYSTEM_ADDRESS?: string

@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import type { Hex } from 'viem'
+import { fetchTokens, useApiBaseUrl, type ApiTokenRow } from './api'
 import { CHAIN_LABELS, chainKeyFromId, type ChainKey, type TradingChainKey } from './chains'
 import { SEPOLIA_TOKEN_ADDRESSES } from './config'
 import { truncate } from './format'
@@ -63,12 +64,50 @@ async function loadTokens(): Promise<TokenRegistry> {
   }
 }
 
+/**
+ * Curated metadata from tokens.json plus the persisted API catalog. Custom
+ * tokens validated through /tokens/validate survive a reload and keep their
+ * unverified badge (only curated rows are marked verified).
+ */
+function mergeApiCatalog(staticRegistry: TokenRegistry, rows: ApiTokenRow[]): TokenRegistry {
+  const merged: TokenRegistry = {
+    base: { ...staticRegistry.base },
+    unichain: { ...staticRegistry.unichain },
+    sepolia: { ...staticRegistry.sepolia },
+  }
+  for (const row of rows) {
+    const chain = chainKeyFromId(row.chainId)
+    if (!chain || chain === 'lasna' || !/^0x[0-9a-fA-F]{40}$/.test(row.address)) continue
+    const previous = Object.entries(merged[chain]).find(([key]) => key.toLowerCase() === row.address.toLowerCase())?.[1]
+    const symbol = row.symbol ?? previous?.symbol ?? truncate(row.address, 6, 4)
+    merged[chain][row.address] = {
+      name: previous?.name ?? symbol,
+      symbol,
+      decimals: row.decimals ?? previous?.decimals ?? 18,
+      mark: previous?.mark ?? deriveMark(row.symbol ?? row.address),
+      color: previous?.color ?? '',
+      verified: !!row.verified && row.source === 'curated',
+      placeholder: false,
+    }
+  }
+  return merged
+}
+
 /** The registry is chain-keyed, so it is shared by every venue and order. */
 export function useTokenRegistry() {
+  const base = useApiBaseUrl()
   return useQuery({
-    queryKey: ['token-registry'],
-    queryFn: loadTokens,
-    staleTime: Infinity,
+    queryKey: ['token-registry', base],
+    queryFn: async () => {
+      const staticRegistry = await loadTokens()
+      try {
+        return mergeApiCatalog(staticRegistry, (await fetchTokens({}, base)).tokens)
+      } catch {
+        // A missing backend must not break the curated picker.
+        return staticRegistry
+      }
+    },
+    staleTime: 60_000,
     gcTime: Infinity,
   })
 }

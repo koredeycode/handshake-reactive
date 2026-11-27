@@ -51,3 +51,24 @@ chain flip, token pickers, blank-seller open orders and venue-bound terms hashes
 The wallet modal shots were captured with a placeholder WalletConnect project id
 in the dev environment so both connector options are visible; no env value is
 committed.
+
+## Realtime integration — Phase D (1440px)
+
+Captured from the Vite dev server on `http://localhost:5175` with a local mock
+read API/SSE origin (no production data). Both keyboard/mouse paths were checked
+for horizontal overflow at 390px and 360px:
+`document.documentElement.scrollWidth === window.innerWidth`.
+
+### Global toasts from SSE notifications + live connection / notification centre
+The header shows the single `EventSource` connected ("Live updates"), two
+unread notifications in the centre, and whitelisted `notification` frames
+(`settled`, `counterparty_locked`) rendered as deduped sonner toasts. Raw
+`order.state` / `lock.*` frames only patch the query cache — they never toast.
+![Realtime toasts](./screenshots/13-realtime-toasts.png)
+
+### Confirmation modal before create order
+The irreversible write is gated by a modal showing the exact tokens, amounts,
+chains, counterparty, deadline, terms hash and a gas note. The same pattern
+guards `lock`, `retry` and `cancel`.
+![Confirmation modal](./screenshots/14-confirm-modal.png)
+
