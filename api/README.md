@@ -28,7 +28,7 @@ npm run build --prefix api
 Supabase CLI can apply the same SQL to a local or hosted project; this repo does
 not link/deploy a Supabase project. At startup the app seeds the chain/venue/
 curated-token catalogues (idempotent) and prunes expired rows (outbox 7 d, events
-90 d, keeper actions / alerts 30 d).
+14 d, keeper actions / alerts 30 d).
 
 ## Endpoints
 

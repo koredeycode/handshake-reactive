@@ -66,9 +66,19 @@ async function handleLog(chain: ChainConfig, raw: RawLog): Promise<void> {
   const event = decodeRawLog(raw, chain.chainId);
   if (!event) return;
   try {
-    if (event.removed) await handleReorg(event);
-    else if (event.name === 'transfer') await emitTransferBalances(event);
-    else await ingestLog(event);
+    // Cron10 is a liveness heartbeat, not event history: never persist an
+    // order_events row, publish to the bus or fold it into an order. Ignore
+    // removed cron logs entirely so a reorg cannot corrupt indexer state.
+    if (event.name === 'cron10') {
+      if (event.removed) return;
+      await updateIndexerStatus(chain.chainId, 'live', event.blockNumber, event.blockHash);
+    } else if (event.removed) {
+      await handleReorg(event);
+    } else if (event.name === 'transfer') {
+      await emitTransferBalances(event);
+    } else {
+      await ingestLog(event);
+    }
     const now = Date.now();
     indexerStats.set(chain.chainId, {
       status: 'live',
@@ -77,9 +87,6 @@ async function handleLog(chain: ChainConfig, raw: RawLog): Promise<void> {
     });
     metrics.indexerLastEventAge.set({ chain: String(chain.chainId) }, 0);
     metrics.indexerBlockLag.set({ chain: String(chain.chainId) }, 0);
-    if (event.name === 'cron10') {
-      await updateIndexerStatus(chain.chainId, 'live', event.blockNumber, event.blockHash);
-    }
   } catch (error) {
     log.error({ err: error, chainId: chain.chainId, txHash: event.txHash }, 'log handling failed');
     throw error;

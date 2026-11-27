@@ -25,6 +25,8 @@ transactions and settlement proof for the contracts live in
 ```text
 4 chains over WSS ──one raw eth_subscribe("logs") per chain──▶ indexer
                                                                │ decode + fold + dedupe
+                                                               │ (Cron10 excluded: liveness only,
+                                                               │  never stored as an event row)
                                                                ▼
                                            Supabase (orders, legs, events, outbox,
                                            tokens, wallet cache, keeper tables)
@@ -47,7 +49,9 @@ transactions and settlement proof for the contracts live in
 - Event inserts, order/leg folding and outbox rows commit in **one transaction**;
   the typed in-process bus (`api/src/lib/bus.ts`) publishes only after commit.
   Reorged logs are marked removed and affected orders are rebuilt from surviving
-  events, after which clients receive a `resync` frame.
+  events, after which clients receive a `resync` frame. `Cron10` ticks are
+  liveness-only: they update indexer status and metrics but are not stored as
+  event rows, published or folded into orders.
 
 ## Local development
 
@@ -90,8 +94,9 @@ set, so verify `ALERT_FROM_EMAIL` is a verified Resend sender before deploying.
 (with `?sslmode=require`), not the direct/session connection: the client uses
 `prepare: false` and a small connection pool (`max: 5`) to match the pooler. Keep
 the credentials out of git. Startup seeds the chain/venue/token catalogues
-idempotently and prunes expired rows (outbox 7 d, events 90 d, keeper actions and
-alerts 30 d).
+idempotently and prunes expired rows (outbox 7 d, events 14 d, keeper actions and
+alerts 30 d). Proof bundles live in `docs/`, so the database is only a
+short-lived projection rather than the source of truth.
 
 ## HTTP API
 
