@@ -164,6 +164,18 @@ function mergeHydratedTerms(
   return merged as unknown as FoldOrderState;
 }
 
+/** A lock event may fill only its own side, so check every authoritative term. */
+function hasMissingTerms(row: {
+  termsHash: string | null; buyer: string | null; seller: string | null;
+  paymentChainId: number | null; assetChainId: number | null;
+  paymentToken: string | null; paymentAmount: string | null;
+  assetToken: string | null; assetAmount: string | null; deadline: string | null;
+}): boolean {
+  return !row.termsHash || !row.buyer || !row.seller || row.paymentChainId === null
+    || row.assetChainId === null || !row.paymentToken || !row.paymentAmount
+    || !row.assetToken || !row.assetAmount || !row.deadline;
+}
+
 /**
  * Idempotent ingestion. The event insert, order fold, leg state and outbox rows
  * all commit in one transaction; the typed bus publish happens after commit.
@@ -179,11 +191,17 @@ export async function ingestLog(event: DecodedEvent, blockTimestamp?: Date): Pro
     if (created) {
       hydrated = await hydrateOrderTerms(event.orderId);
     } else {
-      // Reconciliation for a partial row: at most one RPC attempt per order by
-      // hydrateOrderTerms, and only when terms were never stored.
-      const [existing] = await db.select({ termsHash: orders.termsHash })
-        .from(orders).where(eq(orders.orderId, event.orderId)).limit(1);
-      if (existing && !existing.termsHash) hydrated = await hydrateOrderTerms(event.orderId);
+      // Reconciliation for a partial row: a lock event can set termsHash while
+      // leaving the asset-side terms empty, so check every term field, not just
+      // the hash. hydrateOrderTerms caches successes and backs off failures.
+      const [existing] = await db.select({
+        termsHash: orders.termsHash, buyer: orders.buyer, seller: orders.seller,
+        paymentChainId: orders.paymentChainId, assetChainId: orders.assetChainId,
+        paymentToken: orders.paymentToken, paymentAmount: orders.paymentAmount,
+        assetToken: orders.assetToken, assetAmount: orders.assetAmount,
+        deadline: orders.deadline,
+      }).from(orders).where(eq(orders.orderId, event.orderId)).limit(1);
+      if (existing && hasMissingTerms(existing)) hydrated = await hydrateOrderTerms(event.orderId);
     }
   }
   try {
@@ -270,7 +288,11 @@ export async function ingestLog(event: DecodedEvent, blockTimestamp?: Date): Pro
 export async function reconcilePartialOrderTerms(limit = 100): Promise<void> {
   try {
     const rows = await db.select().from(orders)
-      .where(sql`${orders.termsHash} is null`)
+      .where(sql`${orders.termsHash} is null or ${orders.buyer} is null or ${orders.seller} is null
+        or ${orders.paymentChainId} is null or ${orders.assetChainId} is null
+        or ${orders.paymentToken} is null or ${orders.paymentAmount} is null
+        or ${orders.assetToken} is null or ${orders.assetAmount} is null
+        or ${orders.deadline} is null`)
       .limit(limit);
     for (const row of rows) {
       const terms = await hydrateOrderTerms(row.orderId);
