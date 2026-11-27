@@ -822,6 +822,75 @@ contract HandshakeReactiveTest is Test {
         assertEq(paymentNonce, 1);
     }
 
+    /// @dev A valid counterpart leg must never produce a release callback for a
+    ///      deposit whose token/amount/terms/depositor/counterparty differ from
+    ///      the order. This is the core fund-safety invariant of the token-agnostic
+    ///      escrows: the RC is the only authority, so it must never get it wrong.
+    /// @param mismatchedField_ 0=token, 1=amount, 2=terms, 3=depositor, 4=counterparty.
+    /// @param paymentFirst_ Which leg is locked first.
+    /// @param pair_ Which ordered venue the order uses.
+    function testNoReleaseCallbackForMismatchedLeg(
+        uint8 mismatchedField_,
+        bool paymentFirst_,
+        uint8 pair_
+    ) public {
+        mismatchedField_ = uint8(mismatchedField_ % 5);
+        pair_ = uint8(pair_ % 6);
+
+        // Fresh RC so each fuzz case starts with no other orders.
+        rc = new HandshakeReactive{value: 1 ether}();
+        rc.setVenue(BASE_CHAIN, BASE_ESCROW, BASE_ASSET_ESCROW);
+        rc.setVenue(UNICHAIN_CHAIN, UNICHAIN_PAYMENT_ESCROW, UNICHAIN_ESCROW);
+        rc.setVenue(SEPOLIA_CHAIN, SEPOLIA_PAYMENT_ESCROW, SEPOLIA_ASSET_ESCROW);
+
+        (uint256 pChain, address pEscrow, uint256 aChain, address aEscrow) = _venueForPair(pair_);
+        id = keccak256(abi.encode("invariant", mismatchedField_, paymentFirst_, pair_));
+        _createOrderAt(id, SELLER, pChain, pEscrow, aChain, aEscrow, 120);
+        _useOrder(id);
+
+        IReactive.LogRecord memory bad = _lockedLog(!paymentFirst_, paymentFirst_ ? SELLER : BUYER, paymentFirst_ ? BUYER : SELLER);
+        bool isPaymentLeg = !paymentFirst_;
+        if (mismatchedField_ == 0) {
+            bad.data = abi.encode(address(0xBEEF), isPaymentLeg ? PAYMENT_AMOUNT : ASSET_AMOUNT, terms, deadline);
+        } else if (mismatchedField_ == 1) {
+            bad.data = abi.encode(isPaymentLeg ? PAYMENT_TOKEN : ASSET_TOKEN, 1, terms, deadline);
+        } else if (mismatchedField_ == 2) {
+            bad.data = abi.encode(isPaymentLeg ? PAYMENT_TOKEN : ASSET_TOKEN, isPaymentLeg ? PAYMENT_AMOUNT : ASSET_AMOUNT, bytes32("bad"), deadline);
+        } else if (mismatchedField_ == 3) {
+            bad.topic2 = uint256(uint160(STRANGER));
+        } else {
+            bad.topic3 = uint256(uint160(STRANGER));
+        }
+
+        // First a valid leg, then the deliberately mismatched counterpart.
+        IReactive.LogRecord memory good = _lockedLog(paymentFirst_, BUYER, SELLER);
+        // For an asset-first order the "good" depositor is the seller.
+        if (!paymentFirst_) good = _lockedLog(false, SELLER, BUYER);
+        _react(good);
+        _react(bad);
+
+        assertFalse(rc.getOrder(id).settleRequested, "mismatched leg must not request settlement");
+        assertTrue(rc.getOrder(id).refundRequested, "mismatched leg must enter refund path");
+        for (uint256 i = 0; i < sys.callbackCount(); ++i) {
+            bytes4 selector = bytes4(_callback(i).payload);
+            assertNotEq(selector, RELEASE_PAYMENT_SELECTOR, "no payment release for mismatched leg");
+            assertNotEq(selector, RELEASE_ASSET_SELECTOR, "no asset release for mismatched leg");
+        }
+    }
+
+    function _venueForPair(uint8 pair_)
+        internal
+        pure
+        returns (uint256 pChain, address pEscrow, uint256 aChain, address aEscrow)
+    {
+        if (pair_ == 0) return (BASE_CHAIN, BASE_ESCROW, UNICHAIN_CHAIN, UNICHAIN_ESCROW);
+        if (pair_ == 1) return (UNICHAIN_CHAIN, UNICHAIN_PAYMENT_ESCROW, BASE_CHAIN, BASE_ASSET_ESCROW);
+        if (pair_ == 2) return (BASE_CHAIN, BASE_ESCROW, SEPOLIA_CHAIN, SEPOLIA_ASSET_ESCROW);
+        if (pair_ == 3) return (SEPOLIA_CHAIN, SEPOLIA_PAYMENT_ESCROW, BASE_CHAIN, BASE_ASSET_ESCROW);
+        if (pair_ == 4) return (UNICHAIN_CHAIN, UNICHAIN_PAYMENT_ESCROW, SEPOLIA_CHAIN, SEPOLIA_ASSET_ESCROW);
+        return (SEPOLIA_CHAIN, SEPOLIA_PAYMENT_ESCROW, UNICHAIN_CHAIN, UNICHAIN_ESCROW);
+    }
+
     // ------------------------------------------------------- deadline / cron logic
 
     function testRefundAfterDeadlineViaCronAndCooldown() public {
