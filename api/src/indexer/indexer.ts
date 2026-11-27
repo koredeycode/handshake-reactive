@@ -11,7 +11,7 @@ import { env, httpUrlFor, wsUrlFor } from '../config.js';
 import { CHAIN_CONFIGS, REACTIVE_CONTRACT, type ChainConfig } from '../contracts.js';
 import { db } from '../db/client.js';
 import { indexerState } from '../db/schema.js';
-import { alertWsFailure } from '../alerts/resend.js';
+import { alertWsFailure, formatError } from '../alerts/resend.js';
 import { log } from '../lib/log.js';
 import { metrics } from '../lib/metrics.js';
 import { backoffDelay, isRateLimitError, withRetry } from '../lib/retry.js';
@@ -64,7 +64,7 @@ function runBackfill(chain: ChainConfig): void {
 }
 
 function isRangeError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+  const message = error instanceof Error ? error.message.toLowerCase() : formatError(error).toLowerCase();
   return message.includes('range') || message.includes('too many') || message.includes('block not found');
 }
 
@@ -159,7 +159,7 @@ export async function backfill(chain: ChainConfig): Promise<void> {
           isRangeError,
           onRetry: (error, attempt, delay) => {
             log.warn({ err: error, chainId: chain.chainId, attempt, delay, from, to }, 'getLogs retry');
-            if (isRateLimitError(error)) alertWsFailure(chain.chainId, `getLogs rate limited: ${String(error)}`).catch(() => undefined);
+            if (isRateLimitError(error)) alertWsFailure(chain.chainId, `getLogs rate limited: ${formatError(error)}`).catch(() => undefined);
           },
         });
         if (stopping) break;
@@ -215,7 +215,7 @@ export async function backfill(chain: ChainConfig): Promise<void> {
     }
   } catch (error) {
     log.error({ err: error, chainId: chain.chainId }, 'gap backfill failed');
-    await alertWsFailure(chain.chainId, `Gap backfill failed: ${String(error)}`).catch(() => undefined);
+    await alertWsFailure(chain.chainId, `Gap backfill failed: ${formatError(error)}`).catch(() => undefined);
   } finally {
     backfilling.delete(chain.chainId);
   }
@@ -232,8 +232,13 @@ async function onWsError(chain: ChainConfig, error: unknown): Promise<void> {
     reconnectCount: sql`${indexerState.reconnectCount} + 1`,
     updatedAt: new Date(),
   }).where(eq(indexerState.chainId, chain.chainId)).catch(() => undefined);
-  log.warn({ err: error, chainId: chain.chainId }, 'WebSocket error; gap fill queued');
-  await alertWsFailure(chain.chainId, String(error));
+  const message = formatError(error);
+  log.warn({ err: error, chainId: chain.chainId, message }, 'WebSocket error; gap fill queued');
+  // Public RPCs close idle sockets routinely. Reconnect + gap-fill handle those,
+  // so only email on a real failure (or if the gap-fill itself later fails).
+  if (!/socket.*closed|websocket.*closed|socketclosed/i.test(message)) {
+    await alertWsFailure(chain.chainId, `WS error: ${message}`);
+  }
   // viem reconnects + re-subscribes internally; replay anything missed since
   // the last committed block once the socket has had time to come back.
   setTimeout(() => runBackfill(chain), backoffDelay(1, 1_000, 3_000)).unref();
@@ -275,7 +280,7 @@ export async function startIndexer(): Promise<void> {
       // A dead provider must not prevent the HTTP API from starting.
       indexerStats.set(chain.chainId, { status: 'error', subscriptions: 0 });
       log.error({ err: error, chainId: chain.chainId }, 'chain subscription failed');
-      await alertWsFailure(chain.chainId, `Subscription failed: ${String(error)}`).catch(() => undefined);
+      await alertWsFailure(chain.chainId, `Subscription failed: ${formatError(error)}`).catch(() => undefined);
       runBackfill(chain);
     }
   }
