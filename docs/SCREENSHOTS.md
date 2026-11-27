@@ -28,6 +28,9 @@ chain flip, token pickers, blank-seller open orders and venue-bound terms hashes
 ### Wallet connect modal — Browser wallet / WalletConnect
 ![Wallet modal desktop](./screenshots/10-wallet-modal-desktop.png)
 
+### New trade — explainer uses the resolved ticket token symbols (custom Unverified USDC on Ethereum Sepolia, curated tUSD on Unichain Sepolia)
+![New trade token labels](./screenshots/12-new-order-token-labels.png)
+
 ## Mobile — 390px
 
 ### Home

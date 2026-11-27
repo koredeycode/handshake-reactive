@@ -13,6 +13,10 @@ export default function FlowExplainer({ order }: { order?: Order | null }) {
   const ticket = useTradeTicket()
   const payment = useOrderTokenDisplay(order, 'payment')
   const asset = useOrderTokenDisplay(order, 'asset')
+  // A stored order carries its own token addresses; the ticket is the source
+  // of truth on /new, where custom selections must keep their resolved symbol.
+  const paymentSymbol = order ? payment.symbol : ticket.tokenFor('payment')?.symbol ?? payment.symbol
+  const assetSymbol = order ? asset.symbol : ticket.tokenFor('asset')?.symbol ?? asset.symbol
   const paymentChain = order ? payment.chain : ticket.paymentChain
   const assetChain = order ? asset.chain : ticket.assetChain
 
@@ -26,9 +30,9 @@ export default function FlowExplainer({ order }: { order?: Order | null }) {
       </div>
       <p className="mt-2 text-[11px] leading-relaxed text-ink-500">
         <span className="font-medium text-ink-700">Buyer</span> creates the order and locks{' '}
-        <span className="font-mono text-ink-700">{payment.symbol}</span> on <ChainName chain={paymentChain} />.{' '}
+        <span className="font-mono text-ink-700">{paymentSymbol}</span> on <ChainName chain={paymentChain} />.{' '}
         <span className="font-medium text-ink-700">Seller</span> locks{' '}
-        <span className="font-mono text-ink-700">{asset.symbol}</span> on <ChainName chain={assetChain} />.
+        <span className="font-mono text-ink-700">{assetSymbol}</span> on <ChainName chain={assetChain} />.
         One decision on <ChainName chain="lasna" /> releases both legs.
       </p>
       {order && (
