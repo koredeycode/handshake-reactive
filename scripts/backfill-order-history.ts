@@ -326,7 +326,7 @@ function connectDb(): SqlClient {
   return factory(url, {
     max: 1,
     prepare: false,
-    connect_timeout: 10,
+    connect_timeout: 30,
     idle_timeout: 10,
     onnotice: () => undefined,
   });
