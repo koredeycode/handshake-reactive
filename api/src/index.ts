@@ -6,12 +6,14 @@ import { closeDb, dbPing } from './db/client.js';
 import { createApp } from './http.js';
 import { startIndexer, stopIndexer } from './indexer/indexer.js';
 import { log } from './lib/log.js';
+import { startEventLoopMonitor, stopEventLoopMonitor } from './lib/metrics.js';
 
 async function main(): Promise<void> {
   const database = await dbPing();
   if (!database) log.error('database unreachable at boot; routes will fail until it recovers');
   await bootstrapDatabase();
   await startIndexer();
+  startEventLoopMonitor();
   startAlertMonitor();
   startRetention();
 
@@ -22,6 +24,7 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string) => {
     log.info({ signal }, 'shutting down');
     server.close();
+    stopEventLoopMonitor();
     stopAlertMonitor();
     stopRetention();
     await stopIndexer();
