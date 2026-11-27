@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from 'react'
 import { ArrowRight, ArrowUpRight, Check, ChevronDown, Copy, Inbox } from 'lucide-react'
-import { CHAIN_LABELS, CHAIN_LOGO, TRADING_CHAIN_KEYS, txUrl, type TradingChainKey } from '../lib/chains'
+import { CHAIN_LABELS, CHAIN_LOGO, CHAIN_SHORT_LABELS, TRADING_CHAIN_KEYS, txUrl, type TradingChainKey } from '../lib/chains'
 import { copyText, truncate } from '../lib/format'
 import { useMarket } from '../lib/markets'
 import { useCopyFeedback } from '../lib/proofs'
@@ -146,20 +146,48 @@ export function ChainMark({
 }
 
 /** The selected market's route: payment chain → Reactive Lasna → asset chain. */
+/** All six ordered chain pairs served by the single reactive contract. */
+const ROUTE_PAIRS: Array<[TradingChainKey, TradingChainKey]> = [
+  ['base', 'unichain'],
+  ['unichain', 'base'],
+  ['base', 'sepolia'],
+  ['sepolia', 'base'],
+  ['unichain', 'sepolia'],
+  ['sepolia', 'unichain'],
+]
+
+/**
+ * Animated route strip: cycles through every supported to-and-fro route so the
+ * demo shows all three testnets, not just a fixed Base ↔ Unichain example.
+ * Uses the same ChainPill/arrow structure so styling never changes mid-cycle.
+ */
 export function RouteStrip({ className = '' }: { className?: string }) {
   const { chainKeyFor } = useMarket()
+  const [index, setIndex] = useState(0)
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setIndex((value) => (value + 1) % ROUTE_PAIRS.length), 2600)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  // Prefer the live ticket's venue on the first slide; afterwards cycle all pairs.
+  const [from, to] = index === 0
+    ? ([chainKeyFor('payment'), chainKeyFor('asset')] as [TradingChainKey, TradingChainKey])
+    : ROUTE_PAIRS[index % ROUTE_PAIRS.length]
+
   return (
     <div className={`flex flex-wrap items-center gap-1.5 text-[11px] text-ink-400 ${className}`}>
-      {/* Pills travel with their arrow so lines never end on an orphan arrow. */}
-      <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
-        <ChainPill chain={chainKeyFor('payment')} />
+      <span key={`${index}-from`} className="inline-flex animate-[fade-in_0.35s_ease-out] items-center gap-1.5 whitespace-nowrap">
+        <ChainPill chain={from} />
         <ArrowRight {...icon} className="hidden sm:block" />
       </span>
       <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
         <ChainPill chain="lasna" />
         <ArrowRight {...icon} className="hidden sm:block" />
       </span>
-      <ChainPill chain={chainKeyFor('asset')} />
+      <span key={`${index}-to`} className="inline-flex animate-[fade-in_0.35s_ease-out] items-center whitespace-nowrap">
+        <ChainPill chain={to} />
+      </span>
     </div>
   )
 }
@@ -326,6 +354,107 @@ export function ChainSelect({
               >
                 <ChainMark chain={key} className="h-4 w-4" />
                 <span className="flex-1 truncate font-medium">{CHAIN_LABELS[key]}</span>
+                {selected && <Check {...icon} className="h-3.5 w-3.5 shrink-0" />}
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** Styled ordered chain-pair selector used by the order board filter. */
+export function PairSelect({
+  value,
+  options,
+  onChange,
+  label = 'Chain pair',
+}: {
+  value: string
+  options: Array<{ id: string; payment: TradingChainKey; asset: TradingChainKey }>
+  onChange: (id: string) => void
+  label?: string
+}) {
+  const [open, setOpen] = useState(false)
+  const root = useRef<HTMLDivElement>(null)
+  const selected = options.find((option) => option.id === value)
+
+  useEffect(() => {
+    if (!open) return
+    const onPointerDown = (event: PointerEvent) => {
+      if (root.current && !root.current.contains(event.target as Node)) setOpen(false)
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [open])
+
+  return (
+    <div className="relative" ref={root}>
+      <button
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label={label}
+        onClick={() => setOpen((v) => !v)}
+        className="flex min-h-10 min-w-[132px] items-center gap-2 rounded-xl border border-line bg-paper-0 px-3 py-1.5 text-[11px] text-ink-700 transition-colors hover:bg-paper-100"
+      >
+        {selected ? (
+          <span className="flex items-center gap-1.5">
+            <ChainMark chain={selected.payment} className="h-3.5 w-3.5" />
+            <ArrowRight {...icon} className="h-3 w-3 text-ink-400" />
+            <ChainMark chain={selected.asset} className="h-3.5 w-3.5" />
+            <span className="ml-0.5 font-medium">{CHAIN_SHORT_LABELS[selected.payment]} → {CHAIN_SHORT_LABELS[selected.asset]}</span>
+          </span>
+        ) : (
+          <span className="font-medium">All pairs</span>
+        )}
+        <ChevronDown {...icon} className={`ml-auto h-3.5 w-3.5 shrink-0 text-ink-400 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div
+          role="listbox"
+          aria-label={label}
+          className="absolute left-0 top-[calc(100%+6px)] z-30 max-h-[320px] w-[248px] overflow-y-auto rounded-2xl border border-line bg-paper-0 p-1.5 shadow-[0_18px_45px_rgba(24,24,27,0.12)]"
+        >
+          <button
+            type="button"
+            role="option"
+            aria-selected={value === 'all'}
+            onClick={() => { onChange('all'); setOpen(false) }}
+            className={`flex w-full items-center gap-2 rounded-xl px-2 py-2 text-left text-[12px] transition-colors hover:bg-paper-100 ${
+              value === 'all' ? 'bg-accent-soft/40 text-accent' : 'text-ink-800'
+            }`}
+          >
+            <span className="flex-1 font-medium">All pairs</span>
+            {value === 'all' && <Check {...icon} className="h-3.5 w-3.5 shrink-0" />}
+          </button>
+          {options.map((option) => {
+            const selected = option.id === value
+            return (
+              <button
+                key={option.id}
+                type="button"
+                role="option"
+                aria-selected={selected}
+                onClick={() => { onChange(option.id); setOpen(false) }}
+                className={`flex w-full items-center gap-2 rounded-xl px-2 py-2 text-left text-[12px] transition-colors hover:bg-paper-100 ${
+                  selected ? 'bg-accent-soft/40 text-accent' : 'text-ink-800'
+                }`}
+              >
+                <ChainMark chain={option.payment} className="h-4 w-4" />
+                <ArrowRight {...icon} className="h-3 w-3 text-ink-400" />
+                <ChainMark chain={option.asset} className="h-4 w-4" />
+                <span className="flex-1 truncate font-medium">
+                  {CHAIN_SHORT_LABELS[option.payment]} → {CHAIN_SHORT_LABELS[option.asset]}
+                </span>
                 {selected && <Check {...icon} className="h-3.5 w-3.5 shrink-0" />}
               </button>
             )

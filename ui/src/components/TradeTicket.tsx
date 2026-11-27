@@ -43,7 +43,7 @@ function AmountTile({ side, direction }: { side: TicketSide; direction: 'pay' | 
   return (
     <div className="rounded-2xl border border-line bg-paper-50 p-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="text-xs text-ink-500">{direction === 'pay' ? 'You pay' : 'You receive'}</span>
+        <span className="text-xs text-ink-500">{direction === 'pay' ? 'Payment leg' : 'Asset leg'}</span>
         <div className="flex items-center gap-1.5">
           {picker ? (
             <ChainSelect

@@ -2,14 +2,14 @@ import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { ArrowRight, Plus, RefreshCw } from 'lucide-react'
 import { useAccount } from 'wagmi'
-import { CHAIN_SHORT_LABELS, TRADING_CHAIN_KEYS, type TradingChainKey } from '../lib/chains'
+import { TRADING_CHAIN_KEYS, type TradingChainKey } from '../lib/chains'
 import { countdown, formatAmount, formatDeadline, isZeroAddress, truncate } from '../lib/format'
 import { useAllOrders, type AggregatedOrderRow } from '../lib/queries'
 import { deriveStatus, isOpenOrder } from '../lib/status'
 import { useOrderTokenDisplay } from '../lib/tokenDisplay'
 import { pairId, venueOfOrder } from '../lib/venue'
 import { useNow } from '../lib/useNow'
-import { Button, ChainMark, ChainPill, EmptyState, Panel, Spinner, StatusPill, TokenMark, icon } from './ui'
+import { Button, ChainMark, ChainPill, EmptyState, PairSelect, Panel, Spinner, StatusPill, TokenMark, icon } from './ui'
 
 type BoardFilter = 'all' | 'open' | 'mine'
 
@@ -65,7 +65,7 @@ function OrderRow({ row, now }: { row: AggregatedOrderRow; now: number }) {
           <div className="flex flex-wrap items-end gap-x-6 gap-y-2">
             <div>
               <div className="flex items-center gap-1 text-[11px] text-ink-400">
-                <ChainMark chain={payment.chain} /> You pay · {payment.chainLabel}
+                <ChainMark chain={payment.chain} /> Payment leg · {payment.chainLabel}
               </div>
               <div className="tnum font-mono text-[15px] font-medium text-ink-900">
                 {formatAmount(order.paymentAmount, payment.decimals, payment.symbol)}
@@ -74,7 +74,7 @@ function OrderRow({ row, now }: { row: AggregatedOrderRow; now: number }) {
             <ArrowRight {...icon} className="mb-1 text-ink-400" />
             <div>
               <div className="flex items-center gap-1 text-[11px] text-ink-400">
-                <ChainMark chain={asset.chain} /> You receive · {asset.chainLabel}
+                <ChainMark chain={asset.chain} /> Asset leg · {asset.chainLabel}
               </div>
               <div className="tnum font-mono text-[15px] font-medium text-ink-900">
                 {formatAmount(order.assetAmount, asset.decimals, asset.symbol)}
@@ -162,19 +162,11 @@ export default function OrderBoard({ scrollable = false }: { scrollable?: boolea
     >
       <div className="flex flex-wrap items-center gap-2 border-b border-line px-5 py-3 sm:px-6">
         <span className="mr-1 text-[11px] text-ink-400">Chain pair</span>
-        <select
-          aria-label="Filter by chain pair"
+        <PairSelect
           value={pair}
-          onChange={(event) => setPair(event.target.value)}
-          className="min-h-10 max-w-full rounded-xl border border-line bg-paper-0 px-3 py-1.5 text-[11px] text-ink-700 outline-none focus:border-accent"
-        >
-          <option value="all">All pairs</option>
-          {PAIRS.map(({ payment, asset }) => (
-            <option key={pairId(payment, asset)} value={pairId(payment, asset)}>
-              {CHAIN_SHORT_LABELS[payment]} → {CHAIN_SHORT_LABELS[asset]}
-            </option>
-          ))}
-        </select>
+          onChange={setPair}
+          options={PAIRS.map(({ payment, asset }) => ({ id: pairId(payment, asset), payment, asset }))}
+        />
       </div>
 
       {isError ? (
