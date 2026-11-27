@@ -95,3 +95,22 @@ select:focus-visible {
     animation: none !important;
   }
 }
+
+/* Sonner toasts and the SSE notification centre share the design tokens. */
+.toast-description {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.toast-explorer-link {
+  color: var(--accent-ink, #1d4ed8);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  font-weight: 500;
+}
+
+.toast-explorer-link:hover {
+  color: var(--accent, #2563eb);
+}

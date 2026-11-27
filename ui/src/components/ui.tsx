@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from 'react'
+import { forwardRef, useEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from 'react'
 import { ArrowRight, ArrowUpRight, Check, ChevronDown, Copy, Inbox } from 'lucide-react'
 import { CHAIN_LABELS, CHAIN_LOGO, CHAIN_SHORT_LABELS, TRADING_CHAIN_KEYS, txUrl, type TradingChainKey } from '../lib/chains'
 import { copyText, truncate } from '../lib/format'
@@ -38,7 +38,7 @@ type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   children: ReactNode
 }
 
-export function Button({
+export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button({
   variant = 'secondary',
   size = 'md',
   icon: leadingIcon,
@@ -46,7 +46,7 @@ export function Button({
   className = '',
   type = 'button',
   ...rest
-}: ButtonProps) {
+}, ref) {
   const shape =
     'inline-flex items-center justify-center gap-2 rounded-xl font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50'
   const sizing = size === 'sm' ? 'h-10 px-3.5 text-[12px]' : 'h-11 px-5 text-[13px]'
@@ -57,12 +57,12 @@ export function Button({
         ? 'text-ink-500 hover:bg-paper-100 hover:text-ink-900'
         : 'border border-line bg-paper-0 text-ink-700 hover:bg-paper-100'
   return (
-    <button type={type} className={`${shape} ${sizing} ${tone} ${className}`} {...rest}>
+    <button ref={ref} type={type} className={`${shape} ${sizing} ${tone} ${className}`} {...rest}>
       {leadingIcon}
       {children}
     </button>
   )
-}
+})
 
 export function Panel({
   title,

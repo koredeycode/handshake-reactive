@@ -1,19 +1,21 @@
 import { useState } from 'react'
 import { useAccount, usePublicClient, useWriteContract } from 'wagmi'
 import type { Address, Hex } from 'viem'
-import { CHAIN_IDS, addressUrl } from '../lib/chains'
+import { CHAIN_IDS, CHAIN_LABELS, addressUrl } from '../lib/chains'
 import { assetEscrowAbi, erc20Abi, paymentEscrowAbi } from '../lib/contracts'
-import { formatAmount, isZeroAddress, truncate, ZERO_ADDRESS } from '../lib/format'
+import { formatAmount, formatDeadline, isZeroAddress, truncate, ZERO_ADDRESS } from '../lib/format'
 import { logClient } from '../lib/logs'
 import { useAllowance, useErc20Balance, type LegKind } from '../lib/queries'
 import { isOpenOrder } from '../lib/status'
 import { computeTermsHash } from '../lib/terms'
+import { txToast } from '../lib/toasts'
 import { useOrderTokenDisplay } from '../lib/tokenDisplay'
 import { UNVERIFIED_LABEL } from '../lib/tradeTicket'
 import { venueOfOrder } from '../lib/venue'
 import type { Leg, Order } from '../lib/types'
-import WriteButton, { type TxNotice } from './WriteButton'
-import { ChainPill, ExternalLink, TokenMark, TxLink } from './ui'
+import ConfirmModal from './ConfirmModal'
+import WriteButton from './WriteButton'
+import { ChainPill, ExternalLink, TokenMark } from './ui'
 
 function stateLabel(state?: bigint | null): string {
   if (state === undefined || state === null) return 'Not locked'
@@ -25,21 +27,18 @@ export default function LegCard({
   order,
   leg,
   orderId,
-  notice,
-  setNotice,
   refresh,
 }: {
   kind: LegKind
   order: Order
   leg?: Leg | null
   orderId: Hex
-  notice: TxNotice | null
-  setNotice: (n: TxNotice | null) => void
   refresh: () => void
 }) {
   const { address } = useAccount()
   const { writeContractAsync, isPending } = useWriteContract()
   const [error, setError] = useState<string | null>(null)
+  const [confirm, setConfirm] = useState<'approve' | 'lock' | null>(null)
 
   // Every chain, escrow, token and decimal comes from THIS order's venue.
   const venue = venueOfOrder(order, kind)
@@ -80,17 +79,32 @@ export default function LegCard({
       ? truncate(leg.counterparty, 8, 6)
       : truncate(counterparty, 8, 6)
 
+  const approveArgs = {
+    address: venue.token as Address,
+    abi: erc20Abi,
+    functionName: 'approve' as const,
+    args: [escrow as Address, amount] as readonly [Address, bigint],
+  }
+
+  function approve() {
+    return write(`Approve ${symbol}`, () => writeContractAsync(approveArgs))
+  }
+
+  function lock() {
+    return write(lockLabel, () => writeContractAsync(lockArgs))
+  }
+
   async function write(label: string, fn: () => Promise<Hex>) {
     setError(null)
     try {
       const hash = await fn()
-      setNotice({ label, hash, chain: chainKey, status: 'pending' })
+      txToast(label, hash, chainKey, 'pending')
       await client?.waitForTransactionReceipt({ hash })
-      setNotice({ label, hash, chain: chainKey, status: 'confirmed' })
+      txToast(label, hash, chainKey, 'confirmed')
       refresh()
     } catch {
       setError('The transaction did not complete. Check the connected chain and token approval.')
-      setNotice({ label, hash: '0x', chain: chainKey, status: 'error' })
+      txToast(label, '0x', chainKey, 'error')
     }
   }
 
@@ -225,16 +239,7 @@ export default function LegCard({
         {needsApproval && !locked ? (
           <WriteButton
             targetChain={chainKey}
-            onClick={() =>
-              void write(`Approve ${symbol}`, () =>
-                writeContractAsync({
-                  address: venue.token as Address,
-                  abi: erc20Abi,
-                  functionName: 'approve',
-                  args: [escrow as Address, amount],
-                }),
-              )
-            }
+            onClick={() => setConfirm('approve')}
             disabled={isPending || !escrow || !canLockByMe}
             primary
           >
@@ -243,7 +248,7 @@ export default function LegCard({
         ) : (
           <WriteButton
             targetChain={chainKey}
-            onClick={() => void write(lockLabel, () => writeContractAsync(lockArgs))}
+            onClick={() => setConfirm('lock')}
             disabled={lockDisabled || isPending}
             title={lockTitle}
             primary
@@ -254,21 +259,33 @@ export default function LegCard({
         {lockTitle && <span className="text-[11px] text-ink-500">{lockTitle}</span>}
       </div>
 
-      {notice && notice.chain === chainKey && (
-        <p className="mt-4 text-[11px]">
-          {notice.status === 'error' ? (
-            <span className="text-bad">The transaction did not complete. Try again.</span>
-          ) : (
-            <>
-              <span className={notice.status === 'confirmed' ? 'text-good' : 'text-ink-500'}>
-                {notice.label} {notice.status === 'confirmed' ? 'confirmed' : 'submitted'}
-              </span>
-              {notice.hash !== '0x' && (
-                <span className="ml-2"><TxLink chain={notice.chain} hash={notice.hash} /></span>
-              )}
-            </>
-          )}
-        </p>
+      {confirm && (
+        <ConfirmModal
+          title={confirm === 'approve' ? `Approve ${symbol}?` : `Lock ${symbol}?`}
+          description={confirm === 'approve'
+            ? 'This allowance lets the escrow spend the exact leg amount.'
+            : isMatch ? 'Your lock can win this open order. Funds move on-chain.' : 'This locks the leg into the venue-bound escrow.'}
+          details={[
+            { label: 'Action', value: confirm === 'approve' ? `Approve ${symbol}` : lockLabel },
+            { label: 'Token', value: `${display.name} · ${symbol}${display.verified ? '' : ` · ${UNVERIFIED_LABEL}`}` },
+            { label: 'Amount', value: formatAmount(amount, decimals, symbol) },
+            { label: 'Chain', value: CHAIN_LABELS[chainKey] },
+            { label: 'Escrow', value: truncate(escrow ?? '—', 10, 8) },
+            { label: 'Counterparty', value: counterpartyLabel },
+            { label: 'Deadline', value: formatDeadline(order.deadline) },
+            { label: 'Terms hash', value: truncate(termsHash, 12, 10) },
+          ]}
+          gasNote={`You will pay gas on ${CHAIN_LABELS[chainKey]}. The backend never signs or holds your keys.`}
+          confirmLabel={confirm === 'approve' ? `Approve ${symbol}` : lockLabel}
+          busy={isPending}
+          onCancel={() => setConfirm(null)}
+          onConfirm={() => {
+            const action = confirm
+            setConfirm(null)
+            if (action === 'approve') void approve()
+            else void lock()
+          }}
+        />
       )}
     </section>
   )

@@ -75,6 +75,7 @@ export type OrderStatus =
   | 'SETTLED'
   | 'REFUNDING'
   | 'REFUNDED'
+  | 'DELAYED'
   | 'INVALID'
 
 export type ProofEventKind =

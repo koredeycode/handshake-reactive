@@ -16,7 +16,7 @@ import {
 import { countdown, formatAmount, formatDeadline, isZeroAddress, truncate } from '../lib/format'
 import { buildHops, orderChainKeys, useProof } from '../lib/proofs'
 import { useAllOrders, type AggregatedOrderRow } from '../lib/queries'
-import { deriveStatus } from '../lib/status'
+import { useOrderStatus } from '../lib/status'
 import { useOrderTokenDisplay } from '../lib/tokenDisplay'
 import { useNow } from '../lib/useNow'
 
@@ -37,7 +37,7 @@ function WalletOrderRow({ row, wallet, now }: WalletOrderProps) {
   const isSeller =
     order.seller.toLowerCase() === address ||
     (!isZeroAddress(order.winner) && order.winner.toLowerCase() === address)
-  const status = deriveStatus(order, now)
+  const status = useOrderStatus(order)
   const proof = useProof(id, order)
   const expired = countdown(order.deadline, now) === 'expired'
   const chainKeys = orderChainKeys(order)
@@ -83,7 +83,7 @@ function WalletOrderRow({ row, wallet, now }: WalletOrderProps) {
             </span>
           </div>
         </div>
-        <StatusPill status={status} />
+        <StatusPill status={status!} />
       </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-[11px] text-ink-400">

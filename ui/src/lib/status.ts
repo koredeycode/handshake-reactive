@@ -1,4 +1,7 @@
+import { useRealtime } from './RealtimeProvider'
+import { CHAIN_IDS } from './chains'
 import { isZeroAddress } from './format'
+import { useNow } from './useNow'
 import type { Order, OrderStatus } from './types'
 
 /** Open orders carry a zero seller: any connected wallet can take the asset leg. */
@@ -21,7 +24,7 @@ export function canCancelOpenOrder(
 }
 
 /** Client-side derivation from RC flags plus the wall clock. */
-export function deriveStatus(order: Order, nowSeconds: number): OrderStatus {
+export function deriveStatus(order: Order, nowSeconds: number, delayed = false): OrderStatus {
   if (order.invalid) return 'INVALID'
   // A refund can be terminal with only one leg locked (e.g. the seller never
   // locks): require closure only of legs that were actually seen, not both.
@@ -34,6 +37,9 @@ export function deriveStatus(order: Order, nowSeconds: number): OrderStatus {
   }
   const closed = order.paymentClosed && order.assetClosed
   if (closed) return 'SETTLED'
+  // RC debt pauses delivery. This is non-terminal: never show "failed" for an
+  // order that is merely waiting for the network to resume.
+  if (delayed) return 'DELAYED'
   if (order.refundRequested) return 'REFUNDING'
   if (order.settleRequested) return 'SETTLING'
   if (order.paymentSeen && order.assetSeen) return 'READY'
@@ -41,6 +47,22 @@ export function deriveStatus(order: Order, nowSeconds: number): OrderStatus {
   if (order.paymentSeen) return 'AWAITING_ASSET'
   if (order.assetSeen) return 'AWAITING_PAYMENT'
   return 'AWAITING_PAYMENT'
+}
+
+/**
+ * Status with the SSE `keeper.status` signal applied. Any chain reporting debt
+ * > 0 makes pending orders `DELAYED`; terminal states are never overwritten.
+ */
+export function useOrderStatus(order?: Order | null): OrderStatus | null {
+  const now = useNow()
+  const { delayedChains } = useRealtime()
+  if (!order) return null
+  const chainIds = [
+    CHAIN_IDS.lasna,
+    Number(order.venue.paymentChainId),
+    Number(order.venue.assetChainId),
+  ]
+  return deriveStatus(order, now, chainIds.some((id) => delayedChains.includes(id)))
 }
 
 /**
@@ -74,6 +96,7 @@ export const STATUS_LABEL: Record<OrderStatus, string> = {
   SETTLED: 'Settled',
   REFUNDING: 'Refunding',
   REFUNDED: 'Refunded',
+  DELAYED: 'Delayed · network',
   INVALID: 'Invalid',
 }
 
@@ -86,6 +109,7 @@ export const STATUS_STYLES: Record<OrderStatus, string> = {
   SETTLED: 'border-line bg-paper-100 text-ink-700',
   REFUNDING: 'border-warn/25 bg-warn-soft text-warn',
   REFUNDED: 'border-line bg-paper-100 text-ink-500',
+  DELAYED: 'border-warn/25 bg-warn-soft text-warn',
   INVALID: 'border-bad/25 bg-bad-soft text-bad',
 }
 
@@ -97,5 +121,6 @@ export const STATUS_DOT: Record<OrderStatus, string> = {
   SETTLED: 'bg-ink-900',
   REFUNDING: 'bg-warn',
   REFUNDED: 'bg-ink-400',
+  DELAYED: 'bg-warn',
   INVALID: 'bg-bad',
 }

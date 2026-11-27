@@ -6,7 +6,7 @@ import { CHAIN_LABELS } from '../lib/chains'
 import { countdown, formatAmount, formatDeadline, truncate } from '../lib/format'
 import { useTradeTicket } from '../lib/tradeTicket'
 import { useAllOrders, type AggregatedOrderRow } from '../lib/queries'
-import { deriveStatus } from '../lib/status'
+import { useOrderStatus } from '../lib/status'
 import { useOrderTokenDisplay } from '../lib/tokenDisplay'
 import { useNow } from '../lib/useNow'
 
@@ -14,7 +14,7 @@ function PreviewRow({ row, now }: { row: AggregatedOrderRow; now: number }) {
   const { id, order } = row
   const payment = useOrderTokenDisplay(order, 'payment')
   const asset = useOrderTokenDisplay(order, 'asset')
-  const status = deriveStatus(order, now)
+  const status = useOrderStatus(order)
   const expired = countdown(order.deadline, now) === 'expired'
   return (
     <li>
@@ -40,7 +40,7 @@ function PreviewRow({ row, now }: { row: AggregatedOrderRow; now: number }) {
           </span>
         </span>
         <span className="flex items-center gap-3">
-          <StatusPill status={status} />
+          <StatusPill status={status!} />
           <span className={`tnum hidden font-mono text-[11px] sm:inline ${expired ? 'text-warn' : 'text-ink-400'}`}>
             {countdown(order.deadline, now)}
           </span>

@@ -1,22 +1,21 @@
-import { useEffect, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useEffect, useMemo, useState } from 'react'
 import { usePublicClient } from 'wagmi'
 import type { Hex } from 'viem'
 import {
   CHAIN_IDS,
   CHAIN_LABELS,
   EXPLORER_NAMES,
+  chainKeyFromId,
+  tradingChainKeyFromId,
   txUrl,
   type ChainKey,
   type TradingChainKey,
 } from './chains'
-import { tradingChainKeyFromId } from './chains'
-import { configuredAddress, useConfig } from './config'
 import { formatTimestamp, isZeroAddress, truncate } from './format'
-import { logClient, proofVenue, resolveProof, type ProofChainKeys, type ProofClients } from './logs'
-import { useOrder } from './queries'
-import { isOrderTerminal } from './status'
-import type { Order, ProofData, ProofEvent } from './types'
+import { logClient, type ProofChainKeys, type ProofClients } from './logs'
+import { useOrderDetail } from './apiQueries'
+import type { ApiTimelineEvent } from './api'
+import type { Order, ProofData, ProofEvent, ProofEventKind } from './types'
 
 /** All three EVM clients are fixed hook slots; each call picks by venue. */
 export function useProofClients(payment?: TradingChainKey, asset?: TradingChainKey): ProofClients & {
@@ -44,36 +43,78 @@ export function orderChainKeys(order?: Order | null): ProofChainKeys {
   }
 }
 
-/**
- * One cached proof query per order + venue, shared by detail, verify, raw
- * state and My Orders. Polling only while the order can still change; a
- * settled order keeps its hashes with staleTime Infinity and no refetch.
- */
-export function useProof(orderId?: Hex | null, providedOrder?: Order | null) {
-  const config = useConfig()
-  const rc = configuredAddress(config.reactive.reactiveContract)
-  const orderQuery = useOrder(orderId, { enabled: !providedOrder })
-  const order = providedOrder ?? orderQuery.data
-  const terminal = isOrderTerminal(order)
-  const keys = orderChainKeys(order)
-  const venue = order ? proofVenue(order.venue, config) : null
-  const venueKey = order
-    ? `${order.venue.paymentChainId}:${order.venue.paymentEscrow}:${order.venue.assetChainId}:${order.venue.assetEscrow}`
-    : 'unknown'
-  const queryKey = ['proof', rc, orderId, venueKey] as const
-  const orderResolved = !!providedOrder || orderQuery.isSuccess || orderQuery.isError
-  const clients = useProofClients(keys.payment, keys.asset)
+const KIND_BY_STAGE: Record<string, ProofEventKind> = {
+  PaymentLocked: 'paymentLocked',
+  'lock.payment': 'paymentLocked',
+  AssetLocked: 'assetLocked',
+  'lock.asset': 'assetLocked',
+  OrderStateChanged: 'reactive',
+  'order.state': 'reactive',
+  CallbackRequest: 'callbackRequest',
+  'callback.requested': 'callbackRequest',
+  PaymentReleased: 'paymentReleased',
+  AssetReleased: 'assetReleased',
+  PaymentRefunded: 'paymentRefunded',
+  AssetRefunded: 'assetRefunded',
+  Cron10: 'cron10',
+}
 
-  return useQuery({
-    queryKey,
-    enabled: !!orderId && orderResolved && !!order && !!venue,
-    refetchInterval: terminal ? false : 8_000,
-    staleTime: terminal ? Infinity : 8_000,
-    queryFn: async (context): Promise<ProofData> => {
-      const previous = context.client.getQueryData<ProofData>(queryKey)
-      return resolveProof(orderId!, config, clients, order, previous, venue!)
-    },
+function kindForStage(stage: string, payload: Record<string, unknown>): ProofEventKind | null {
+  const direct = KIND_BY_STAGE[stage]
+  if (direct) return direct
+  if (stage === 'terminal.release' || stage === 'terminal.refund') {
+    const asset = payload.leg === 'asset'
+    if (stage === 'terminal.release') return asset ? 'assetReleased' : 'paymentReleased'
+    return asset ? 'assetRefunded' : 'paymentRefunded'
+  }
+  return null
+}
+
+/** API-derived timeline replaces the old 8s `eth_getLogs` proof scans. */
+export function proofFromTimeline(orderId: string, timeline: ApiTimelineEvent[]): ProofData {
+  const events: ProofEvent[] = timeline.map((entry, index) => {
+    const kind = kindForStage(entry.stage, entry.payload ?? {}) ?? 'reactive'
+    const fields: Record<string, string> = {}
+    for (const [key, value] of Object.entries(entry.payload ?? {})) {
+      if (value === null || value === undefined) continue
+      fields[key] = typeof value === 'object' ? JSON.stringify(value) : String(value)
+    }
+    const nonceValue = entry.payload?.nonce
+    return {
+      id: `${entry.txHash}-${entry.logIndex}-${index}`,
+      kind,
+      chain: chainKeyFromId(entry.chainId) ?? 'lasna',
+      txHash: entry.txHash as Hex,
+      blockNumber: BigInt(entry.blockNumber || 0),
+      logIndex: entry.logIndex || 0,
+      timestamp: Number.isFinite(Date.parse(entry.at)) ? Math.floor(Date.parse(entry.at) / 1000) : null,
+      fields,
+      ...(nonceValue !== undefined ? { nonce: BigInt(String(nonceValue)) } : {}),
+    }
   })
+  const first = (kind: ProofEventKind) => events.find((event) => event.kind === kind)
+  const zero = 0n
+  return {
+    orderId: orderId as Hex,
+    events,
+    paymentLocked: first('paymentLocked'),
+    assetLocked: first('assetLocked'),
+    reactive: first('reactive'),
+    paymentReleased: first('paymentReleased'),
+    assetReleased: first('assetReleased'),
+    paymentRefunded: first('paymentRefunded'),
+    assetRefunded: first('assetRefunded'),
+    scan: { lasnaFrom: zero, paymentFrom: zero, assetFrom: zero, to: zero },
+  }
+}
+
+export function useProof(orderId?: Hex | null, _providedOrder?: Order | null) {
+  const detail = useOrderDetail(orderId)
+  const data = useMemo(
+    () => (detail.data && orderId ? proofFromTimeline(String(orderId), detail.data.timeline) : null),
+    [detail.data, orderId],
+  )
+  return { data, isLoading: detail.isLoading, isError: detail.isError, refetch: detail.refetch }
 }
 
 export interface HopStep {

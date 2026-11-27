@@ -2,10 +2,11 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, NavLink, useLocation } from 'react-router-dom'
 import { useAccount, useConnect, useDisconnect, type Connector } from 'wagmi'
-import { ArrowUpRight, ChevronDown, ClipboardList, Droplets, House, LogOut, Plus, Search, Wallet, X } from 'lucide-react'
+import { ArrowUpRight, Bell, ChevronDown, ClipboardList, Droplets, House, LogOut, Plus, Search, Wallet, X } from 'lucide-react'
 import { useBalanceGroups, useWalletBalances } from '../lib/balances'
 import { CHAIN_LABELS } from '../lib/chains'
 import { copyText, truncate } from '../lib/format'
+import { useRealtime } from '../lib/RealtimeProvider'
 import { useCopyFeedback } from '../lib/proofs'
 import { Button, ChainMark, ConvergenceMark, icon } from './ui'
 
@@ -279,6 +280,92 @@ function WalletControl() {
   )
 }
 
+/** SSE connection state plus the in-app notification centre (toasts are transient). */
+function RealtimeControls() {
+  const { status, notifications, unreadCount, acknowledge, clearNotifications } = useRealtime()
+  const [open, setOpen] = useState(false)
+  const root = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onPointerDown = (event: PointerEvent) => {
+      if (root.current && !root.current.contains(event.target as Node)) setOpen(false)
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [open])
+
+  const label = status === 'open' ? 'Live updates' : status === 'reconnecting' ? 'Reconnecting' : 'Connecting'
+  return (
+    <div className="flex shrink-0 items-center gap-2">
+      <span
+        title={`Realtime stream: ${label}`}
+        className="inline-flex min-h-10 items-center gap-1.5 rounded-full border border-line bg-paper-0 px-2 text-[10px] text-ink-500 sm:px-2.5"
+      >
+        <span className={`h-1.5 w-1.5 rounded-full ${status === 'open' ? 'bg-good' : status === 'reconnecting' ? 'bg-warn animate-pulse' : 'bg-ink-400'}`} />
+        <span className="hidden sm:inline">{label}</span>
+      </span>
+      <div className="relative" ref={root}>
+        <button
+          type="button"
+          aria-label={`Notifications${unreadCount ? `, ${unreadCount} unread` : ''}`}
+          aria-expanded={open}
+          onClick={() => {
+            setOpen((value) => !value)
+            if (!open) notifications.forEach((item) => acknowledge(item.id))
+          }}
+          className="relative flex min-h-10 min-w-10 items-center justify-center rounded-xl border border-line bg-paper-0 text-ink-500 transition-colors hover:bg-paper-100 hover:text-ink-900"
+        >
+          <Bell {...icon} />
+          {unreadCount > 0 && (
+            <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[9px] font-semibold text-white">
+              {unreadCount}
+            </span>
+          )}
+        </button>
+        {open && (
+          <div
+            role="region"
+            aria-label="Notifications"
+            className="absolute right-0 top-full z-40 mt-2 w-[min(340px,calc(100vw-2rem))] rounded-2xl border border-line bg-paper-0 p-3 shadow-[0_18px_45px_rgba(24,24,27,0.12)]"
+          >
+            <div className="flex items-center justify-between border-b border-line pb-2.5">
+              <span className="text-[11px] font-medium text-ink-700">Notifications</span>
+              <button
+                type="button"
+                onClick={clearNotifications}
+                className="inline-flex min-h-10 items-center px-1 text-[11px] text-ink-500 hover:text-accent"
+              >
+                Clear all
+              </button>
+            </div>
+            {notifications.length === 0 ? (
+              <p className="py-5 text-center text-[11px] text-ink-400">No notifications yet.</p>
+            ) : (
+              <ul className="max-h-72 divide-y divide-line overflow-y-auto">
+                {notifications.map((item) => (
+                  <li key={item.id} className="py-2.5">
+                    <p className="text-[12px] font-medium text-ink-900">{item.title}</p>
+                    <p className="mt-0.5 text-[11px] leading-relaxed text-ink-500">{item.body}</p>
+                    <p className="mt-1 text-[10px] text-ink-400">{new Date(item.at).toLocaleTimeString()}</p>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function Shell({ children }: { children: ReactNode }) {
   const { pathname } = useLocation()
   const publicView = pathname.startsWith('/verify')
@@ -364,6 +451,7 @@ export default function Shell({ children }: { children: ReactNode }) {
             <span className="truncate font-medium text-ink-900">{label}</span>
           </div>
           <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+            <RealtimeControls />
             {publicView ? (
               <span className="rounded-full border border-line bg-paper-0 px-2 py-0.5 text-[10px] text-ink-500 sm:px-2.5 sm:py-1 sm:text-[11px]">
                 Public view

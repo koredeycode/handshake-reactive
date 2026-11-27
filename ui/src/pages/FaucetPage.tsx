@@ -1,13 +1,13 @@
 import { useState } from 'react'
 import { useAccount, useChainId, useConnect, usePublicClient, useSwitchChain, useWriteContract } from 'wagmi'
 import { parseUnits, type Address, type Hex } from 'viem'
-import type { TxNotice } from '../components/WriteButton'
-import { Button, ChainMark, ExternalLink, TokenMark, TxLink, inputClass } from '../components/ui'
+import { Button, ChainMark, ExternalLink, TokenMark, inputClass } from '../components/ui'
 import { CHAIN_IDS, CHAIN_LABELS, GAS_LINKS, TRADING_CHAIN_KEYS, type TradingChainKey } from '../lib/chains'
 import { mintAbi } from '../lib/contracts'
 import { formatAmount } from '../lib/format'
 import { logClient } from '../lib/logs'
 import { useErc20Balance } from '../lib/queries'
+import { txToast } from '../lib/toasts'
 import { useChainTokens, type ChainTokenOption } from '../lib/tokenDisplay'
 import { UNVERIFIED_LABEL, useTradeTicket } from '../lib/tradeTicket'
 
@@ -29,7 +29,6 @@ export default function FaucetPage() {
   const [chain, setChain] = useState<TradingChainKey>('base')
   const [tokenAddress, setTokenAddress] = useState<string | null>(null)
   const [amount, setAmount] = useState('1000')
-  const [notice, setNotice] = useState<TxNotice | null>(null)
   const curated = useChainTokens(chain, true)
   const discovered: ChainTokenOption[] = (customTokens[chain] ?? []).map((token) => ({
     address: token.address,
@@ -69,11 +68,11 @@ export default function FaucetPage() {
     if (next === chain) return
     setChain(next)
     setTokenAddress(null)
-    setNotice(null)
   }
 
   async function mint() {
     if (!token || !address || !parsed || !mintable) return
+    const label = `Mint ${token.symbol}`
     try {
       const hash = await writeContractAsync({
         address: token.address as Address,
@@ -81,12 +80,12 @@ export default function FaucetPage() {
         functionName: 'mint',
         args: [address, parsed],
       })
-      setNotice({ label: `Mint ${token.symbol}`, hash, chain, status: 'pending' })
+      txToast(label, hash, chain, 'pending')
       await client?.waitForTransactionReceipt({ hash })
-      setNotice({ label: `Mint ${token.symbol}`, hash, chain, status: 'confirmed' })
+      txToast(label, hash, chain, 'confirmed')
       void balance.refetch()
     } catch {
-      setNotice({ label: 'Mint', hash: '0x', chain, status: 'error' })
+      txToast(label, '0x', chain, 'error')
     }
   }
 
@@ -144,7 +143,6 @@ export default function FaucetPage() {
                   aria-pressed={active}
                   onClick={() => {
                     setTokenAddress(entry.address)
-                    setNotice(null)
                   }}
                   className={`flex min-h-12 min-w-0 max-w-full items-center gap-2 rounded-xl border px-2.5 py-2 text-left transition-colors ${
                     active ? 'border-accent/25 bg-accent-soft' : 'border-line bg-paper-0 hover:bg-paper-100'
@@ -232,21 +230,6 @@ export default function FaucetPage() {
             )}
             {mintable && !parsed && <span className="text-[11px] text-ink-500">Enter an amount greater than zero.</span>}
           </div>
-
-          {notice && (
-            <p className="mt-4 text-[11px]">
-              {notice.status === 'error' ? (
-                <span className="text-bad">The mint did not complete. Try again.</span>
-              ) : (
-                <>
-                  <span className={notice.status === 'confirmed' ? 'text-good' : 'text-ink-500'}>
-                    {notice.label} {notice.status === 'confirmed' ? 'confirmed' : 'submitted'}
-                  </span>
-                  {notice.hash !== '0x' && <span className="ml-2"><TxLink chain={notice.chain} hash={notice.hash} /></span>}
-                </>
-              )}
-            </p>
-          )}
 
           <div className="mt-5 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-line pt-4">
             <span className="text-[11px] text-ink-400">Need gas?</span>
