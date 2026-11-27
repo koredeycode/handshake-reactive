@@ -124,27 +124,32 @@ library HandshakeSupport {
 
     /// @notice RPC endpoint for each leg. PAYMENT_RPC / ASSET_RPC / SEPOLIA_RPC let a
     ///         market point at the correct chains without repurposing legacy variable names.
+    /// @dev `vm.setEnv(name, "")` is a no-op in some Foundry versions, so tests use
+    ///      this explicit sentinel to clear an override without leaving a stale value.
+    string private constant ENV_UNSET = "__unset__";
+
+    function _envOverride(string memory name_) internal view returns (string memory) {
+        if (!VM.envExists(name_)) return "";
+        string memory value_ = VM.envString(name_);
+        if (bytes(value_).length == 0 || keccak256(bytes(value_)) == keccak256(bytes(ENV_UNSET))) return "";
+        return value_;
+    }
+
     function paymentRpc() internal view returns (string memory) {
-        if (VM.envExists("PAYMENT_RPC")) {
-            string memory override_ = VM.envString("PAYMENT_RPC");
-            if (bytes(override_).length != 0) return override_;
-        }
+        string memory override_ = _envOverride("PAYMENT_RPC");
+        if (bytes(override_).length != 0) return override_;
         return rpc("BASE_RPC");
     }
 
     function assetRpc() internal view returns (string memory) {
-        if (VM.envExists("ASSET_RPC")) {
-            string memory override_ = VM.envString("ASSET_RPC");
-            if (bytes(override_).length != 0) return override_;
-        }
+        string memory override_ = _envOverride("ASSET_RPC");
+        if (bytes(override_).length != 0) return override_;
         return rpc("UNICHAIN_RPC");
     }
 
     function sepoliaRpc() internal view returns (string memory) {
-        if (VM.envExists("SEPOLIA_RPC")) {
-            string memory override_ = VM.envString("SEPOLIA_RPC");
-            if (bytes(override_).length != 0) return override_;
-        }
+        string memory override_ = _envOverride("SEPOLIA_RPC");
+        if (bytes(override_).length != 0) return override_;
         return rpc("ETHEREUM_SEPOLIA_RPC");
     }
 
