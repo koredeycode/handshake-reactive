@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { Link, NavLink, useLocation } from 'react-router-dom'
 import { useAccount, useConnect, useDisconnect, type Connector } from 'wagmi'
-import { ChevronDown, ClipboardList, Droplets, House, LogOut, Plus, Search, Wallet } from 'lucide-react'
+import { ArrowUpRight, ChevronDown, ClipboardList, Droplets, House, LogOut, Plus, Search, Wallet, X } from 'lucide-react'
 import { useBalanceGroups, useWalletBalances } from '../lib/balances'
 import { CHAIN_LABELS } from '../lib/chains'
 import { copyText, truncate } from '../lib/format'
@@ -33,7 +34,7 @@ function Logo() {
   )
 }
 
-/** Friendly connector names for the small connect menu. */
+/** Friendly connector names for the connect modal. */
 function connectorLabel(connector: Connector): string {
   if (connector.id === 'walletConnect') return 'WalletConnect'
   if (connector.id === 'injected' || connector.id === 'metaMask') return 'Browser wallet'
@@ -49,10 +50,11 @@ function WalletControl() {
   const chips = useWalletBalances(isConnected ? address : null)
   const groups = useBalanceGroups()
   const [open, setOpen] = useState(false)
-  const [connectMenuOpen, setConnectMenuOpen] = useState(false)
+  const [connectModalOpen, setConnectModalOpen] = useState(false)
   const root = useRef<HTMLDivElement>(null)
-  const connectRoot = useRef<HTMLDivElement>(null)
-  const connector = connectors[0]
+  const trigger = useRef<HTMLDivElement>(null)
+  const firstOption = useRef<HTMLButtonElement>(null)
+  const dialog = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!open) return
@@ -70,21 +72,49 @@ function WalletControl() {
     }
   }, [open])
 
+  /**
+   * Modal behaviour: focus the first connector on open, keep Tab inside the
+   * dialog, close on Escape, lock page scroll and return focus on close.
+   * Backdrop clicks close via the overlay's own onClick handler below.
+   */
   useEffect(() => {
-    if (!connectMenuOpen) return
-    const onPointerDown = (event: PointerEvent) => {
-      if (connectRoot.current && !connectRoot.current.contains(event.target as Node)) setConnectMenuOpen(false)
-    }
+    if (!connectModalOpen) return
+    const previouslyFocused = document.activeElement as HTMLElement | null
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    firstOption.current?.focus()
+
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setConnectMenuOpen(false)
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setConnectModalOpen(false)
+        return
+      }
+      if (event.key !== 'Tab' || !dialog.current) return
+      const focusable = Array.from(dialog.current.querySelectorAll<HTMLElement>('button:not([disabled])'))
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (!first || !last) return
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
     }
-    document.addEventListener('pointerdown', onPointerDown)
     document.addEventListener('keydown', onKeyDown)
+
     return () => {
-      document.removeEventListener('pointerdown', onPointerDown)
       document.removeEventListener('keydown', onKeyDown)
+      document.body.style.overflow = previousOverflow
+      const restore =
+        previouslyFocused && document.contains(previouslyFocused)
+          ? previouslyFocused
+          : trigger.current?.querySelector('button')
+      if (restore && document.contains(restore)) restore.focus()
     }
-  }, [connectMenuOpen])
+  }, [connectModalOpen])
 
   if (!isConnected || !address) {
     const connectLabel = (
@@ -93,59 +123,84 @@ function WalletControl() {
         <span className="sm:hidden">{isPending ? '…' : 'Connect'}</span>
       </>
     )
-    // One connector (the default injected-only build): keep the one-click path.
-    if (connectors.length <= 1) {
-      return (
-        <Button
-          variant="primary"
-          size="sm"
-          icon={<Wallet {...icon} />}
-          disabled={!connector || isPending}
-          onClick={() => connector && connect({ connector })}
-        >
-          {connectLabel}
-        </Button>
-      )
-    }
 
     return (
-      <div className="relative" ref={connectRoot}>
-        <Button
-          variant="primary"
-          size="sm"
-          icon={<Wallet {...icon} />}
-          aria-haspopup="menu"
-          aria-expanded={connectMenuOpen}
-          aria-label="Choose a wallet connector"
-          disabled={isPending}
-          onClick={() => setConnectMenuOpen((value) => !value)}
-        >
-          {connectLabel}
-        </Button>
-        {connectMenuOpen && (
-          <div
-            role="menu"
-            aria-label="Choose a wallet connector"
-            className="absolute right-0 top-full z-40 mt-2 w-[220px] max-w-[calc(100vw-2rem)] rounded-2xl border border-line bg-paper-0 p-2 shadow-[0_18px_45px_rgba(24,24,27,0.12)]"
+      <>
+        <div ref={trigger}>
+          <Button
+            variant="primary"
+            size="sm"
+            icon={<Wallet {...icon} />}
+            aria-haspopup="dialog"
+            aria-expanded={connectModalOpen}
+            disabled={isPending}
+            onClick={() => setConnectModalOpen(true)}
           >
-            <p className="px-2 py-1.5 text-[10px] uppercase tracking-wide text-ink-400">Connect with</p>
-            {connectors.map((item) => (
-              <button
-                key={item.uid}
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  setConnectMenuOpen(false)
-                  connect({ connector: item })
-                }}
-                className="flex min-h-10 w-full items-center rounded-xl px-2 text-left text-[12px] text-ink-700 transition-colors hover:bg-paper-100"
+            {connectLabel}
+          </Button>
+        </div>
+
+        {connectModalOpen &&
+          createPortal(
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/40 p-4 backdrop-blur-[2px]"
+              onClick={(event) => {
+                if (event.target === event.currentTarget) setConnectModalOpen(false)
+              }}
+            >
+              <div
+                ref={dialog}
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="wallet-connect-title"
+                className="w-full max-w-[380px] rounded-2xl border border-line bg-paper-0 shadow-[0_24px_60px_rgba(24,24,27,0.22)]"
               >
-                {connectorLabel(item)}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
+                <div className="flex items-start justify-between gap-3 border-b border-line px-5 py-4">
+                  <div className="min-w-0">
+                    <h2 id="wallet-connect-title" className="text-[15px] font-semibold text-ink-900">
+                      Connect wallet
+                    </h2>
+                    <p className="mt-1 text-[11px] text-ink-400">Choose a wallet to continue.</p>
+                  </div>
+                  <button
+                    type="button"
+                    aria-label="Close wallet selection"
+                    onClick={() => setConnectModalOpen(false)}
+                    className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-ink-400 transition-colors hover:bg-paper-100 hover:text-ink-700"
+                  >
+                    <X {...icon} />
+                  </button>
+                </div>
+                <div className="space-y-2 p-4 sm:p-5">
+                  {connectors.length === 0 && (
+                    <p className="py-3 text-center text-[12px] text-ink-400">
+                      No wallets detected. Install a browser wallet or use WalletConnect.
+                    </p>
+                  )}
+                  {connectors.map((item, index) => (
+                    <button
+                      key={item.uid}
+                      ref={index === 0 ? firstOption : undefined}
+                      type="button"
+                      onClick={() => {
+                        setConnectModalOpen(false)
+                        connect({ connector: item })
+                      }}
+                      className="flex min-h-11 w-full items-center gap-3 rounded-xl border border-line bg-paper-0 px-3 py-2 text-left transition-colors hover:border-ink-400/50 hover:bg-paper-100"
+                    >
+                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-paper-100 text-ink-500">
+                        <Wallet {...icon} />
+                      </span>
+                      <span className="min-w-0 flex-1 truncate text-[13px] text-ink-700">{connectorLabel(item)}</span>
+                      <ArrowUpRight {...icon} className="shrink-0 text-ink-400" />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )}
+      </>
     )
   }
 

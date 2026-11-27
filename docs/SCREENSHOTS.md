@@ -25,6 +25,9 @@ chain flip, token pickers, blank-seller open orders and venue-bound terms hashes
 ### Bare-order-ID Track / Verify (wallet-free)
 ![Verify desktop](./screenshots/09-verify-desktop.png)
 
+### Wallet connect modal — Browser wallet / WalletConnect
+![Wallet modal desktop](./screenshots/10-wallet-modal-desktop.png)
+
 ## Mobile — 390px
 
 ### Home
@@ -38,3 +41,10 @@ chain flip, token pickers, blank-seller open orders and venue-bound terms hashes
 
 ### Faucet
 ![Faucet mobile](./screenshots/08-faucet-mobile.png)
+
+### Wallet connect modal
+![Wallet modal mobile](./screenshots/11-wallet-modal-mobile.png)
+
+The wallet modal shots were captured with a placeholder WalletConnect project id
+in the dev environment so both connector options are visible; no env value is
+committed.
