@@ -1,3 +1,4 @@
+import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { Counter, Gauge, Histogram, Registry } from 'prom-client';
 
 export const registry = new Registry();
@@ -56,6 +57,11 @@ export const metrics = {
   sseOverflow: new Counter({
     name: 'sse_buffer_overflow_total',
     help: 'SSE clients disconnected due to backpressure',
+    registers: [registry],
+  }),
+  eventLoopLag: new Gauge({
+    name: 'event_loop_lag_ms',
+    help: 'Mean Node.js event loop delay in milliseconds',
     registers: [registry],
   }),
   notificationEvents: new Counter({
@@ -129,6 +135,33 @@ export async function walletCacheHitRatio(): Promise<number> {
   const misses = all.values.find((value) => value.labels.result === 'miss')?.value ?? 0;
   const total = hits + misses;
   return total === 0 ? 0 : hits / total;
+}
+
+/** Event-loop liveness: a hung loop stops answering /live even while the VM is up. */
+let lagMonitor: ReturnType<typeof monitorEventLoopDelay> | undefined;
+let lagTimer: ReturnType<typeof setInterval> | undefined;
+let currentLagMs = 0;
+
+export function eventLoopLagMs(): number {
+  return currentLagMs;
+}
+
+export function startEventLoopMonitor(): void {
+  if (lagMonitor) return;
+  lagMonitor = monitorEventLoopDelay({ resolution: 10 });
+  lagMonitor.enable();
+  lagTimer = setInterval(() => {
+    currentLagMs = (lagMonitor?.mean ?? 0) / 1e6;
+    metrics.eventLoopLag.set(currentLagMs);
+  }, 1_000);
+  lagTimer.unref();
+}
+
+export function stopEventLoopMonitor(): void {
+  if (lagTimer) clearInterval(lagTimer);
+  lagTimer = undefined;
+  lagMonitor?.disable();
+  lagMonitor = undefined;
 }
 
 export async function metricsText(): Promise<string> {
