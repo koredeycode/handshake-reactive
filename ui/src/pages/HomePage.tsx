@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { ArrowRight, Plus } from 'lucide-react'
 import { Button, ChainMark, EmptyState, Panel, RouteStrip, Spinner, StatusPill, TokenMark, icon } from '../components/ui'
@@ -57,7 +58,9 @@ function PreviewRow({ row, now }: { row: AggregatedOrderRow; now: number }) {
 function OrderBookPreview() {
   const { data: orders, isLoading, isError } = useAllOrders()
   const now = useNow()
-  const preview = orders?.slice(0, 10) ?? []
+  const [visible, setVisible] = useState(10)
+  const preview = orders?.slice(0, visible) ?? []
+  const hasMore = !!orders && visible < orders.length
 
   return (
     <Panel
@@ -65,7 +68,7 @@ function OrderBookPreview() {
       subtitle="Live from the reactive ledger"
       action={
         orders && orders.length > 0 ? (
-          <span className="tnum font-mono text-[11px] text-ink-400">Newest {preview.length} of {orders.length}</span>
+          <span className="tnum font-mono text-[11px] text-ink-400">Showing {preview.length} of {orders.length}</span>
         ) : undefined
       }
       bodyClass=""
@@ -77,9 +80,22 @@ function OrderBookPreview() {
       ) : preview.length === 0 ? (
         <div className="p-6"><EmptyState title="No open orders" message="A new trade puts the first pair on the book." /></div>
       ) : (
-        <ul className="divide-y divide-line">
-          {preview.map((row) => <PreviewRow key={row.id} row={row} now={now} />)}
-        </ul>
+        <>
+          <ul className="divide-y divide-line">
+            {preview.map((row) => <PreviewRow key={row.id} row={row} now={now} />)}
+          </ul>
+          {hasMore && (
+            <div className="border-t border-line px-5 py-3 text-center sm:px-6">
+              <button
+                type="button"
+                onClick={() => setVisible((count) => count + 10)}
+                className="min-h-9 rounded-full border border-line px-4 text-[11px] font-medium text-ink-700 transition-colors hover:bg-paper-100 hover:text-accent"
+              >
+                Load next {Math.min(10, orders.length - visible)} orders
+              </button>
+            </div>
+          )}
+        </>
       )}
     </Panel>
   )
@@ -97,7 +113,7 @@ export default function HomePage() {
           Two legs. One decision. Both legs settle.
         </h1>
         <p className="mt-4 max-w-xl text-sm leading-relaxed text-ink-500">
-          Lock payment on {CHAIN_LABELS[ticket.paymentChain]} and the asset on {CHAIN_LABELS[ticket.assetChain]}. Reactive Lasna decides once, then releases both legs — no intermediary holding funds.
+          Trade across Base Sepolia, Unichain Sepolia and Ethereum Sepolia in any direction. Lock payment on {CHAIN_LABELS[ticket.paymentChain]} and the asset on {CHAIN_LABELS[ticket.assetChain]}; Reactive Lasna decides once, then releases both legs — no intermediary holding funds.
         </p>
         <RouteStrip className="mt-8" />
         <div className="mt-8 flex flex-wrap gap-3">

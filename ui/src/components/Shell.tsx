@@ -290,7 +290,7 @@ export default function Shell({ children }: { children: ReactNode }) {
           </div>
         </nav>
         <div className="border-t border-line px-5 py-4 text-[11px] text-ink-400">
-          Two chains in, one decision, two out
+          Three testnets, one decision, two releases
         </div>
       </aside>
 

@@ -1,5 +1,5 @@
-import type { ButtonHTMLAttributes, ReactNode } from 'react'
-import { ArrowRight, ArrowUpRight, Copy, Inbox } from 'lucide-react'
+import { useEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from 'react'
+import { ArrowRight, ArrowUpRight, Check, ChevronDown, Copy, Inbox } from 'lucide-react'
 import { CHAIN_LABELS, CHAIN_LOGO, TRADING_CHAIN_KEYS, txUrl, type TradingChainKey } from '../lib/chains'
 import { copyText, truncate } from '../lib/format'
 import { useMarket } from '../lib/markets'
@@ -267,21 +267,71 @@ export function ChainSelect({
   onSelect: (chain: TradingChainKey) => void
   disabled?: boolean
 }) {
+  const [open, setOpen] = useState(false)
+  const root = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onPointerDown = (event: PointerEvent) => {
+      if (root.current && !root.current.contains(event.target as Node)) setOpen(false)
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [open])
+
   return (
-    <div className="relative min-w-0 shrink-0" title={`${label} chain: ${CHAIN_LABELS[chain]}`}>
-      <select
+    <div className="relative min-w-0 shrink-0" ref={root} title={`${label} chain: ${CHAIN_LABELS[chain]}`}>
+      <button
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
         aria-label={`${label} chain`}
-        value={chain}
         disabled={disabled}
-        onChange={(event) => onSelect(event.target.value as TradingChainKey)}
-        className="max-w-full appearance-none rounded-full border border-line bg-paper-0 py-1.5 pl-2 pr-2 text-[11px] font-medium text-ink-700 outline-none transition-colors hover:bg-paper-100 focus:border-accent"
+        onClick={() => setOpen((value) => !value)}
+        className="flex max-w-full items-center gap-1.5 rounded-full border border-line bg-paper-0 py-1.5 pl-2 pr-2.5 text-[11px] font-medium text-ink-700 transition-colors hover:bg-paper-100 disabled:opacity-50"
       >
-        {TRADING_CHAIN_KEYS.map((key) => (
-          <option key={key} value={key}>
-            {CHAIN_LABELS[key]}
-          </option>
-        ))}
-      </select>
+        <ChainMark chain={chain} className="h-3.5 w-3.5" />
+        <span className="truncate">{CHAIN_LABELS[chain]}</span>
+        <ChevronDown {...icon} className={`h-3.5 w-3.5 shrink-0 text-ink-400 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div
+          role="listbox"
+          aria-label={`${label} chain`}
+          className="absolute right-0 top-[calc(100%+6px)] z-30 w-[218px] rounded-2xl border border-line bg-paper-0 p-1.5 shadow-[0_18px_45px_rgba(24,24,27,0.12)]"
+        >
+          <p className="px-2 py-1.5 text-[10px] uppercase tracking-wide text-ink-400">{label} chain</p>
+          {TRADING_CHAIN_KEYS.map((key) => {
+            const selected = key === chain
+            return (
+              <button
+                key={key}
+                type="button"
+                role="option"
+                aria-selected={selected}
+                onClick={() => {
+                  onSelect(key)
+                  setOpen(false)
+                }}
+                className={`flex w-full items-center gap-2.5 rounded-xl px-2 py-2 text-left text-[12px] transition-colors hover:bg-paper-100 ${
+                  selected ? 'bg-accent-soft/40 text-accent' : 'text-ink-800'
+                }`}
+              >
+                <ChainMark chain={key} className="h-4 w-4" />
+                <span className="flex-1 truncate font-medium">{CHAIN_LABELS[key]}</span>
+                {selected && <Check {...icon} className="h-3.5 w-3.5 shrink-0" />}
+              </button>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }
