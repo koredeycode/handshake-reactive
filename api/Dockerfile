@@ -1,11 +1,8 @@
 FROM node:24-alpine
 WORKDIR /app
+ENV NODE_ENV=production
 COPY package.json package-lock.json ./
-RUN npm ci
-COPY tsconfig.json tsconfig.build.json drizzle.config.ts ./
-COPY migrations ./migrations
-COPY src ./src
-RUN npm run build
-ENV PORT=8080
+RUN npm ci --omit=dev
+COPY dist ./dist
 EXPOSE 8080
 CMD ["node", "dist/index.js"]
