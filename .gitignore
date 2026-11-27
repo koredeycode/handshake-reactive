@@ -11,3 +11,4 @@ latency.json
 latency.csv
 proof.md
 *.tsbuildinfo
+.vercel
