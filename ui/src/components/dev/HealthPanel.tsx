@@ -12,6 +12,7 @@ import {
 } from '../../lib/logs'
 import { useMarket, useMarketConfig } from '../../lib/markets'
 import { useHealth, type HealthRow } from '../../lib/queries'
+import { useSubscriptionCount } from '../../lib/venues'
 import { ExternalLink, Metric, Panel, Spinner } from '../ui'
 
 function StatusDot({ debt }: { debt?: bigint }) {
@@ -75,6 +76,8 @@ export default function HealthPanel() {
   const legacy = configuredAddress(config.reactive.legacySystemContract)
   const paymentChain = chainKeyFor('payment')
   const assetChain = chainKeyFor('asset')
+
+  const subscriptions = useSubscriptionCount()
 
   const cron = useQuery({
     queryKey: ['cron-status', market.id, legacy],
@@ -141,7 +144,11 @@ export default function HealthPanel() {
             <h3 className="text-xs font-medium text-ink-900">Subscriptions and cron</h3>
           </div>
           <div className="grid grid-cols-2 gap-2">
-            <Metric label="Active subs" value="—" hint="Not stored on-chain" />
+            <Metric
+              label="Active subs"
+              value={subscriptions.data !== null && subscriptions.data !== undefined ? subscriptions.data : '—'}
+              hint="subscriptionCount() on the RC"
+            />
             <Metric
               label="Cron10 last seen"
               value={cron.data?.block ? `#${cron.data.block.toString()}` : '—'}
@@ -149,8 +156,8 @@ export default function HealthPanel() {
             />
           </div>
           <p className="mt-3 text-[10px] leading-relaxed text-ink-400">
-            Subscriptions live in the Reactive node, not in contract storage. Verify the seven criteria with
-            the Reactive node tooling; this UI will not guess a count.
+            Six subscriptions per registered venue plus Cron10. The count is read from the RC registry,
+            not guessed; log-based confirmation lives in the preflight script.
           </p>
           <div className="mt-3 space-y-1 font-mono text-[10px] text-ink-400">
             <div>{CHAIN_LABELS.lasna}</div>

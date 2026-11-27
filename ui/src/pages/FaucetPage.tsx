@@ -3,25 +3,18 @@ import { useAccount, useChainId, useConnect, usePublicClient, useSwitchChain, us
 import { parseUnits, type Address, type Hex } from 'viem'
 import type { TxNotice } from '../components/WriteButton'
 import { Button, ChainMark, ExternalLink, TokenMark, TxLink, inputClass } from '../components/ui'
-import { CHAIN_IDS, CHAIN_LABELS } from '../lib/chains'
+import { CHAIN_IDS, CHAIN_LABELS, GAS_LINKS, TRADING_CHAIN_KEYS, type TradingChainKey } from '../lib/chains'
 import { mintAbi } from '../lib/contracts'
 import { formatAmount } from '../lib/format'
 import { logClient } from '../lib/logs'
-import { useChainTokens } from '../lib/tokenDisplay'
 import { useErc20Balance } from '../lib/queries'
-import type { ChainKey } from '../lib/chains'
+import { useChainTokens, type ChainTokenOption } from '../lib/tokenDisplay'
+import { UNVERIFIED_LABEL, useTradeTicket } from '../lib/tradeTicket'
 
-const CHAIN_TABS: ChainKey[] = ['base', 'unichain']
-
-function GasLinks({ chain }: { chain: ChainKey }) {
-  const links = [
-    { label: 'Alchemy', href: `https://www.alchemy.com/faucets/${chain === 'base' ? 'base-sepolia' : 'unichain-sepolia'}` },
-    { label: 'ZalalenA', href: `https://faucet.zalalena.com/${chain === 'base' ? 'base' : 'unichain'}` },
-    { label: 'Superchain', href: 'https://app.optimism.io/faucet' },
-  ]
+function GasLinks({ chain }: { chain: TradingChainKey }) {
   return (
     <div className="flex flex-wrap gap-x-4 gap-y-1">
-      {links.map((link) => (
+      {GAS_LINKS[chain].map((link) => (
         <ExternalLink key={link.label} href={link.href} className="inline-flex min-h-8 items-center text-[11px]">
           {link.label}
         </ExternalLink>
@@ -32,11 +25,22 @@ function GasLinks({ chain }: { chain: ChainKey }) {
 
 /** One card: chain, asset, amount, then switch / mint. */
 export default function FaucetPage() {
-  const [chain, setChain] = useState<ChainKey>('base')
+  const { customTokens } = useTradeTicket()
+  const [chain, setChain] = useState<TradingChainKey>('base')
   const [tokenAddress, setTokenAddress] = useState<string | null>(null)
   const [amount, setAmount] = useState('1000')
   const [notice, setNotice] = useState<TxNotice | null>(null)
-  const tokens = useChainTokens(chain)
+  const curated = useChainTokens(chain, true)
+  const discovered: ChainTokenOption[] = (customTokens[chain] ?? []).map((token) => ({
+    address: token.address,
+    name: token.name,
+    symbol: token.symbol,
+    decimals: token.decimals,
+    mark: token.mark,
+    color: token.color,
+    verified: false,
+  }))
+  const tokens = [...curated, ...discovered]
   const token = tokens.find((entry) => entry.address === tokenAddress) ?? tokens[0]
 
   const { address, isConnected } = useAccount()
@@ -50,6 +54,7 @@ export default function FaucetPage() {
   const balance = useErc20Balance(chain, token?.address, address)
 
   const wrongChain = isConnected && connectedChainId !== CHAIN_IDS[chain]
+  const mintable = !!token?.verified && !token.placeholder
   let parsed: bigint | null = null
   if (token) {
     try {
@@ -60,7 +65,7 @@ export default function FaucetPage() {
     }
   }
 
-  function chooseChain(next: ChainKey) {
+  function chooseChain(next: TradingChainKey) {
     if (next === chain) return
     setChain(next)
     setTokenAddress(null)
@@ -68,7 +73,7 @@ export default function FaucetPage() {
   }
 
   async function mint() {
-    if (!token || !address || !parsed) return
+    if (!token || !address || !parsed || !mintable) return
     try {
       const hash = await writeContractAsync({
         address: token.address as Address,
@@ -90,22 +95,20 @@ export default function FaucetPage() {
       <div>
         <h1 className="text-xl font-medium text-ink-900">Faucet</h1>
         <p className="mt-1 max-w-2xl text-xs leading-relaxed text-ink-500">
-          Mint test tokens on the chain you select. Each token is local to its chain.
+          Mint our test tokens on the chain you select. Each token is local to its chain. Other tokens show a balance but are not mintable here.
         </p>
       </div>
 
       <section className="rounded-2xl border border-line bg-paper-0 p-5 sm:p-6">
         <div className="flex min-w-0 items-center gap-3">
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-accent-soft text-[12px] font-medium text-accent-ink">
-            1
-          </span>
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-accent-soft text-[12px] font-medium text-accent-ink">1</span>
           <div className="min-w-0">
             <h2 className="text-sm font-medium text-ink-900">Choose a chain</h2>
             <p className="text-[11px] text-ink-400">Where the tokens will be minted</p>
           </div>
         </div>
-        <div className="mt-3 grid grid-cols-2 gap-2">
-          {CHAIN_TABS.map((option) => (
+        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+          {TRADING_CHAIN_KEYS.map((option) => (
             <button
               key={option}
               type="button"
@@ -125,9 +128,7 @@ export default function FaucetPage() {
 
         <div className="mt-6 border-t border-line pt-5">
           <div className="flex min-w-0 items-center gap-3">
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-accent-soft text-[12px] font-medium text-accent-ink">
-              2
-            </span>
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-accent-soft text-[12px] font-medium text-accent-ink">2</span>
             <div className="min-w-0">
               <h2 className="text-sm font-medium text-ink-900">Choose an asset</h2>
               <p className="text-[11px] text-ink-400">Tokens available on {CHAIN_LABELS[chain]}</p>
@@ -138,7 +139,7 @@ export default function FaucetPage() {
               const active = entry.address === token?.address
               return (
                 <button
-                  key={entry.address}
+                  key={`${chain}:${entry.address}`}
                   type="button"
                   aria-pressed={active}
                   onClick={() => {
@@ -146,15 +147,16 @@ export default function FaucetPage() {
                     setNotice(null)
                   }}
                   className={`flex min-h-12 min-w-0 max-w-full items-center gap-2 rounded-xl border px-2.5 py-2 text-left transition-colors ${
-                    active
-                      ? 'border-accent/25 bg-accent-soft'
-                      : 'border-line bg-paper-0 hover:bg-paper-100'
+                    active ? 'border-accent/25 bg-accent-soft' : 'border-line bg-paper-0 hover:bg-paper-100'
                   }`}
                 >
                   <TokenMark symbol={entry.symbol} mark={entry.mark} color={entry.color} size="sm" />
                   <span className="min-w-0">
-                    <span className="block truncate text-[12px] font-medium text-ink-900">
-                      {entry.symbol}
+                    <span className="flex items-center gap-1.5">
+                      <span className="block truncate text-[12px] font-medium text-ink-900">{entry.symbol}</span>
+                      {!entry.verified && (
+                        <span className="rounded-full border border-warn/25 bg-warn-soft px-1.5 py-0.5 text-[9px] text-warn">{UNVERIFIED_LABEL}</span>
+                      )}
                     </span>
                     <span className="block truncate text-[10px] text-ink-400">
                       {entry.name} · {entry.decimals} decimals
@@ -163,17 +165,13 @@ export default function FaucetPage() {
                 </button>
               )
             })}
-            {tokens.length === 0 && (
-              <p className="text-[11px] text-ink-500">Token metadata is unavailable.</p>
-            )}
+            {tokens.length === 0 && <p className="text-[11px] text-ink-500">Token metadata is unavailable.</p>}
           </div>
         </div>
 
         <div className="mt-6 border-t border-line pt-5">
           <div className="flex min-w-0 items-center gap-3">
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-accent-soft text-[12px] font-medium text-accent-ink">
-              3
-            </span>
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-accent-soft text-[12px] font-medium text-accent-ink">3</span>
             <div className="min-w-0">
               <h2 className="text-sm font-medium text-ink-900">Mint tokens</h2>
               <p className="text-[11px] text-ink-400">Amount and balance on {CHAIN_LABELS[chain]}</p>
@@ -187,12 +185,16 @@ export default function FaucetPage() {
                 {token ? formatAmount(balance.data, token.decimals, token.symbol) : '—'}
               </div>
             </div>
-            {token && (
-              <span className="text-[11px] text-ink-400">
-                {token.name} · {token.symbol}
-              </span>
-            )}
+            {token && <span className="text-[11px] text-ink-400">{token.name} · {token.symbol}</span>}
           </div>
+
+          {token && !mintable && (
+            <p className="mt-3 rounded-xl border border-warn/25 bg-warn-soft px-3 py-2 text-[11px] text-warn">
+              {token.placeholder
+                ? 'Deployment pending — fill the Sepolia token addresses from the deploy manifest (SEPOLIA_TOKEN_ADDRESSES / VITE_SEPOLIA_*).'
+                : `${token.symbol} is not mintable here. It is a custom token with a ${UNVERIFIED_LABEL.toLowerCase()} contract; its balance is read from chain.`}
+            </p>
+          )}
 
           <label className="mt-4 block">
             <span className="mb-2 flex items-baseline justify-between text-xs font-medium text-ink-700">
@@ -214,29 +216,21 @@ export default function FaucetPage() {
               variant="primary"
               size="sm"
               onClick={() => void mint()}
-              disabled={!isConnected || wrongChain || !parsed || !token || isPending}
+              disabled={!isConnected || wrongChain || !parsed || !token || !mintable || isPending}
             >
               {isPending ? 'Minting' : `Mint ${token?.symbol ?? ''}`}
             </Button>
             {!isConnected && (
-              <Button
-                size="sm"
-                onClick={() => connectors[0] && connect({ connector: connectors[0] })}
-                disabled={!connectors[0] || isConnecting}
-              >
+              <Button size="sm" onClick={() => connectors[0] && connect({ connector: connectors[0] })} disabled={!connectors[0] || isConnecting}>
                 {isConnecting ? 'Connecting' : 'Connect wallet'}
               </Button>
             )}
             {wrongChain && (
-              <Button
-                size="sm"
-                onClick={() => void switchChainAsync({ chainId: CHAIN_IDS[chain] })}
-                disabled={isSwitching}
-              >
+              <Button size="sm" onClick={() => void switchChainAsync({ chainId: CHAIN_IDS[chain] })} disabled={isSwitching}>
                 {isSwitching ? 'Switching chain' : `Switch to ${CHAIN_LABELS[chain]}`}
               </Button>
             )}
-            {!parsed && <span className="text-[11px] text-ink-500">Enter an amount greater than zero.</span>}
+            {mintable && !parsed && <span className="text-[11px] text-ink-500">Enter an amount greater than zero.</span>}
           </div>
 
           {notice && (
@@ -248,9 +242,7 @@ export default function FaucetPage() {
                   <span className={notice.status === 'confirmed' ? 'text-good' : 'text-ink-500'}>
                     {notice.label} {notice.status === 'confirmed' ? 'confirmed' : 'submitted'}
                   </span>
-                  {notice.hash !== '0x' && (
-                    <span className="ml-2"><TxLink chain={notice.chain} hash={notice.hash} /></span>
-                  )}
+                  {notice.hash !== '0x' && <span className="ml-2"><TxLink chain={notice.chain} hash={notice.hash} /></span>}
                 </>
               )}
             </p>

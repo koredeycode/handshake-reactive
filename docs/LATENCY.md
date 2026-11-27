@@ -1,29 +1,56 @@
-# Handshake — measured latency
+# Handshake — measured latency (full Option B, 2026-11-27)
 
 ## Method
-On-chain `block.timestamp` deltas (1-second granularity) plus the origin logs' timestamps. The observer in `ts/observe.ts` records WebSocket wall-clock arrival times for a higher-resolution number; both are reported because EVM timestamps alone cannot prove sub-second figures.
 
-## Payment-first loop (order `0x1111…1111`)
+On-chain `block.timestamp` deltas (1-second granularity) from the transaction
+receipts of each proof hop. The observer in `ts/observe.ts` can record WebSocket
+arrival times for a higher-resolution figure; both are reported because EVM
+timestamps alone cannot prove sub-second differences. All hashes come from
+`scripts/proof.sh` and are listed in [`DEPLOYMENT.md`](./DEPLOYMENT.md).
 
-| Hop | Block timestamp (UTC) | Delta from second lock |
-|---|---:|---:|
-| Second origin lock (AssetLocked, Unichain) | 1795677162 (07:12:42) | 0 s |
-| Reactive tx (two CallbackRequests, Lasna) | 1795677162 (07:12:42) | 0 s |
-| Payment callback (Base Sepolia) | 1795677163 (07:12:43) | **+1 s** |
-| Asset callback (Unichain Sepolia) | 1795677164 (07:12:44) | **+2 s** |
+The measurement starts at the **second** origin lock: the loop cannot settle
+before both legs exist, so the first leg's age is irrelevant to the arbiter's
+critical path.
 
-The payment leg was locked ~13 s earlier (at 1795677149), so the loop began when the **second** leg arrived, not the first.
+## Base → Unichain, payment-first (order `0xb0f4…5ff19`)
 
-## Asset-first loop (order `0x2222…2222`)
-Both legs settled with the same mechanism; the RC's order-independent state machine produced settlement after the payment leg arrived. Tx hashes are in [DEPLOYMENT.md](./DEPLOYMENT.md). The reactive tx and both callbacks landed within 1–2 block timestamps of the second lock.
+| Hop | Chain | UTC | Delta from second lock |
+|---|---|---|---:|
+| PaymentLocked (first leg) | Base Sepolia | 08:56:43 | −6 s |
+| AssetLocked (second leg) | Unichain Sepolia | 08:56:49 | 0 s |
+| react() with two CallbackRequest logs | Lasna | 08:56:49 | **0 s** |
+| PaymentReleased | Base Sepolia | 08:56:50 | **+1 s** |
+| AssetReleased | Unichain Sepolia | 08:56:51 | **+2 s** |
 
-## Timeout / refund loop (order `0x4444…4444`)
-Deadline passed, the next `Cron10` tick drove the refund sweep, and the refund callback landed on Base Sepolia. The cron interval (~10 s) plus callback delivery dominates here; the RC performs no polling and no keeper is involved.
+Both callbacks are requested in the same Lasna transaction; there is no
+commit/release round trip and no keeper in the settlement path.
 
-## Why this needs Omni
-On the legacy Reactive network (~7 s blocks, ~7 s finality), the reactive hop alone would add 7–14 s to each loop, versus the measured 0–2 s here. For OTC/RFQ settlement that window is precisely the inventory and price risk a market maker carries. With instant finality the arbiter's decision is final in the same second the second leg lands.
+## Other pairs
+
+The same mechanism was proven on all six ordered chain pairs (see the proof matrix
+in [`DEPLOYMENT.md`](./DEPLOYMENT.md)). The arbiter hop is the same single `react()`
+transaction everywhere; callback delivery is one or two block timestamps after it
+on Base Sepolia, Unichain Sepolia and Ethereum Sepolia.
+
+## Refund path
+
+Refunds are driven by `Cron10` plus the permissionless `retry()`. In the Tier-1
+timeout loops the deadline was 30 s; the refund callback landed on the payment
+chain within the next cron interval after expiry. Cron billing is paid from the
+RC's lREACT reserve, so the refund path is not instantaneous and requires funding
+maintenance (see operational notes in [`DEPLOYMENT.md`](./DEPLOYMENT.md)).
+
+## Why this needs Omni / Reactive
+
+On the legacy Reactive network (~7 s blocks, ~7 s finality), the arbiter hop alone
+would add 7–14 s to each loop, versus the measured 0 s here. For OTC/RFQ settlement
+that window is exactly the inventory and price risk a market maker carries.
 
 ## Caveats
-- These are testnet numbers with purpose-built ERC-20s, not mainnet liquidity.
-- EVM block timestamps have 1-second resolution; wall-clock observer numbers include network/observer delay.
-- Cron billing drained RC reserves during an idle window and paused execution until topped up. See [DEPLOYMENT.md](./DEPLOYMENT.md). This is a funding-operational issue, not a latency measurement artefact.
+
+- Testnet numbers with purpose-built ERC-20s, not mainnet liquidity.
+- EVM block timestamps have 1-second resolution; wall-clock observer numbers
+  include network and observer delay.
+- The single RC has 19 subscriptions, so cron burn is materially higher than in
+  the old 7-subscription instances. Keep the RC funded; when `debt > 0`, Reactive
+  stops delivering events until a top-up.

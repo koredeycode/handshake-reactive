@@ -1,14 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, NavLink, useLocation } from 'react-router-dom'
 import { useAccount, useConnect, useDisconnect, type Connector } from 'wagmi'
 import { ChevronDown, ClipboardList, Droplets, House, LogOut, Plus, Search, Wallet } from 'lucide-react'
-import { useWalletBalances } from '../lib/balances'
+import { useBalanceGroups, useWalletBalances } from '../lib/balances'
 import { CHAIN_LABELS } from '../lib/chains'
 import { copyText, truncate } from '../lib/format'
-import { useMarket } from '../lib/markets'
 import { useCopyFeedback } from '../lib/proofs'
 import { Button, ChainMark, ConvergenceMark, icon } from './ui'
-import type { ChainKey } from '../lib/chains'
 
 const NAV = [
   { to: '/', label: 'Home', Icon: House, end: true },
@@ -32,18 +30,6 @@ function Logo() {
         <span className="block text-[11px] text-ink-400">Cross-chain OTC</span>
       </span>
     </Link>
-  )
-}
-
-function useBalanceGroups(): Array<{ chain: ChainKey; keys: string[] }> {
-  const { chainKeyFor } = useMarket()
-  return useMemo(
-    () => [
-      { chain: chainKeyFor('payment'), keys: ['payment-native', 'payment-token'] },
-      { chain: chainKeyFor('asset'), keys: ['asset-native', 'asset-token'] },
-      { chain: 'lasna' as ChainKey, keys: ['lasna-native'] },
-    ],
-    [chainKeyFor],
   )
 }
 

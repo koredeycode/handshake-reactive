@@ -1,117 +1,34 @@
 {
-  "_comment": "Market registry. No keys. systemContract/legacy are chain-wide; per-market addresses are role-based, not chain-slot-based. All three entries are deployed, funded and proven — see docs/DEPLOYMENT.md.",
-  "version": 1,
-  "defaultMarketId": "forward-tusd-base-tasset-unichain",
+  "_comment": "Chain + token catalog for full Option B. ONE reactive contract on Lasna registers a payment/asset escrow pair per chain via setVenue(); escrow addresses are read from that registry at runtime and MUST NOT be hardcoded here. Set reactiveContract from the new deployment (or VITE_RC_ADDRESS). The Sepolia callback proxy is pinned by the deployment spec.",
+  "version": 2,
+  "reactiveContract": "0xC23949a2d25bAA110306a0Adc3E5e0fcB6586989",
   "systemContract": "0x8888888888888888888888888888888888888888",
   "legacySystemContract": "0x0000000000000000000000000000000000fffFfF",
-  "markets": [
+  "scan": {
+    "lasnaFromBlock": 0,
+    "lookbackBlocks": 50000
+  },
+  "chains": [
     {
-      "id": "forward-tusd-base-tasset-unichain",
-      "label": "Pay on Base · receive on Unichain",
-      "direction": "forward",
-      "enabled": true,
-      "reactive": {
-        "chainId": 5318007,
-        "rc": "0x6d1Da6e00066f4b3A16Fec64010478165BAb34E6",
-        "deployBlock": 9279105
-      },
-      "payment": {
-        "chainId": 84532,
-        "chainKey": "base",
-        "escrow": "0xc5ca1b349d214855aB62291C8990ECC63881bDAe",
-        "token": "0x6d1Da6e00066f4b3A16Fec64010478165BAb34E6",
-        "tokenSymbol": "tUSD",
-        "tokenDecimals": 6,
-        "callbackProxy": "0x476F44b11F5C942c58f4c8E3d0300E5710743585",
-        "scanFromBlock": 63775999
-      },
-      "asset": {
-        "chainId": 1301,
-        "chainKey": "unichain",
-        "escrow": "0xc5ca1b349d214855aB62291C8990ECC63881bDAe",
-        "token": "0x6d1Da6e00066f4b3A16Fec64010478165BAb34E6",
-        "tokenSymbol": "tASSET",
-        "tokenDecimals": 18,
-        "callbackProxy": "0x775c9B990ADe401060B78D0e98684eEf8d2466C1",
-        "scanFromBlock": 68824600
-      },
-      "scan": { "lasnaFromBlock": 9279105, "lookbackBlocks": 50000 },
-      "notes": {
-        "latency": "2nd lock → RC 0 s; RC → payment cb +1 s; RC → asset cb +2 s (docs/LATENCY.md)",
-        "proofSection": "docs/DEPLOYMENT.md §Proven loops"
-      }
+      "key": "base",
+      "chainId": 84532,
+      "label": "Base Sepolia",
+      "callbackProxy": "0x476F44b11F5C942c58f4c8E3d0300E5710743585",
+      "scanFromBlock": 63775999
     },
     {
-      "id": "open-tusd-base-tasset-unichain",
-      "label": "Open orders · Base → Unichain",
-      "direction": "forward",
-      "enabled": true,
-      "reactive": {
-        "chainId": 5318007,
-        "rc": "0x679d9B730c1eB7B88E1e6cFD501d12113F6F4E2F",
-        "deployBlock": 9311378
-      },
-      "payment": {
-        "chainId": 84532,
-        "chainKey": "base",
-        "escrow": "0x6f28EDb5cC37d3078012b1e9250748A0381a3480",
-        "token": "0x6d1Da6e00066f4b3A16Fec64010478165BAb34E6",
-        "tokenSymbol": "tUSD",
-        "tokenDecimals": 6,
-        "callbackProxy": "0x476F44b11F5C942c58f4c8E3d0300E5710743585",
-        "scanFromBlock": 63951455
-      },
-      "asset": {
-        "chainId": 1301,
-        "chainKey": "unichain",
-        "escrow": "0x6f28EDb5cC37d3078012b1e9250748A0381a3480",
-        "token": "0x6d1Da6e00066f4b3A16Fec64010478165BAb34E6",
-        "tokenSymbol": "tASSET",
-        "tokenDecimals": 18,
-        "callbackProxy": "0x775c9B990ADe401060B78D0e98684eEf8d2466C1",
-        "scanFromBlock": 68859739
-      },
-      "scan": { "lasnaFromBlock": 9311378, "lookbackBlocks": 50000 },
-      "notes": {
-        "latency": "2nd lock → RC 0 s; RC → payment cb +1 s; RC → asset cb +2 s",
-        "proofSection": "docs/DEPLOYMENT.md §Proof — open order / race"
-      }
+      "key": "unichain",
+      "chainId": 1301,
+      "label": "Unichain Sepolia",
+      "callbackProxy": "0x775c9B990ADe401060B78D0e98684eEf8d2466C1",
+      "scanFromBlock": 68824600
     },
     {
-      "id": "reverse-tusd-unichain-tasset-base",
-      "label": "Pay on Unichain · receive on Base",
-      "direction": "reverse",
-      "enabled": true,
-      "reactive": {
-        "chainId": 5318007,
-        "rc": "0xC7A4aB5adA127D683D9D867245e02f279DC59514",
-        "deployBlock": 9311484
-      },
-      "payment": {
-        "chainId": 1301,
-        "chainKey": "unichain",
-        "escrow": "0xFc0C5588c302d1cB07086BC413B94A35133264db",
-        "token": "0x5802587852C915ce1DBeA8064cfc1eF90C14578c",
-        "tokenSymbol": "tUSD",
-        "tokenDecimals": 6,
-        "callbackProxy": "0x775c9B990ADe401060B78D0e98684eEf8d2466C1",
-        "scanFromBlock": 68859811
-      },
-      "asset": {
-        "chainId": 84532,
-        "chainKey": "base",
-        "escrow": "0xFc0C5588c302d1cB07086BC413B94A35133264db",
-        "token": "0x5802587852C915ce1DBeA8064cfc1eF90C14578c",
-        "tokenSymbol": "tASSET",
-        "tokenDecimals": 18,
-        "callbackProxy": "0x476F44b11F5C942c58f4c8E3d0300E5710743585",
-        "scanFromBlock": 63951862
-      },
-      "scan": { "lasnaFromBlock": 9311484, "lookbackBlocks": 50000 },
-      "notes": {
-        "latency": "Asset-first loop proven; timings in docs/DEPLOYMENT.md",
-        "proofSection": "docs/DEPLOYMENT.md §Proof — reverse market"
-      }
+      "key": "sepolia",
+      "chainId": 11155111,
+      "label": "Ethereum Sepolia",
+      "callbackProxy": "0xAa14d9Cd0f788Ca23d11805986C1d8bd035D23b4",
+      "scanFromBlock": 12222050
     }
   ]
 }

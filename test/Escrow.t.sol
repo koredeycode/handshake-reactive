@@ -7,11 +7,12 @@ import {PaymentEscrow} from "../src/PaymentEscrow.sol";
 import {AssetEscrow} from "../src/AssetEscrow.sol";
 import {TestUSD} from "../src/tokens/TestUSD.sol";
 import {TestAsset} from "../src/tokens/TestAsset.sol";
-import {MockCallbackProxy} from "./Mocks.sol";
+import {FeeOnTransferToken, MockCallbackProxy, ReentrantToken} from "./Mocks.sol";
 
 contract EscrowTest is Test {
     address constant BASE_PROXY = 0x476F44b11F5C942c58f4c8E3d0300E5710743585;
     address constant UNICHAIN_PROXY = 0x775c9B990ADe401060B78D0e98684eEf8d2466C1;
+    address constant SEPOLIA_PROXY = 0xAa14d9Cd0f788Ca23d11805986C1d8bd035D23b4;
     address constant REACTIVE = address(0xA11CE);
 
     address constant BUYER = address(0xB0B);
@@ -32,11 +33,13 @@ contract EscrowTest is Test {
     function setUp() public {
         vm.etch(BASE_PROXY, address(new MockCallbackProxy()).code);
         vm.etch(UNICHAIN_PROXY, address(new MockCallbackProxy()).code);
+        vm.etch(SEPOLIA_PROXY, address(new MockCallbackProxy()).code);
 
         usd = new TestUSD();
         asset = new TestAsset();
-        paymentEscrow = new PaymentEscrow(IPayable(payable(BASE_PROXY)), REACTIVE, address(usd));
-        assetEscrow = new AssetEscrow(IPayable(payable(UNICHAIN_PROXY)), REACTIVE, address(asset));
+        // Escrows are token-agnostic: the token is supplied on each lock() call.
+        paymentEscrow = new PaymentEscrow(IPayable(payable(BASE_PROXY)), REACTIVE);
+        assetEscrow = new AssetEscrow(IPayable(payable(UNICHAIN_PROXY)), REACTIVE);
         deadline = block.timestamp + 120;
 
         usd.mint(BUYER, 1_000e6);
@@ -180,15 +183,119 @@ contract EscrowTest is Test {
         vm.stopPrank();
     }
 
-    function testLockWrongTokenOrDuplicateReverts() public {
+    /// @dev A zero address is never a valid ERC-20; both escrows reject it.
+    function testLockRejectsZeroToken() public {
         vm.startPrank(BUYER);
         usd.approve(address(paymentEscrow), PAYMENT_AMOUNT);
         vm.expectRevert(abi.encodeWithSignature("WrongToken()"));
-        paymentEscrow.lock(ORDER, address(asset), PAYMENT_AMOUNT, SELLER, TERMS, deadline);
-        paymentEscrow.lock(ORDER, address(usd), PAYMENT_AMOUNT, SELLER, TERMS, deadline);
-        vm.expectRevert(abi.encodeWithSignature("LegAlreadyExists()"));
-        paymentEscrow.lock(ORDER, address(usd), PAYMENT_AMOUNT, SELLER, TERMS, deadline);
+        paymentEscrow.lock(ORDER, address(0), PAYMENT_AMOUNT, SELLER, TERMS, deadline);
         vm.stopPrank();
+
+        vm.startPrank(SELLER);
+        asset.approve(address(assetEscrow), ASSET_AMOUNT);
+        vm.expectRevert(abi.encodeWithSignature("WrongToken()"));
+        assetEscrow.lock(ORDER, address(0), ASSET_AMOUNT, BUYER, TERMS, deadline);
+        vm.stopPrank();
+
+        assertEq(uint8(paymentEscrow.getLeg(ORDER).state), uint8(PaymentEscrow.LegState.NONE));
+        assertEq(uint8(assetEscrow.getLeg(ORDER, SELLER).state), uint8(AssetEscrow.LegState.NONE));
+    }
+
+    /// @dev `lock` now accepts any nonzero ERC-20; the duplicate-leg guard is unchanged.
+    function testLockAcceptsAnyNonzeroTokenAndDuplicateStillReverts() public {
+        bytes32 altOrder = keccak256("order-alt-token");
+        asset.mint(BUYER, ASSET_AMOUNT);
+        vm.startPrank(BUYER);
+        asset.approve(address(paymentEscrow), ASSET_AMOUNT);
+        paymentEscrow.lock(altOrder, address(asset), ASSET_AMOUNT, SELLER, TERMS, deadline);
+        vm.expectRevert(abi.encodeWithSignature("LegAlreadyExists()"));
+        paymentEscrow.lock(altOrder, address(asset), ASSET_AMOUNT, SELLER, TERMS, deadline);
+        vm.stopPrank();
+
+        PaymentEscrow.Leg memory leg = paymentEscrow.getLeg(altOrder);
+        assertEq(leg.token, address(asset));
+        assertEq(leg.amount, ASSET_AMOUNT);
+        assertEq(uint8(leg.state), uint8(PaymentEscrow.LegState.LOCKED));
+        assertEq(asset.balanceOf(address(paymentEscrow)), ASSET_AMOUNT);
+
+        // The other token still works in its original escrow.
+        _lockPayment();
+        assertEq(paymentEscrow.getLeg(ORDER).token, address(usd));
+    }
+
+    /// @dev A token that transfers less than requested must not under-collateralise a leg.
+    function testFeeOnTransferTokenIsRejectedByBalanceDelta() public {
+        FeeOnTransferToken feeToken = new FeeOnTransferToken();
+        uint256 amount = 1_000e6;
+        uint256 received = amount - (amount / 100);
+
+        feeToken.mint(BUYER, amount);
+        vm.startPrank(BUYER);
+        feeToken.approve(address(paymentEscrow), amount);
+        vm.expectRevert(abi.encodeWithSignature("InsufficientReceived(uint256,uint256)", amount, received));
+        paymentEscrow.lock(ORDER, address(feeToken), amount, SELLER, TERMS, deadline);
+        vm.stopPrank();
+        assertEq(uint8(paymentEscrow.getLeg(ORDER).state), uint8(PaymentEscrow.LegState.NONE));
+
+        feeToken.mint(SELLER_TWO, amount);
+        vm.startPrank(SELLER_TWO);
+        feeToken.approve(address(assetEscrow), amount);
+        vm.expectRevert(abi.encodeWithSignature("InsufficientReceived(uint256,uint256)", amount, received));
+        assetEscrow.lock(ORDER, address(feeToken), amount, BUYER, TERMS, deadline);
+        vm.stopPrank();
+        assertEq(uint8(assetEscrow.getLeg(ORDER, SELLER_TWO).state), uint8(AssetEscrow.LegState.NONE));
+    }
+
+    /// @dev Both escrows inherit OpenZeppelin's ReentrancyGuard on lock().
+    function testLockReentrancyGuardOnBothEscrows() public {
+        ReentrantToken token = new ReentrantToken();
+        token.mint(BUYER, 1_000e6);
+        token.mint(SELLER, 10e18);
+
+        bytes32 paymentOuter = keccak256("reentrant-payment-outer");
+        bytes memory paymentInner = abi.encodeCall(
+            PaymentEscrow.lock,
+            (keccak256("reentrant-payment-inner"), address(token), PAYMENT_AMOUNT, SELLER, TERMS, deadline)
+        );
+        token.arm(address(paymentEscrow), paymentInner);
+        vm.startPrank(BUYER);
+        token.approve(address(paymentEscrow), PAYMENT_AMOUNT);
+        vm.expectRevert(abi.encodeWithSignature("ReentrancyGuardReentrantCall()"));
+        paymentEscrow.lock(paymentOuter, address(token), PAYMENT_AMOUNT, SELLER, TERMS, deadline);
+        vm.stopPrank();
+        assertEq(uint8(paymentEscrow.getLeg(paymentOuter).state), uint8(PaymentEscrow.LegState.NONE));
+
+        ReentrantToken assetToken = new ReentrantToken();
+        assetToken.mint(SELLER, 10e18);
+        bytes memory assetInner = abi.encodeCall(
+            AssetEscrow.lock,
+            (keccak256("reentrant-asset-inner"), address(assetToken), ASSET_AMOUNT, BUYER, TERMS, deadline)
+        );
+        assetToken.arm(address(assetEscrow), assetInner);
+        vm.startPrank(SELLER);
+        assetToken.approve(address(assetEscrow), ASSET_AMOUNT);
+        vm.expectRevert(abi.encodeWithSignature("ReentrancyGuardReentrantCall()"));
+        assetEscrow.lock(keccak256("reentrant-asset-outer"), address(assetToken), ASSET_AMOUNT, BUYER, TERMS, deadline);
+        vm.stopPrank();
+        assertEq(uint8(assetEscrow.getLeg(ORDER, SELLER).state), uint8(AssetEscrow.LegState.NONE));
+    }
+
+    /// @dev A third chain's callback proxy is accepted by the token-agnostic escrow constructor.
+    function testEscrowWorksWithSepoliaProxy() public {
+        PaymentEscrow sepoliaEscrow = new PaymentEscrow(IPayable(payable(SEPOLIA_PROXY)), REACTIVE);
+        vm.startPrank(BUYER);
+        usd.approve(address(sepoliaEscrow), PAYMENT_AMOUNT);
+        sepoliaEscrow.lock(ORDER, address(usd), PAYMENT_AMOUNT, SELLER, TERMS, deadline);
+        vm.stopPrank();
+
+        vm.expectRevert(abi.encodeWithSignature("NotAuthorized(address,address)", address(this), SEPOLIA_PROXY));
+        sepoliaEscrow.release(REACTIVE, ORDER, SELLER, PAYMENT_AMOUNT, 1);
+
+        MockCallbackProxy(SEPOLIA_PROXY).forward(
+            address(sepoliaEscrow), abi.encodeCall(PaymentEscrow.release, (REACTIVE, ORDER, SELLER, PAYMENT_AMOUNT, 1))
+        );
+        assertEq(uint8(sepoliaEscrow.getLeg(ORDER).state), uint8(PaymentEscrow.LegState.RELEASED));
+        assertEq(usd.balanceOf(SELLER), PAYMENT_AMOUNT);
     }
 
     // ----------------------------------------------------------------- race mode

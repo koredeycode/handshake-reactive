@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {ISystemContract} from "@reactive/src/interfaces/ISystemContract.sol";
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 /// @dev Minimal stand-in for the Lasna system contract, etched at 0x8888…8888.
 ///      Records subscription and callback requests so tests can assert them.
@@ -94,5 +95,59 @@ contract MockCallbackProxy {
     function forward(address target_, bytes calldata data_) external {
         (bool ok, bytes memory reason) = target_.call(data_);
         if (!ok) revert ForwardFailed(reason);
+    }
+}
+
+/// @dev ERC-20 that delivers 1% less than the requested amount. Used to prove the
+///      escrows check the actual balance delta instead of trusting the lock arguments.
+contract FeeOnTransferToken is ERC20 {
+    uint256 public constant FEE_BPS = 100; // 1%
+
+    constructor() ERC20("Fee Token", "FEE") {}
+
+    function mint(address to_, uint256 amount_) external {
+        _mint(to_, amount_);
+    }
+
+    function transferFrom(address from_, address to_, uint256 amount_) public override returns (bool) {
+        uint256 fee = amount_ / 10_000 * FEE_BPS;
+        uint256 net = amount_ - fee;
+        _spendAllowance(from_, _msgSender(), amount_);
+        _transfer(from_, to_, net);
+        if (fee != 0) _burn(from_, fee);
+        return true;
+    }
+}
+
+/// @dev ERC-20 that re-enters an escrow's `lock` from inside `transferFrom`. The
+///      armed call is arbitrary calldata so the same mock can attack either escrow.
+contract ReentrantToken is ERC20 {
+    address private _escrow;
+    bytes private _reenterCalldata;
+    bool private _armed;
+
+    constructor() ERC20("Reentrant Token", "RNT") {}
+
+    function mint(address to_, uint256 amount_) external {
+        _mint(to_, amount_);
+    }
+
+    function arm(address escrow_, bytes calldata reenterCalldata_) external {
+        _escrow = escrow_;
+        _reenterCalldata = reenterCalldata_;
+        _armed = true;
+    }
+
+    function transferFrom(address from_, address to_, uint256 amount_) public override returns (bool) {
+        if (_armed) {
+            _armed = false;
+            (bool ok, bytes memory reason) = _escrow.call(_reenterCalldata);
+            if (!ok) {
+                assembly {
+                    revert(add(reason, 0x20), mload(reason))
+                }
+            }
+        }
+        return super.transferFrom(from_, to_, amount_);
     }
 }

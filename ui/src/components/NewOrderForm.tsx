@@ -1,12 +1,10 @@
 import { useMemo, useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
-import { useQueryClient } from '@tanstack/react-query'
+import { useNavigate } from 'react-router-dom'
 import { useAccount, usePublicClient, useWriteContract } from 'wagmi'
 import { parseUnits, type Address, type Hex } from 'viem'
 import { AlertCircle, Check, ChevronDown, RefreshCw } from 'lucide-react'
-import { useTicketAssetPairs } from '../lib/assetPairs'
 import { CHAIN_IDS, CHAIN_LABELS } from '../lib/chains'
-import { configuredAddress } from '../lib/config'
+import { configuredAddress, useConfig } from '../lib/config'
 import { reactiveAbi } from '../lib/contracts'
 import {
   formatAmount,
@@ -18,21 +16,15 @@ import {
   ZERO_ADDRESS,
 } from '../lib/format'
 import { logClient } from '../lib/logs'
-import {
-  FORWARD_MARKET_ID,
-  OPEN_MARKET_ID,
-  REVERSE_MARKET_ID,
-  chainKeyFromId,
-  clearMarketQueries,
-  findMarket,
-  marketToAppConfig,
-  useMarket,
-} from '../lib/markets'
-import { useTokenBalance } from '../lib/queries'
-import { useTokenDisplay } from '../lib/tokenDisplay'
+import { useTicketAssetPairs } from '../lib/assetPairs'
+import { useErc20Balance } from '../lib/queries'
+import { computeTermsHash } from '../lib/terms'
+import { useTradeTicket } from '../lib/tradeTicket'
+import { useVenues } from '../lib/venues'
+import { venueTuple } from '../lib/venue'
+import { Button, ConvergenceMark, Field, Metric, Panel, inputClass, icon } from './ui'
 import WriteButton from './WriteButton'
 import TradeTicket from './TradeTicket'
-import { Button, ConvergenceMark, Field, Metric, Panel, inputClass, icon } from './ui'
 
 /** Mirror of the contract's MIN_DURATION / MAX_DURATION (HandshakeReactive.sol). */
 const MIN_DURATION = 30
@@ -63,23 +55,29 @@ function parseAmount(value: string, decimals: number): bigint | null {
 
 export default function NewOrderForm() {
   const navigate = useNavigate()
-  const [params, setParams] = useSearchParams()
-  const queryClient = useQueryClient()
-  const { registry, markets, market } = useMarket()
-  // Direction lives in the trade UI: the hidden market id selects the venue.
-  const direction = market?.direction === 'reverse' ? 'reverse' : 'forward'
-  const paymentChain = chainKeyFromId(market.payment.chainId, market.payment.chainKey)
-  const assetChain = chainKeyFromId(market.asset.chainId, market.asset.chainKey)
+  const ticket = useTradeTicket()
+  const config = useConfig()
+  const venues = useVenues()
   const { address } = useAccount()
   const { writeContractAsync, isPending } = useWriteContract()
   const lasnaClient = logClient(usePublicClient({ chainId: CHAIN_IDS.lasna })) as unknown as {
     waitForTransactionReceipt: (args: { hash: Hex }) => Promise<unknown>
   } | null
 
+  const {
+    paymentOptions,
+    assetOptions,
+    setPaymentChain,
+    setAssetChain,
+  } = useTicketAssetPairs()
+
+  const paymentVenue = venues.byChain(ticket.paymentChain)
+  const assetVenue = venues.byChain(ticket.assetChain)
+  const paymentToken = ticket.tokenFor('payment')
+  const assetToken = ticket.tokenFor('asset')
+
   const [orderId, setOrderId] = useState<string>(() => randomOrderId())
   const [seller, setSeller] = useState('')
-  const [paymentAmount, setPaymentAmount] = useState(params.get('pay') ?? '100')
-  const [assetAmount, setAssetAmount] = useState(params.get('get') ?? '1')
   const [customValue, setCustomValue] = useState('120')
   const [unit, setUnit] = useState<(typeof UNITS)[number]['seconds']>(1)
   const [unitOpen, setUnitOpen] = useState(false)
@@ -87,34 +85,8 @@ export default function NewOrderForm() {
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
-  const paymentToken = useTokenDisplay('payment')
-  const assetToken = useTokenDisplay('asset')
-  const paymentBalance = useTokenBalance('payment', address)
-  const {
-    paymentOptions,
-    assetOptions,
-    selectedPayment,
-    selectedAsset,
-    selectPayment,
-    selectAsset,
-  } = useTicketAssetPairs()
-
   const normalizedSeller = normalizeAddress(seller)
   const openOrder = !normalizedSeller
-  // Forward + blank seller uses the open-orders RC; reverse + blank seller
-  // uses the reverse RC (deployed from the same open-orders artifact).
-  const targetMarketId = direction === 'reverse'
-    ? REVERSE_MARKET_ID
-    : openOrder
-      ? OPEN_MARKET_ID
-      : FORWARD_MARKET_ID
-  const targetMarket = findMarket(markets, targetMarketId) ?? market
-  const writeConfig = marketToAppConfig(registry, targetMarket)
-
-  const paymentDecimals = paymentToken.decimals
-  const assetDecimals = assetToken.decimals
-  const parsedPayment = useMemo(() => parseAmount(paymentAmount, paymentDecimals), [paymentAmount, paymentDecimals])
-  const parsedAsset = useMemo(() => parseAmount(assetAmount, assetDecimals), [assetAmount, assetDecimals])
   const sellerAddress = openOrder ? ZERO_ADDRESS : normalizedSeller
   const entered = customValue.trim() === '' ? NaN : Number(customValue)
   const duration = Number.isFinite(entered) ? entered * unit : NaN
@@ -129,9 +101,29 @@ export default function NewOrderForm() {
           : null
   const deadline = validDuration !== null ? Math.floor(Date.now() / 1000) + validDuration : null
 
-  const rc = configuredAddress(writeConfig.reactive.reactiveContract)
-  const paymentTokenAddress = configuredAddress(writeConfig.base.paymentToken)
-  const assetTokenAddress = configuredAddress(writeConfig.unichain.assetToken)
+  const paymentDecimals = paymentToken?.decimals ?? 18
+  const assetDecimals = assetToken?.decimals ?? 18
+  const parsedPayment = useMemo(() => parseAmount(ticket.payAmount, paymentDecimals), [ticket.payAmount, paymentDecimals])
+  const parsedAsset = useMemo(() => parseAmount(ticket.receiveAmount, assetDecimals), [ticket.receiveAmount, assetDecimals])
+
+  const venue = venueTuple(paymentVenue, assetVenue)
+  const rc = configuredAddress(config.reactive.reactiveContract)
+  const paymentBalanceQuery = useErc20Balance(ticket.paymentChain, paymentToken?.address, address)
+  const paymentBalance = paymentBalanceQuery.data
+
+  const termsPreview = useMemo(() => {
+    if (!venue || !paymentToken || !assetToken || !parsedPayment || !parsedAsset || !deadline) return null
+    return computeTermsHash({
+      buyer: (address ?? ZERO_ADDRESS) as Hex,
+      seller: sellerAddress as Hex,
+      paymentToken: paymentToken.address,
+      paymentAmount: parsedPayment,
+      assetToken: assetToken.address,
+      assetAmount: parsedAsset,
+      deadline: BigInt(deadline),
+      venue,
+    })
+  }, [venue, paymentToken, assetToken, parsedPayment, parsedAsset, deadline, address, sellerAddress])
 
   const validation = useMemo(() => {
     if (!/^0x[a-fA-F0-9]{64}$/.test(orderId)) return 'Order ID must be 32 bytes: 0x followed by 64 hex characters.'
@@ -139,51 +131,40 @@ export default function NewOrderForm() {
     if (!openOrder && address && normalizedSeller && normalizedSeller.toLowerCase() === address.toLowerCase()) {
       return 'The seller must differ from the buyer.'
     }
+    if (!paymentToken || !assetToken) return 'Choose a token for both legs.'
+    if (paymentToken.address.toLowerCase() === assetToken.address.toLowerCase() && ticket.paymentChain === ticket.assetChain) {
+      return 'The two legs must be on different chains.'
+    }
+    if (
+      !ticket.isConfirmedCustom(ticket.paymentChain, paymentToken.address) &&
+      !paymentToken.verified
+    ) {
+      return 'Confirm the unverified payment token in its picker before creating the trade.'
+    }
+    if (
+      !ticket.isConfirmedCustom(ticket.assetChain, assetToken.address) &&
+      !assetToken.verified
+    ) {
+      return 'Confirm the unverified asset token in its picker before creating the trade.'
+    }
     if (!parsedPayment) return 'Payment amount must be greater than zero.'
     if (!parsedAsset) return 'Asset amount must be greater than zero.'
-    if (paymentBalance.data !== undefined && paymentBalance.data !== null && paymentBalance.data < parsedPayment) {
+    if (paymentBalance !== null && paymentBalance !== undefined && paymentBalance < parsedPayment) {
       return `Not enough ${paymentToken.symbol} to cover the payment leg.`
     }
-    if (!rc || !paymentTokenAddress || !assetTokenAddress) return 'The settlement venue is not configured.'
+    if (!rc || !venue) return 'Both chains need a registered venue on the reactive contract.'
+    if (ticket.paymentChain === ticket.assetChain) return 'The payment and asset chains must differ.'
     if (durationError) return durationError
     return null
   }, [
-    orderId,
-    seller,
-    normalizedSeller,
-    openOrder,
-    address,
-    parsedPayment,
-    parsedAsset,
-    paymentBalance.data,
-    paymentToken.symbol,
-    rc,
-    paymentTokenAddress,
-    assetTokenAddress,
-    durationError,
+    orderId, seller, normalizedSeller, openOrder, address, paymentToken, assetToken,
+    parsedPayment, parsedAsset, paymentBalance, rc, venue, durationError,
+    ticket.paymentChain, ticket.assetChain, ticket.isConfirmedCustom,
   ])
 
-  function reverseDirection() {
-    setPaymentAmount(assetAmount)
-    setAssetAmount(paymentAmount)
-    const nextId = direction === 'forward' ? REVERSE_MARKET_ID : FORWARD_MARKET_ID
-    setParams(
-      (previous) => {
-        const updated = new URLSearchParams(previous)
-        updated.set('market', nextId)
-        if (nextId === REVERSE_MARKET_ID) updated.set('direction', 'reverse')
-        else updated.delete('direction')
-        return updated
-      },
-      { replace: true },
-    )
-    clearMarketQueries(queryClient)
-    setError(null)
-  }
-
   async function submit() {
-    if (validation) {
-      setError(validation)
+    if (validation || !venue || !paymentToken || !assetToken || !parsedPayment || !parsedAsset || !rc || !validDuration) {
+      setError(validation ?? 'The trade ticket is incomplete.')
       return
     }
     setError(null)
@@ -196,18 +177,21 @@ export default function NewOrderForm() {
         args: [
           orderId as Hex,
           sellerAddress as Hex,
-          paymentTokenAddress as Hex,
-          parsedPayment!,
-          assetTokenAddress as Hex,
-          parsedAsset!,
-          BigInt(validDuration!),
+          paymentToken.address,
+          parsedPayment,
+          BigInt(CHAIN_IDS[ticket.paymentChain]),
+          venue.paymentEscrow,
+          assetToken.address,
+          parsedAsset,
+          BigInt(CHAIN_IDS[ticket.assetChain]),
+          venue.assetEscrow,
+          BigInt(validDuration),
         ],
       })
       await lasnaClient?.waitForTransactionReceipt({ hash })
-      const query = new URLSearchParams({ tx: hash, market: targetMarket.id })
-      navigate(`/orders/${orderId}?${query}`)
+      navigate(`/orders/${orderId}?tx=${hash}`)
     } catch {
-      setError('The trade could not be created. Try again.')
+      setError('The trade could not be created. Check that both venues are registered and try again.')
     } finally {
       setSubmitting(false)
     }
@@ -219,44 +203,59 @@ export default function NewOrderForm() {
         <Panel title="Trade ticket" subtitle="The connected wallet is the buyer" bodyClass="p-4 sm:p-5">
           <TradeTicket
             pay={{
-              symbol: paymentToken.symbol,
-              chain: paymentChain,
-              amount: paymentAmount,
-              onAmountChange: setPaymentAmount,
+              symbol: paymentToken?.symbol,
+              chain: ticket.paymentChain,
+              amount: ticket.payAmount,
+              onAmountChange: ticket.setPayAmount,
               kind: 'payment',
-              mark: paymentToken.mark,
-              color: paymentToken.color,
+              mark: paymentToken?.mark,
+              color: paymentToken?.color,
               assetOptions: paymentOptions,
-              selectedAsset: selectedPayment,
-              onAssetChange: (address) => {
-                selectPayment(address)
+              selectedAddress: paymentToken?.address,
+              onAssetChange: (token) => {
+                ticket.selectToken('payment', token)
                 setError(null)
               },
+              onChainChange: (chain) => {
+                setPaymentChain(chain)
+                setError(null)
+              },
+              tokenAddress: paymentToken?.address,
+              verified: paymentToken?.verified,
               hint:
-                paymentBalance.data !== undefined && paymentBalance.data !== null
-                  ? `${paymentToken.name} · balance ${toUnitString(paymentBalance.data, paymentDecimals)} ${paymentToken.symbol}`
-                  : `${paymentToken.name} · ${CHAIN_LABELS[paymentChain]} testnet`,
+                paymentBalance !== undefined && paymentBalance !== null
+                  ? `${paymentToken?.name} · balance ${toUnitString(paymentBalance, paymentDecimals)} ${paymentToken?.symbol}`
+                  : `${paymentToken?.name ?? 'Token'} · ${CHAIN_LABELS[ticket.paymentChain]} testnet`,
             }}
             receive={{
-              symbol: assetToken.symbol,
-              chain: assetChain,
-              amount: assetAmount,
-              onAmountChange: setAssetAmount,
+              symbol: assetToken?.symbol,
+              chain: ticket.assetChain,
+              amount: ticket.receiveAmount,
+              onAmountChange: ticket.setReceiveAmount,
               kind: 'asset',
-              mark: assetToken.mark,
-              color: assetToken.color,
+              mark: assetToken?.mark,
+              color: assetToken?.color,
               assetOptions: assetOptions,
-              selectedAsset: selectedAsset,
-              onAssetChange: (address) => {
-                selectAsset(address)
+              selectedAddress: assetToken?.address,
+              onAssetChange: (token) => {
+                ticket.selectToken('asset', token)
                 setError(null)
               },
-              hint: `${assetToken.name} · ${CHAIN_LABELS[assetChain]} testnet`,
+              onChainChange: (chain) => {
+                setAssetChain(chain)
+                setError(null)
+              },
+              tokenAddress: assetToken?.address,
+              verified: assetToken?.verified,
+              hint: `${assetToken?.name ?? 'Token'} · ${CHAIN_LABELS[ticket.assetChain]} testnet`,
             }}
-            onReverse={reverseDirection}
+            onReverse={() => {
+              ticket.flip()
+              setError(null)
+            }}
           />
           <p className="mt-3 px-1 text-[11px] leading-relaxed text-ink-400">
-            Assets are limited to pairs with a deployed settlement market. Flip the arrow for the reverse pair.
+            Pick a chain and any curated token on each leg. Flip the arrow to reverse the ordered pair. Pasted ERC-20s are unverified until you confirm them.
           </p>
 
           <div className="mt-5 space-y-5 px-1">
@@ -319,16 +318,10 @@ export default function NewOrderForm() {
                     className={`${inputClass} flex w-full items-center justify-between gap-2 pr-3 text-left`}
                   >
                     <span>{UNITS.find((option) => option.seconds === unit)?.label ?? 'seconds'}</span>
-                    <ChevronDown
-                      {...icon}
-                      className={`shrink-0 text-ink-400 transition-transform ${unitOpen ? 'rotate-180' : ''}`}
-                    />
+                    <ChevronDown {...icon} className={`shrink-0 text-ink-400 transition-transform ${unitOpen ? 'rotate-180' : ''}`} />
                   </button>
                   {unitOpen && (
-                    <ul
-                      role="listbox"
-                      className="absolute left-0 right-0 top-[calc(100%+4px)] z-20 overflow-hidden rounded-xl border border-line bg-paper-0 py-1 shadow-lg"
-                    >
+                    <ul role="listbox" className="absolute left-0 right-0 top-[calc(100%+4px)] z-20 overflow-hidden rounded-xl border border-line bg-paper-0 py-1 shadow-lg">
                       {UNITS.map((option) => (
                         <li key={option.seconds} role="option" aria-selected={option.seconds === unit}>
                           <button
@@ -394,10 +387,7 @@ export default function NewOrderForm() {
                 </Button>
               </div>
             </Field>
-            <p
-              className="-mt-3 text-[11px] leading-relaxed text-ink-400"
-              title="Order IDs are generated locally from 32 random bytes (crypto.getRandomValues, with a Math.random fallback). createOrder rejects an ID that is already on-chain."
-            >
+            <p className="-mt-3 text-[11px] leading-relaxed text-ink-400">
               <span className="block">Generated in your browser · 32 random bytes</span>
               <span className="block">duplicates are rejected on-chain</span>
             </p>
@@ -405,12 +395,18 @@ export default function NewOrderForm() {
               <Metric label="Deadline" value={deadline !== null ? formatDeadline(BigInt(deadline)) : '—'} />
               <Metric label="Window" value={validDuration !== null ? `${validDuration}s` : '—'} />
               <Metric label="Buyer" value={address ? truncate(address, 8, 6) : '—'} />
-              <Metric
-                label="Seller"
-                value={openOrder ? 'Open to any seller' : normalizedSeller ? truncate(normalizedSeller, 8, 6) : '—'}
-              />
-              <Metric label="Payment leg" value={formatAmount(parsedPayment ?? 0n, paymentDecimals, paymentToken.symbol)} />
-              <Metric label="Asset leg" value={formatAmount(parsedAsset ?? 0n, assetDecimals, assetToken.symbol)} />
+              <Metric label="Seller" value={openOrder ? 'Open to any seller' : normalizedSeller ? truncate(normalizedSeller, 8, 6) : '—'} />
+              <Metric label="Payment leg" value={formatAmount(parsedPayment ?? 0n, paymentDecimals, paymentToken?.symbol)} />
+              <Metric label="Asset leg" value={formatAmount(parsedAsset ?? 0n, assetDecimals, assetToken?.symbol)} />
+            </div>
+            <div className="border-t border-line pt-4">
+              <p className="text-[11px] text-ink-400">Terms hash (venue-bound)</p>
+              <p className="tnum mt-1 break-all font-mono text-[11px] text-ink-700" title={termsPreview ?? undefined}>
+                {termsPreview ? truncate(termsPreview, 20, 12) : 'Complete the ticket to preview'}
+              </p>
+              <p className="mt-1 text-[10px] leading-relaxed text-ink-400">
+                Both escrow legs must carry this hash. It includes the payment/asset chains and escrows, so a deposit cannot be replayed against another venue.
+              </p>
             </div>
           </div>
         </Panel>
@@ -418,10 +414,10 @@ export default function NewOrderForm() {
         <Panel title="Settlement trail">
           <ol className="space-y-4 text-xs text-ink-500">
             {[
-              `01 Buyer locks payment on ${CHAIN_LABELS[paymentChain]}`,
+              `01 Buyer locks payment on ${CHAIN_LABELS[ticket.paymentChain]}`,
               openOrder
-                ? `02 Any seller can lock the asset on ${CHAIN_LABELS[assetChain]}`
-                : `02 Seller locks the asset on ${CHAIN_LABELS[assetChain]}`,
+                ? `02 Any seller can lock the asset on ${CHAIN_LABELS[ticket.assetChain]}`
+                : `02 Seller locks the asset on ${CHAIN_LABELS[ticket.assetChain]}`,
               openOrder ? '03 First valid lock pays the winner' : '03 One decision releases both legs',
             ].map((step) => (
               <li key={step}>

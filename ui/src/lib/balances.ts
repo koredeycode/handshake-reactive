@@ -1,12 +1,16 @@
-import { useBalance, useReadContract } from 'wagmi'
+import { useBalance } from 'wagmi'
 import type { Address, Hex } from 'viem'
-import { CHAIN_IDS, CHAIN_LABELS } from './chains'
-import { configuredAddress } from './config'
-import { erc20Abi } from './contracts'
-import { formatAmount, formatNative } from './format'
-import { useMarket, type LegKind } from './markets'
-import { useTokenDisplay } from './tokenDisplay'
-import type { ChainKey } from './chains'
+import {
+  CHAIN_IDS,
+  CHAIN_LABELS,
+  TRADING_CHAIN_KEYS,
+  type ChainKey,
+  type TradingChainKey,
+} from './chains'
+import { formatAmount, formatNative, truncate } from './format'
+import { useDiscoveredBalances } from './queries'
+import { useChainTokens, type ChainTokenOption, type TokenSelection } from './tokenDisplay'
+import { useTradeTicket } from './tradeTicket'
 
 export interface BalanceChip {
   key: string
@@ -17,112 +21,120 @@ export interface BalanceChip {
   title: string
 }
 
+interface NativeChip {
+  key: string
+  chain: ChainKey
+  label: string
+  data?: { value: bigint; symbol: string }
+  isLoading: boolean
+  isError: boolean
+}
+
 /**
- * Reads are scoped by chainId, so they work from any connected chain: there is
- * no wrong-chain error state to resolve. Multicall is enabled per chain on
- * Base/Unichain and off on Lasna; smart polling keeps these at 15s instead of
- * wagmi's faster defaults. Loading shows a dot and a failed read shows a dash;
- * no value is invented.
+ * Native balances for every settlement chain plus Lasna. Reads are scoped by
+ * chainId, so they work from any connected chain. Long staleTime, no polling.
+ */
+function useNativeChips(address?: Hex | null): NativeChip[] {
+  const owner = address as Address | undefined
+  const query = { enabled: !!address, staleTime: 60_000, refetchInterval: false as const }
+  const lasna = useBalance({ address: owner, chainId: CHAIN_IDS.lasna, query })
+  const base = useBalance({ address: owner, chainId: CHAIN_IDS.base, query })
+  const unichain = useBalance({ address: owner, chainId: CHAIN_IDS.unichain, query })
+  const sepolia = useBalance({ address: owner, chainId: CHAIN_IDS.sepolia, query })
+  return [
+    { key: 'lasna-native', chain: 'lasna', label: 'Native', data: lasna.data, isLoading: lasna.isLoading, isError: lasna.isError },
+    { key: 'base-native', chain: 'base', label: 'Native', data: base.data, isLoading: base.isLoading, isError: base.isError },
+    { key: 'unichain-native', chain: 'unichain', label: 'Native', data: unichain.data, isLoading: unichain.isLoading, isError: unichain.isError },
+    { key: 'sepolia-native', chain: 'sepolia', label: 'Native', data: sepolia.data, isLoading: sepolia.isLoading, isError: sepolia.isError },
+  ]
+}
+
+function nativeLabel(chip: NativeChip): string {
+  if (chip.isError) return '—'
+  if (chip.isLoading || !chip.data) return '…'
+  return formatNative(chip.data.value, chip.data.symbol)
+}
+
+/**
+ * Curated catalog balances plus every custom ERC-20 the user confirmed.
+ * Multicall is used on chains that declare Multicall3 (all three EVM chains);
+ * no sustained polling, long staleTime.
  */
 export function useWalletBalances(address?: Hex | null): BalanceChip[] {
-  const { market, chainKeyFor, legConfig } = useMarket()
-  const payment = useTokenDisplay('payment')
-  const asset = useTokenDisplay('asset')
-  const owner = address as Address | undefined
-  const enabled = !!address
-  const balanceQuery = { enabled, refetchInterval: 15_000, staleTime: 10_000 }
-  const chainFor = (kind: LegKind): ChainKey => chainKeyFor(kind)
-  const paymentToken = configuredAddress(legConfig('payment').token)
-  const assetToken = configuredAddress(legConfig('asset').token)
+  const { customTokens } = useTradeTicket()
+  const catalogs = {
+    base: useChainTokens('base', true),
+    unichain: useChainTokens('unichain', true),
+    sepolia: useChainTokens('sepolia', true),
+  }
+  const balances = {
+    base: useDiscoveredBalances('base', [
+      ...catalogs.base.map((token) => token.address),
+      ...(customTokens.base ?? []).map((token) => token.address),
+    ], address),
+    unichain: useDiscoveredBalances('unichain', [
+      ...catalogs.unichain.map((token) => token.address),
+      ...(customTokens.unichain ?? []).map((token) => token.address),
+    ], address),
+    sepolia: useDiscoveredBalances('sepolia', [
+      ...catalogs.sepolia.map((token) => token.address),
+      ...(customTokens.sepolia ?? []).map((token) => token.address),
+    ], address),
+  }
+  const natives = useNativeChips(address)
 
-  const paymentNative = useBalance({
-    address: owner,
-    chainId: CHAIN_IDS[chainFor('payment')],
-    scopeKey: `${market.id}:payment-native`,
-    query: balanceQuery,
-  })
-  const assetNative = useBalance({
-    address: owner,
-    chainId: CHAIN_IDS[chainFor('asset')],
-    scopeKey: `${market.id}:asset-native`,
-    query: balanceQuery,
-  })
-  const lasnaNative = useBalance({
-    address: owner,
-    chainId: CHAIN_IDS.lasna,
-    scopeKey: `${market.id}:lasna-native`,
-    query: balanceQuery,
-  })
+  const chips: BalanceChip[] = natives.map((chip) => ({
+    key: chip.key,
+    chain: chip.chain,
+    asset: 'Native',
+    label: nativeLabel(chip),
+    title: `${CHAIN_LABELS[chip.chain]} · native balance`,
+  }))
 
-  const paymentBalance = useReadContract({
-    address: (paymentToken ?? undefined) as Address | undefined,
-    abi: erc20Abi,
-    functionName: 'balanceOf',
-    args: owner ? [owner] : undefined,
-    chainId: CHAIN_IDS[chainFor('payment')],
-    scopeKey: `${market.id}:payment-token`,
-    query: { ...balanceQuery, enabled: enabled && !!paymentToken },
-  })
-  const assetBalance = useReadContract({
-    address: (assetToken ?? undefined) as Address | undefined,
-    abi: erc20Abi,
-    functionName: 'balanceOf',
-    args: owner ? [owner] : undefined,
-    chainId: CHAIN_IDS[chainFor('asset')],
-    scopeKey: `${market.id}:asset-token`,
-    query: { ...balanceQuery, enabled: enabled && !!assetToken },
-  })
-
-  const nativeLabel = (query: typeof paymentNative): string => {
-    if (query.isError) return '—'
-    if (query.isLoading || !query.data) return '…'
-    return formatNative(query.data.value, query.data.symbol)
+  for (const chain of TRADING_CHAIN_KEYS) {
+    const entries: Array<ChainTokenOption | TokenSelection> = [
+      ...catalogs[chain],
+      ...(customTokens[chain] ?? []),
+    ]
+    const seen = new Set<string>()
+    for (const entry of entries) {
+      const key = `${chain}:token:${entry.address.toLowerCase()}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      const value = balances[chain][entry.address.toLowerCase()]
+      chips.push({
+        key,
+        chain,
+        asset: entry.symbol,
+        label: value === undefined || value === null ? (address ? '…' : '—') : formatAmount(value, entry.decimals, entry.symbol),
+        title: `${entry.name} (${entry.symbol}) · ${CHAIN_LABELS[chain]} · ${entry.verified ? 'curated' : 'unverified'} · ${entry.address}`,
+      })
+    }
   }
 
-  const erc20Label = (query: typeof paymentBalance, symbol: string, decimals: number): string => {
-    if (query.isError) return '—'
-    if (query.isLoading || query.data === undefined) return '…'
-    return formatAmount(query.data, decimals, symbol)
+  return chips
+}
+
+/** Group keys for the wallet dropdown, one group per chain. */
+export function useBalanceGroups(): Array<{ chain: ChainKey; keys: string[] }> {
+  const { customTokens } = useTradeTicket()
+  const catalogs = {
+    base: useChainTokens('base', true),
+    unichain: useChainTokens('unichain', true),
+    sepolia: useChainTokens('sepolia', true),
   }
+  return TRADING_CHAIN_KEYS.flatMap((chain: TradingChainKey) => [
+    {
+      chain: chain as ChainKey,
+      keys: [
+        `${chain}-native`,
+        ...catalogs[chain].map((token) => `${chain}:token:${token.address.toLowerCase()}`),
+        ...(customTokens[chain] ?? []).map((token) => `${chain}:token:${token.address.toLowerCase()}`),
+      ],
+    },
+  ]).concat([{ chain: 'lasna' as ChainKey, keys: ['lasna-native'] }])
+}
 
-  const paymentChain = chainFor('payment')
-  const assetChain = chainFor('asset')
-
-  return [
-    {
-      key: 'payment-native',
-      chain: paymentChain,
-      asset: 'Native',
-      label: nativeLabel(paymentNative),
-      title: `${CHAIN_LABELS[paymentChain]} · native balance`,
-    },
-    {
-      key: 'asset-native',
-      chain: assetChain,
-      asset: 'Native',
-      label: nativeLabel(assetNative),
-      title: `${CHAIN_LABELS[assetChain]} · native balance`,
-    },
-    {
-      key: 'lasna-native',
-      chain: 'lasna',
-      asset: 'Native',
-      label: nativeLabel(lasnaNative),
-      title: `${CHAIN_LABELS.lasna} · native balance`,
-    },
-    {
-      key: 'payment-token',
-      chain: paymentChain,
-      asset: payment.symbol,
-      label: erc20Label(paymentBalance, payment.symbol, payment.decimals),
-      title: `${payment.name} (${payment.symbol}) · ${CHAIN_LABELS[paymentChain]}`,
-    },
-    {
-      key: 'asset-token',
-      chain: assetChain,
-      asset: asset.symbol,
-      label: erc20Label(assetBalance, asset.symbol, asset.decimals),
-      title: `${asset.name} (${asset.symbol}) · ${CHAIN_LABELS[assetChain]}`,
-    },
-  ]
+export function balanceChipLabel(chip: BalanceChip): string {
+  return chip.asset === 'Native' ? chip.asset : truncate(chip.asset, 8, 4)
 }

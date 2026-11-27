@@ -7,9 +7,10 @@ import {
   type Address,
   type Hex,
 } from 'viem';
-import { callbackConfigAbi, callbackRequestEvent, paymentEscrowAbi } from './abis.js';
+import { callbackConfigAbi, callbackPayloadAbi, callbackRequestEvent, paymentEscrowAbi } from './abis.js';
 import {
   BASE_SEPOLIA_CHAIN_ID,
+  ETHEREUM_SEPOLIA_CHAIN_ID,
   LASNA_CHAIN_ID,
   UNICHAIN_SEPOLIA_CHAIN_ID,
   deployedAddresses,
@@ -128,7 +129,7 @@ async function recordCallbackRequest(log: {
   let decoded: { functionName: string; args: readonly unknown[] };
   try {
     config = decodeAbiParameters(callbackConfigAbi, configBytes)[0] as typeof config;
-    decoded = decodeFunctionData({ abi: paymentEscrowAbi, data: config.payload });
+    decoded = decodeFunctionData({ abi: callbackPayloadAbi, data: config.payload });
   } catch {
     return;
   }
@@ -251,6 +252,7 @@ const clients = {
   [LASNA_CHAIN_ID]: createPublicClient({ transport: webSocket(wsUrl(LASNA_CHAIN_ID)), pollingInterval: 1000 }),
   [BASE_SEPOLIA_CHAIN_ID]: createPublicClient({ transport: webSocket(wsUrl(BASE_SEPOLIA_CHAIN_ID)), pollingInterval: 1000 }),
   [UNICHAIN_SEPOLIA_CHAIN_ID]: createPublicClient({ transport: webSocket(wsUrl(UNICHAIN_SEPOLIA_CHAIN_ID)), pollingInterval: 1000 }),
+  [ETHEREUM_SEPOLIA_CHAIN_ID]: createPublicClient({ transport: webSocket(wsUrl(ETHEREUM_SEPOLIA_CHAIN_ID)), pollingInterval: 1000 }),
 } as const;
 
 const unwatchers: Array<() => void> = [];

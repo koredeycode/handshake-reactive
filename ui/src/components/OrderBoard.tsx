@@ -2,17 +2,16 @@ import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { ArrowRight, Plus, RefreshCw } from 'lucide-react'
 import { useAccount } from 'wagmi'
-import { CHAIN_LABELS } from '../lib/chains'
-import { chainKeyFromId, useMarkets } from '../lib/markets'
+import { CHAIN_SHORT_LABELS, TRADING_CHAIN_KEYS, type TradingChainKey } from '../lib/chains'
 import { countdown, formatAmount, formatDeadline, isZeroAddress, truncate } from '../lib/format'
 import { useAllOrders, type AggregatedOrderRow } from '../lib/queries'
 import { deriveStatus, isOpenOrder } from '../lib/status'
-import { useMarketTokenDisplay } from '../lib/tokenDisplay'
+import { useOrderTokenDisplay } from '../lib/tokenDisplay'
+import { pairId, venueOfOrder } from '../lib/venue'
 import { useNow } from '../lib/useNow'
 import { Button, ChainMark, ChainPill, EmptyState, Panel, Spinner, StatusPill, TokenMark, icon } from './ui'
 
 type BoardFilter = 'all' | 'open' | 'mine'
-type DirectionFilter = 'all' | 'forward' | 'reverse'
 
 const TABS: Array<{ id: BoardFilter; label: string }> = [
   { id: 'all', label: 'All' },
@@ -20,19 +19,17 @@ const TABS: Array<{ id: BoardFilter; label: string }> = [
   { id: 'mine', label: 'Mine' },
 ]
 
-const DIRECTIONS: Array<{ id: DirectionFilter; label: string }> = [
-  { id: 'all', label: 'All directions' },
-  { id: 'forward', label: 'Base → Unichain' },
-  { id: 'reverse', label: 'Unichain → Base' },
-]
+const PAIRS = TRADING_CHAIN_KEYS.flatMap((payment) =>
+  TRADING_CHAIN_KEYS.filter((asset) => asset !== payment).map((asset) => ({ payment, asset })),
+)
 
-/** Each row uses the token symbols, decimals and chain marks of its own market. */
+/** Each row derives chain marks and token marks from the order's own venue. */
 function OrderRow({ row, now }: { row: AggregatedOrderRow; now: number }) {
-  const { id, order, market } = row
-  const payment = useMarketTokenDisplay(market, 'payment')
-  const asset = useMarketTokenDisplay(market, 'asset')
-  const paymentChain = chainKeyFromId(market.payment.chainId, market.payment.chainKey)
-  const assetChain = chainKeyFromId(market.asset.chainId, market.asset.chainKey)
+  const { id, order } = row
+  const payment = useOrderTokenDisplay(order, 'payment')
+  const asset = useOrderTokenDisplay(order, 'asset')
+  const paymentVenue = venueOfOrder(order, 'payment')
+  const assetVenue = venueOfOrder(order, 'asset')
   const status = deriveStatus(order, now)
   const steps = Number(order.paymentSeen) + Number(order.assetSeen) + (order.settleRequested ? 1 : 0)
   const expired = countdown(order.deadline, now) === 'expired'
@@ -41,7 +38,7 @@ function OrderRow({ row, now }: { row: AggregatedOrderRow; now: number }) {
   return (
     <li>
       <Link
-        to={`/orders/${id}?market=${market.id}`}
+        to={`/orders/${id}`}
         className={`block w-full px-5 py-4 text-left transition-colors hover:bg-paper-50 sm:px-6 ${
           open ? 'border-l-2 border-accent bg-accent-soft/40 pl-4' : ''
         }`}
@@ -50,9 +47,11 @@ function OrderRow({ row, now }: { row: AggregatedOrderRow; now: number }) {
           <span className="flex flex-wrap items-center gap-2">
             <TokenMark symbol={payment.symbol} kind="payment" size="sm" mark={payment.mark} color={payment.color} />
             <span className="text-[13px] font-medium text-ink-900">{payment.symbol}</span>
+            {!payment.verified && <span className="rounded-full border border-warn/25 bg-warn-soft px-1.5 py-0.5 text-[9px] text-warn" title={payment.address ?? undefined}>Unverified</span>}
             <span className="text-ink-400">/</span>
             <TokenMark symbol={asset.symbol} kind="asset" size="sm" mark={asset.mark} color={asset.color} />
             <span className="text-[13px] font-medium text-ink-900">{asset.symbol}</span>
+            {!asset.verified && <span className="rounded-full border border-warn/25 bg-warn-soft px-1.5 py-0.5 text-[9px] text-warn" title={asset.address ?? undefined}>Unverified</span>}
             {open && (
               <span className="rounded-full border border-accent/25 bg-accent-soft px-2 py-0.5 text-[10px] font-medium text-accent-ink">
                 Open · {order.assetLockCount.toString()} {order.assetLockCount === 1n ? 'match' : 'matches'}
@@ -66,7 +65,7 @@ function OrderRow({ row, now }: { row: AggregatedOrderRow; now: number }) {
           <div className="flex flex-wrap items-end gap-x-6 gap-y-2">
             <div>
               <div className="flex items-center gap-1 text-[11px] text-ink-400">
-                <ChainMark chain={paymentChain} /> You pay · {CHAIN_LABELS[paymentChain]}
+                <ChainMark chain={payment.chain} /> You pay · {payment.chainLabel}
               </div>
               <div className="tnum font-mono text-[15px] font-medium text-ink-900">
                 {formatAmount(order.paymentAmount, payment.decimals, payment.symbol)}
@@ -75,7 +74,7 @@ function OrderRow({ row, now }: { row: AggregatedOrderRow; now: number }) {
             <ArrowRight {...icon} className="mb-1 text-ink-400" />
             <div>
               <div className="flex items-center gap-1 text-[11px] text-ink-400">
-                <ChainMark chain={assetChain} /> You receive · {CHAIN_LABELS[assetChain]}
+                <ChainMark chain={asset.chain} /> You receive · {asset.chainLabel}
               </div>
               <div className="tnum font-mono text-[15px] font-medium text-ink-900">
                 {formatAmount(order.assetAmount, asset.decimals, asset.symbol)}
@@ -89,9 +88,9 @@ function OrderRow({ row, now }: { row: AggregatedOrderRow; now: number }) {
 
         <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
           <span className="tnum font-mono text-[11px] text-ink-400">{truncate(id, 12, 8)}</span>
-          <ChainPill chain={paymentChain} />
+          <ChainPill chain={paymentVenue.chainKey} />
           <ChainPill chain="lasna" />
-          <ChainPill chain={assetChain} />
+          <ChainPill chain={assetVenue.chainKey} />
           <span className="tnum font-mono text-[11px] text-ink-400">{steps} of 3 steps</span>
           <span className={`tnum font-mono text-[11px] ${expired ? 'text-warn' : 'text-ink-400'}`}>
             {countdown(order.deadline, now)} · {formatDeadline(order.deadline)}
@@ -106,13 +105,16 @@ export default function OrderBoard({ scrollable = false }: { scrollable?: boolea
   const navigate = useNavigate()
   const { address } = useAccount()
   const { data: orders, isLoading, isError, error, refetch, isFetching } = useAllOrders()
-  const markets = useMarkets()
   const now = useNow()
   const [filter, setFilter] = useState<BoardFilter>('all')
-  const [direction, setDirection] = useState<DirectionFilter>('all')
+  const [pair, setPair] = useState<string>('all')
 
-  const rows = (orders ?? []).filter(({ order, market }) => {
-    if (direction !== 'all' && market.direction !== direction) return false
+  const rows = (orders ?? []).filter(({ order }) => {
+    if (pair !== 'all') {
+      const payment = venueOfOrder(order, 'payment').chainKey
+      const asset = venueOfOrder(order, 'asset').chainKey
+      if (pairId(payment, asset as TradingChainKey) !== pair) return false
+    }
     if (filter === 'open') return isOpenOrder(order)
     if (filter === 'mine') {
       if (!address) return false
@@ -129,7 +131,7 @@ export default function OrderBoard({ scrollable = false }: { scrollable?: boolea
   return (
     <Panel
       title="Order book"
-      subtitle="Live across both directions"
+      subtitle="Live from the single reactive ledger · all chain pairs"
       action={
         <div className="flex flex-wrap items-center gap-2">
           {isFetching && <Spinner />}
@@ -141,9 +143,7 @@ export default function OrderBoard({ scrollable = false }: { scrollable?: boolea
                 onClick={() => setFilter(tab.id)}
                 aria-pressed={filter === tab.id}
                 className={`inline-flex min-h-10 items-center rounded-lg px-2.5 py-1 text-[11px] font-medium transition-colors ${
-                  filter === tab.id
-                    ? 'bg-paper-0 text-ink-900 shadow-sm'
-                    : 'text-ink-400 hover:text-ink-700'
+                  filter === tab.id ? 'bg-paper-0 text-ink-900 shadow-sm' : 'text-ink-400 hover:text-ink-700'
                 }`}
               >
                 {tab.label}
@@ -161,31 +161,23 @@ export default function OrderBoard({ scrollable = false }: { scrollable?: boolea
       className={scrollable ? 'flex h-full min-h-0 flex-col overflow-hidden' : ''}
     >
       <div className="flex flex-wrap items-center gap-2 border-b border-line px-5 py-3 sm:px-6">
-        <span className="mr-1 text-[11px] text-ink-400">Direction</span>
-        {DIRECTIONS.map((option) => (
-          <button
-            key={option.id}
-            type="button"
-            onClick={() => setDirection(option.id)}
-            aria-pressed={direction === option.id}
-            className={`inline-flex min-h-10 items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] transition-colors ${
-              direction === option.id
-                ? 'border-accent/25 bg-accent-soft font-medium text-accent-ink'
-                : 'border-line bg-paper-50 text-ink-500 hover:bg-paper-100'
-            }`}
-          >
-            {option.id === 'forward' && <ChainMark chain="base" className="h-3 w-3" />}
-            {option.id === 'reverse' && <ChainMark chain="unichain" className="h-3 w-3" />}
-            {option.label}
-          </button>
-        ))}
+        <span className="mr-1 text-[11px] text-ink-400">Chain pair</span>
+        <select
+          aria-label="Filter by chain pair"
+          value={pair}
+          onChange={(event) => setPair(event.target.value)}
+          className="min-h-10 max-w-full rounded-xl border border-line bg-paper-0 px-3 py-1.5 text-[11px] text-ink-700 outline-none focus:border-accent"
+        >
+          <option value="all">All pairs</option>
+          {PAIRS.map(({ payment, asset }) => (
+            <option key={pairId(payment, asset)} value={pairId(payment, asset)}>
+              {CHAIN_SHORT_LABELS[payment]} → {CHAIN_SHORT_LABELS[asset]}
+            </option>
+          ))}
+        </select>
       </div>
 
-      {!markets.length ? (
-        <div className="p-6">
-          <EmptyState title="Orders unavailable" message="No settlement markets are configured for this workspace." />
-        </div>
-      ) : isError ? (
+      {isError ? (
         <div className="p-6">
           <EmptyState
             title="Orders could not be loaded"

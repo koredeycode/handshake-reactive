@@ -1,7 +1,19 @@
 import type { Hex } from 'viem'
-import type { ChainKey } from './chains'
+import type { ChainKey, TradingChainKey } from './chains'
 
-/** Mirrors the Order tuple from PRD §5 / §6.1. */
+/**
+ * Mirrors the trailing `Venue` tuple in HandshakeReactive.getOrder(). A venue is
+ * stored per order, so a venue re-registration by the owner cannot move an
+ * in-flight order.
+ */
+export interface Venue {
+  paymentChainId: bigint
+  paymentEscrow: Hex
+  assetChainId: bigint
+  assetEscrow: Hex
+}
+
+/** Mirrors the Order tuple from src/HandshakeReactive.sol (Option B). */
 export interface Order {
   buyer: Hex
   seller: Hex
@@ -25,6 +37,7 @@ export interface Order {
   assetLockCount: bigint
   paymentRequestNonce: bigint
   assetRequestNonce: bigint
+  venue: Venue
 }
 
 export interface Leg {
@@ -38,11 +51,20 @@ export interface Leg {
   nonce: bigint
 }
 
-export interface Venues {
-  paymentChainId: bigint
-  paymentEscrow: Hex
-  assetChainId: bigint
-  assetEscrow: Hex
+/** `venue(chainId)` from the reactive registry. */
+export interface VenueRegistration {
+  chainId: number
+  chainKey: TradingChainKey | null
+  paymentEscrow: Hex | null
+  assetEscrow: Hex | null
+  registered: boolean
+}
+
+/** `escrows(address)` reverse lookup (role 1 = payment, 2 = asset). */
+export interface EscrowMeta {
+  chainId: bigint
+  role: bigint
+  registered: boolean
 }
 
 export type OrderStatus =
@@ -90,7 +112,7 @@ export interface ProofData {
   assetRefunded?: ProofEvent
   scan: {
     lasnaFrom: bigint
-    /** Role-keyed windows: payment/asset chains come from the selected market. */
+    /** Role-keyed windows: payment/asset chains come from the order's venue. */
     paymentFrom: bigint
     assetFrom: bigint
     /** Per-chain scan tips, reused as a small cursor window on the next poll. */

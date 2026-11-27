@@ -1,8 +1,9 @@
 import { useQuery } from '@tanstack/react-query'
-import { configuredAddress } from './config'
-import { useMarket, chainKeyFromId, type LegKind, type Market } from './markets'
-import { useTokenMeta } from './queries'
-import type { ChainKey } from './chains'
+import type { Hex } from 'viem'
+import { CHAIN_LABELS, chainKeyFromId, type ChainKey, type TradingChainKey } from './chains'
+import { SEPOLIA_TOKEN_ADDRESSES } from './config'
+import { truncate } from './format'
+import type { Order } from './types'
 
 export interface TokenDisplayEntry {
   name: string
@@ -10,38 +11,59 @@ export interface TokenDisplayEntry {
   decimals: number
   mark: string
   color: string
+  /** Curated entries are verified; pasted ERC-20s are always labelled unverified. */
+  verified: boolean
+  /** Sepolia test-token addresses awaiting the deploy manifest. */
+  placeholder?: boolean
 }
 
-export type TokenRegistry = Record<ChainKey, Record<string, TokenDisplayEntry>>
+export type TokenRegistry = Record<TradingChainKey, Record<string, TokenDisplayEntry>>
 
 export interface ChainTokenOption extends TokenDisplayEntry {
   address: string
 }
 
-const EMPTY: TokenRegistry = { base: {}, unichain: {}, lasna: {} }
+export interface TokenSelection extends TokenDisplayEntry {
+  address: Hex
+}
 
-/**
- * Presentation metadata keyed by chain and live token address. The name,
- * symbol and decimals match the ERC-20 contracts; the mark is a plain letter
- * pair derived from the real symbol. On-chain reads stay authoritative on
- * primary trade screens.
- */
+const EMPTY: TokenRegistry = { base: {}, unichain: {}, sepolia: {} }
+
 async function loadTokens(): Promise<TokenRegistry> {
   try {
     const res = await fetch(`${import.meta.env.BASE_URL}tokens.json`, { cache: 'no-cache' })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const json = (await res.json()) as Partial<TokenRegistry>
-    return {
+    const registry: TokenRegistry = {
       base: json.base ?? {},
       unichain: json.unichain ?? {},
-      lasna: json.lasna ?? {},
+      sepolia: json.sepolia ?? {},
     }
+    for (const list of Object.values(registry)) {
+      for (const entry of Object.values(list)) entry.verified = true
+    }
+    // The Sepolia entries in tokens.json are placeholders. Once the deploy
+    // manifest addresses are configured, remap the same display metadata.
+    const sepolia = { ...registry.sepolia }
+    const overrides: Array<[string, string]> = [
+      ['tUSD', SEPOLIA_TOKEN_ADDRESSES.tUSD],
+      ['tASSET', SEPOLIA_TOKEN_ADDRESSES.tASSET],
+    ]
+    for (const [symbol, address] of overrides) {
+      if (!address) continue
+      const found = Object.entries(sepolia).find(([, entry]) => entry.symbol === symbol)
+      if (!found) continue
+      if (found[0].toLowerCase() !== address.toLowerCase()) delete sepolia[found[0]]
+      sepolia[address] = { ...found[1], placeholder: false }
+    }
+    registry.sepolia = sepolia
+    return registry
   } catch {
     return EMPTY
   }
 }
 
-/** The registry is chain-keyed, so it is shared by every market. */
+/** The registry is chain-keyed, so it is shared by every venue and order. */
 export function useTokenRegistry() {
   return useQuery({
     queryKey: ['token-registry'],
@@ -51,12 +73,17 @@ export function useTokenRegistry() {
   })
 }
 
-/** All tokens listed for one chain in tokens.json, with their live addresses. */
-export function useChainTokens(chain: ChainKey): ChainTokenOption[] {
+/** Curated tokens listed for one chain. Placeholders are opt-in (faucet only). */
+export function useChainTokens(chain: ChainKey, includePlaceholders = false): ChainTokenOption[] {
   const registry = useTokenRegistry()
+  if (chain === 'lasna') return []
   return Object.entries(registry.data?.[chain] ?? {})
+    .filter(([, entry]) => includePlaceholders || !entry.placeholder)
     .map(([address, entry]) => ({ address, ...entry }))
-    .sort((a, b) => a.symbol.localeCompare(b.symbol))
+    .sort((a, b) => {
+      const rank = (symbol: string) => (symbol === 'tUSD' ? 0 : symbol === 'tASSET' ? 1 : 2)
+      return rank(a.symbol) - rank(b.symbol) || a.symbol.localeCompare(b.symbol)
+    })
 }
 
 export function findTokenEntry(
@@ -65,71 +92,76 @@ export function findTokenEntry(
   address?: string | null,
 ): TokenDisplayEntry | undefined {
   if (!address) return undefined
-  return Object.entries(registry?.[chain] ?? {}).find(
+  return Object.entries(registry?.[chain === 'lasna' ? 'sepolia' : chain] ?? {}).find(
     ([key]) => key.toLowerCase() === address.toLowerCase(),
   )?.[1]
 }
 
-const ROLE_STYLE: Record<LegKind, { mark: string; color: string; name: string }> = {
-  payment: { mark: 'US', color: '#e11d62', name: 'Test USD' },
-  asset: { mark: 'AS', color: '#4f46e5', name: 'Test Asset' },
-}
-
-function fallbackEntry(market: Market, kind: LegKind): TokenDisplayEntry {
-  const leg = market[kind]
-  const roleStyle = ROLE_STYLE[kind]
-  return {
-    name: leg.tokenSymbol === 'tUSD' || leg.tokenSymbol === 'tASSET' ? roleStyle.name : leg.tokenSymbol,
-    symbol: leg.tokenSymbol,
-    decimals: leg.tokenDecimals,
-    mark: roleStyle.mark,
-    color: roleStyle.color,
-  }
+/** Letters for an arbitrary token, used for derived marks (no invented logos). */
+export function deriveMark(value?: string | null): string {
+  const clean = (value ?? '').replace(/[^a-zA-Z0-9]/g, '')
+  return (clean.slice(0, 2).toUpperCase() || '??').slice(0, 2)
 }
 
 /**
- * Registry-only token presentation for aggregated rows: no extra RPC calls,
- * every row uses the chain and token address of its own market.
+ * Presentation for any token address on any chain. Curated addresses get
+ * their real mark/color; unknown addresses get a derived letter mark and a
+ * truncated-address symbol. Full address is always available to the caller.
  */
-export function useMarketTokenDisplay(
-  market: Market,
-  kind: LegKind,
-): TokenDisplayEntry & { address: string | null; chain: ChainKey } {
-  const registry = useTokenRegistry()
-  const leg = market[kind]
-  const chain = chainKeyFromId(leg.chainId, leg.chainKey)
-  const address = configuredAddress(leg.token)
-  const entry = findTokenEntry(registry.data, chain, address)
-  const fallback = fallbackEntry(market, kind)
+export function deriveTokenDisplay(
+  chain: ChainKey,
+  address?: string | null,
+  registry?: TokenRegistry,
+): TokenDisplayEntry {
+  const curated = findTokenEntry(registry, chain, address)
+  if (curated) return curated
+  const short = address ? truncate(address, 6, 4) : 'unknown token'
   return {
-    ...fallback,
-    ...entry,
-    address,
-    chain,
+    name: short,
+    symbol: short,
+    decimals: 18,
+    mark: deriveMark(address?.slice(2) ?? short),
+    color: '',
+    verified: false,
   }
 }
 
-/** Primary-screen token display, with an on-chain symbol/decimals check. */
-export function useTokenDisplay(
-  kind: LegKind,
-  marketOverride?: Market | null,
-): TokenDisplayEntry & { address: string | null } {
-  const { market: current } = useMarket()
-  const market = marketOverride ?? current
+/** Display for a token leg of an order, derived solely from the order's venue. */
+export function useOrderTokenDisplay(order?: Order | null, kind: 'payment' | 'asset' = 'payment') {
   const registry = useTokenRegistry()
-  const onchain = useTokenMeta(kind, market)
-  const chain = chainKeyFromId(market[kind].chainId, market[kind].chainKey)
-  const address = configuredAddress(market[kind].token)
+  const chainId = kind === 'payment' ? order?.venue.paymentChainId : order?.venue.assetChainId
+  const chain = (chainId ? chainKeyFromId(chainId) : null) ?? 'base'
+  const address = (kind === 'payment' ? order?.paymentToken : order?.assetToken) ?? null
+  const entry = deriveTokenDisplay(chain, address, registry.data)
+  return { ...entry, address, chain, chainLabel: CHAIN_LABELS[chain] }
+}
 
-  const entry = findTokenEntry(registry.data, chain, address)
-  const fallback = fallbackEntry(market, kind)
+/** Presentation for the token currently selected on a trade ticket side. */
+export function curatedSelection(option: ChainTokenOption): TokenSelection {
+  return { ...option, address: option.address as Hex }
+}
 
+export function customSelection(
+  address: Hex,
+  meta: { name: string; symbol: string; decimals: number },
+): TokenSelection {
   return {
-    name: entry?.name ?? fallback.name,
-    symbol: onchain.data?.symbol ?? entry?.symbol ?? fallback.symbol,
-    decimals: onchain.data?.decimals ?? entry?.decimals ?? fallback.decimals,
-    mark: entry?.mark ?? fallback.mark,
-    color: entry?.color ?? fallback.color,
     address,
+    name: meta.name || meta.symbol,
+    symbol: meta.symbol || truncate(address, 6, 4),
+    decimals: meta.decimals,
+    mark: deriveMark(meta.symbol || address.slice(2)),
+    color: '',
+    verified: false,
   }
+}
+
+/** Legacy name kept for components that only have a market-like leg object. */
+export function fallbackEntry(symbol: string, decimals: number): TokenDisplayEntry {
+  const curated = symbol === 'tUSD'
+    ? { mark: 'US', color: '#e11d62', name: 'Test USD' }
+    : symbol === 'tASSET'
+      ? { mark: 'AS', color: '#4f46e5', name: 'Test Asset' }
+      : { mark: deriveMark(symbol), color: '', name: symbol }
+  return { ...curated, symbol, decimals, verified: symbol === 'tUSD' || symbol === 'tASSET' }
 }

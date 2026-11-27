@@ -2,7 +2,8 @@ import { useState, type FormEvent } from 'react'
 import { normalizeOrderId, truncate } from '../../lib/format'
 import { useMarket } from '../../lib/markets'
 import { useProof } from '../../lib/proofs'
-import { useOrder, useVenues } from '../../lib/queries'
+import { useOrder } from '../../lib/queries'
+import { useVenues } from '../../lib/venues'
 import { Button, CopyButton, EmptyState, Metric, Panel, Spinner, TxLink, inputClass, icon } from '../ui'
 import type { ChainKey } from '../../lib/chains'
 import { Search } from 'lucide-react'
@@ -127,14 +128,29 @@ export default function RawStatePanel() {
         )}
       </Panel>
 
-      <Panel title="Venues" subtitle="Read from the reactive contract, not from a local constant">
+      <Panel title="Venue registry" subtitle="Read from the single reactive contract at runtime, not hardcoded">
         <div className="flex flex-wrap items-center justify-between gap-3">
           {venues.isFetching && <Spinner />}
           <CopyButton text={raw(venues.data ?? null)} label="Copy JSON" />
         </div>
-        <pre className="mt-3 max-h-64 overflow-auto font-mono text-[10px] leading-relaxed text-ink-500">
-          {venues.data ? raw(venues.data) : 'Not observed yet'}
-        </pre>
+        <div className="mt-3 grid gap-2 sm:grid-cols-3">
+          {venues.data.map((venue) => (
+            <div key={venue.chainId} className="rounded-xl border border-line bg-paper-50 p-3">
+              <div className="text-[11px] font-medium text-ink-900">
+                {venue.chainKey} · {venue.chainId}
+              </div>
+              <p className="mt-1 break-all font-mono text-[10px] text-ink-500">
+                payment {venue.paymentEscrow ?? '—'}
+              </p>
+              <p className="break-all font-mono text-[10px] text-ink-500">
+                asset {venue.assetEscrow ?? '—'}
+              </p>
+              <p className="mt-1 text-[10px] text-ink-400">
+                {venue.registered ? 'Registered' : 'Not registered'}
+              </p>
+            </div>
+          ))}
+        </div>
       </Panel>
     </div>
   )

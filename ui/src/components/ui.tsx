@@ -1,6 +1,6 @@
 import type { ButtonHTMLAttributes, ReactNode } from 'react'
 import { ArrowRight, ArrowUpRight, Copy, Inbox } from 'lucide-react'
-import { CHAIN_LABELS, CHAIN_LOGO, txUrl } from '../lib/chains'
+import { CHAIN_LABELS, CHAIN_LOGO, TRADING_CHAIN_KEYS, txUrl, type TradingChainKey } from '../lib/chains'
 import { copyText, truncate } from '../lib/format'
 import { useMarket } from '../lib/markets'
 import { useCopyFeedback } from '../lib/proofs'
@@ -251,6 +251,40 @@ export function ChainPill({
 }
 
 export const ChainBadge = ChainPill
+
+/**
+ * Compact chain picker for a ticket side. The arrow in the ticket flips the
+ * ordered pair; this selects either side's chain directly (including Sepolia).
+ */
+export function ChainSelect({
+  chain,
+  label,
+  onSelect,
+  disabled = false,
+}: {
+  chain: TradingChainKey
+  label: string
+  onSelect: (chain: TradingChainKey) => void
+  disabled?: boolean
+}) {
+  return (
+    <div className="relative min-w-0 shrink-0" title={`${label} chain: ${CHAIN_LABELS[chain]}`}>
+      <select
+        aria-label={`${label} chain`}
+        value={chain}
+        disabled={disabled}
+        onChange={(event) => onSelect(event.target.value as TradingChainKey)}
+        className="max-w-full appearance-none rounded-full border border-line bg-paper-0 py-1.5 pl-2 pr-2 text-[11px] font-medium text-ink-700 outline-none transition-colors hover:bg-paper-100 focus:border-accent"
+      >
+        {TRADING_CHAIN_KEYS.map((key) => (
+          <option key={key} value={key}>
+            {CHAIN_LABELS[key]}
+          </option>
+        ))}
+      </select>
+    </div>
+  )
+}
 
 export function ExternalLink({
   href,

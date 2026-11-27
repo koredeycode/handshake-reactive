@@ -6,7 +6,7 @@ import {
   type AbiEvent,
   type Hex,
 } from 'viem'
-import type { ChainKey } from './chains'
+import { chainKeyFromId, type ChainKey, type TradingChainKey } from './chains'
 import { configuredAddress, type AppConfig } from './config'
 import {
   assetLockedEvent,
@@ -324,7 +324,7 @@ function sortEvents(events: ProofEvent[]): ProofEvent[] {
   })
 }
 
-/** Role-keyed clients: which chain a role lives on comes from the market. */
+/** Role-keyed clients: which chain a role lives on comes from the order's venue. */
 export interface ProofClients {
   lasna: LogClient | null
   payment: LogClient | null
@@ -332,8 +332,42 @@ export interface ProofClients {
 }
 
 export interface ProofChainKeys {
-  payment: ChainKey
-  asset: ChainKey
+  payment: TradingChainKey
+  asset: TradingChainKey
+}
+
+/** One leg's log scan target, derived from a venue registry entry. */
+export interface ProofScanTarget {
+  chainKey: TradingChainKey
+  escrow: string | null
+  fromBlock: number
+}
+
+export interface ProofVenue {
+  payment: ProofScanTarget
+  asset: ProofScanTarget
+}
+
+export function proofVenue(venue: {
+  paymentChainId: bigint
+  paymentEscrow: string
+  assetChainId: bigint
+  assetEscrow: string
+}, config: AppConfig): ProofVenue {
+  const paymentKey = (chainKeyFromId(venue.paymentChainId) ?? 'base') as TradingChainKey
+  const assetKey = (chainKeyFromId(venue.assetChainId) ?? 'unichain') as TradingChainKey
+  return {
+    payment: {
+      chainKey: paymentKey,
+      escrow: configuredAddress(venue.paymentEscrow),
+      fromBlock: config.chains[paymentKey]?.scanFromBlock ?? 0,
+    },
+    asset: {
+      chainKey: assetKey,
+      escrow: configuredAddress(venue.assetEscrow),
+      fromBlock: config.chains[assetKey]?.scanFromBlock ?? 0,
+    },
+  }
 }
 
 interface BlockRange {
@@ -480,9 +514,18 @@ export async function resolveProof(
   clients: ProofClients,
   order?: Order | null,
   previous?: ProofData | null,
-  chainKeys: ProofChainKeys = { payment: 'base', asset: 'unichain' },
+  venue?: ProofVenue,
 ): Promise<ProofData> {
-  const resolveTimestamp = createTimestampResolver(clients)
+  const chainKeys: ProofChainKeys = {
+    payment: venue?.payment.chainKey ?? 'base',
+    asset: venue?.asset.chainKey ?? 'unichain',
+  }
+  // Timestamp lookups are keyed by the real chain key of each venue.
+  const resolveTimestamp = createTimestampResolver({
+    [chainKeys.payment]: clients.payment,
+    [chainKeys.asset]: clients.asset,
+    lasna: clients.lasna,
+  })
   const [lasnaLatest, paymentLatest, assetLatest] = await Promise.all([
     clients.lasna?.getBlockNumber().catch(() => 0n) ?? 0n,
     clients.payment?.getBlockNumber().catch(() => 0n) ?? 0n,
@@ -491,15 +534,15 @@ export async function resolveProof(
   const deadline = order?.deadline
   const [lasnaBase, paymentBase, assetBase] = await Promise.all([
     orderRange(config, clients.lasna, config.scan.lasnaFromBlock, lasnaLatest, deadline),
-    orderRange(config, clients.payment, config.scan.baseFromBlock, paymentLatest, deadline),
-    orderRange(config, clients.asset, config.scan.unichainFromBlock, assetLatest, deadline),
+    orderRange(config, clients.payment, venue?.payment.fromBlock ?? 0, paymentLatest, deadline),
+    orderRange(config, clients.asset, venue?.asset.fromBlock ?? 0, assetLatest, deadline),
   ])
   const lasnaRange = cursorRange(lasnaBase, previous?.scan.lasnaTo, lasnaLatest)
   const paymentRange = cursorRange(paymentBase, previous?.scan.paymentTo, paymentLatest)
   const assetRange = cursorRange(assetBase, previous?.scan.assetTo, assetLatest)
 
-  const paymentEscrow = configuredAddress(config.base.paymentEscrow)
-  const assetEscrow = configuredAddress(config.unichain.assetEscrow)
+  const paymentEscrow = venue?.payment.escrow ?? null
+  const assetEscrow = venue?.asset.escrow ?? null
   const system = configuredAddress(config.reactive.systemContract)
   const found = new Set<ProofEventKind>()
   const required = requiredKinds(order)
@@ -614,8 +657,13 @@ export async function fetchEventFeed(
   config: AppConfig,
   clients: ProofClients,
   chainKeys: ProofChainKeys = { payment: 'base', asset: 'unichain' },
+  venue?: ProofVenue,
 ): Promise<FeedEvent[]> {
-  const resolveTimestamp = createTimestampResolver(clients)
+  const resolveTimestamp = createTimestampResolver({
+    [chainKeys.payment]: clients.payment,
+    [chainKeys.asset]: clients.asset,
+    lasna: clients.lasna,
+  })
   const [paymentLatest, assetLatest, lasnaLatest] = await Promise.all([
     clients.payment?.getBlockNumber().catch(() => 0n) ?? 0n,
     clients.asset?.getBlockNumber().catch(() => 0n) ?? 0n,
@@ -626,8 +674,8 @@ export async function fetchEventFeed(
     fromBlock: latest > window ? latest - window : 0n,
     toBlock: latest,
   })
-  const paymentEscrow = configuredAddress(config.base.paymentEscrow)
-  const assetEscrow = configuredAddress(config.unichain.assetEscrow)
+  const paymentEscrow = venue?.payment.escrow ?? null
+  const assetEscrow = venue?.asset.escrow ?? null
   const system = configuredAddress(config.reactive.systemContract)
   const legacy = configuredAddress(config.reactive.legacySystemContract)
   const noFound = new Set<ProofEventKind>()
