@@ -59,12 +59,16 @@ export async function sendOperatorAlert(input: AlertInput): Promise<void> {
   let lastError: unknown;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
-      await mailer.emails.send({
+      const { data, error } = await mailer.emails.send({
         from: env.ALERT_FROM_EMAIL,
         to: [env.OPERATOR_ALERT_EMAIL],
         subject: input.subject,
         text: `${input.body}\n\nkind=${input.kind} dedupeKey=${dedupeKey}`,
       });
+      // The Resend SDK resolves with { error } instead of throwing on API
+      // failures; without this check failed sends were recorded as sent.
+      if (error) throw new Error(error.message);
+      log.debug({ kind: input.kind, providerMessageId: data?.id }, 'operator alert accepted by Resend');
       await db.update(alertDeliveries).set({
         status: 'sent', attempts: attempt, sentAt: new Date(), error: null,
       }).where(eq(alertDeliveries.id, row.id));

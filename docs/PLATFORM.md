@@ -115,24 +115,52 @@ no notification opt-in table.
 
 ## Deploy / Fly secrets
 
-Deploy from `api/` so `api/fly.toml` applies:
+### CI/CD (normal path)
+
+`.github/workflows/deploy-api.yml` deploys `handshake-reactive-api` on every push
+to `main` that touches `api/**`, the workflow itself, `fly.toml` or `Dockerfile`,
+plus manual `workflow_dispatch`. **PRs never deploy.** Superseded runs are
+cancelled via `concurrency`. The job runs `npm ci --prefix api`,
+`npm run build --prefix api`, then `flyctl deploy --config fly.toml` from `api/`,
+authenticated with the app-scoped `FLY_API_TOKEN` GitHub secret. The build step
+is mandatory: `api/Dockerfile` copies prebuilt `dist/` and does not compile in
+the container. Check `fly logs -a handshake-reactive-api` and `/health` after
+merge; no manual Fly action is needed for a normal backend change.
+
+### Manual deploy / secrets (escape hatch)
+
+Deploy from `api/` so `api/fly.toml` applies, and rebuild `dist/` first:
 
 ```bash
+npm run build --prefix api       # Dockerfile copies dist/; never deploy stale output
 cd api
 fly secrets set \
   DATABASE_URL='postgresql://...@<supabase-pooler-host>:6543/postgres?sslmode=require' \
   RESEND_API_KEY=... \
-  RESEND_FROM='Handshake Alerts <alerts@resend.dev>' \
   ALERT_FROM_EMAIL='Handshake Alerts <alerts@resend.dev>' \
   OPERATOR_ALERT_EMAIL=you@example.com
 # plus the per-chain RPC/WS URLs listed in api/.env.example
 fly deploy
 ```
 
-`RESEND_FROM` records the intended sender identity; the mailer currently uses
-`ALERT_FROM_EMAIL` as the `From` header, so set them to the same value (a Resend
-test sender until a domain is verified). Use a verified operator address. Secrets
-must never be committed or echoed into docs.
+`ALERT_FROM_EMAIL` is the **authoritative and only** `From` header used by the
+API. `RESEND_FROM` is unused by the backend and must not be relied on (a Fly
+secret with that name is harmless); use a **verified Resend sender** and a
+verified operator recipient. Secrets must never be committed or echoed into
+docs.
+
+Frontend deploys are separate: Vercel handles `ui/**`, and re-pointing the
+canonical alias is still **manual (option 3)** after each production deploy — see
+[`VERCEL.md`](./VERCEL.md). Backend CI/CD does not touch Vercel.
+
+### Shutdown / backfill note
+
+`stopIndexer()` now sets a stopping flag, unsubscribes, and awaits all tracked
+gap-fill tasks **before** `closeDb()`. A failed log inside a gap fill is logged
+with `txHash` and the block cursor stops at the last successfully processed log,
+so the 5-minute reconcile replays it instead of silently skipping it. Resend
+API `{ error }` responses are treated as failures (retry + `status: 'failed'`),
+so `alert_email_total{status="sent"}` only counts accepted sends.
 
 ## Keeper: DEFERRED (not implemented)
 

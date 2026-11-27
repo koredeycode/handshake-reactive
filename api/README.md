@@ -100,17 +100,33 @@ curated-token catalogues (idempotent) and prunes expired rows (outbox 7 d, event
 - No keeper process is included here: `keeper_state` / `keeper_actions` tables
   and `keeper.status` telemetry/alerting are ready for the Phase E keeper app.
 
-## Deploy (not performed in this PR)
+## Deploy
+
+Main pushes that touch `api/**` (or the deploy workflow / Fly config) **auto-deploy
+the backend** via `.github/workflows/deploy-api.yml`; PRs do not. The job runs
+`npm ci`, `npm run build`, then `flyctl deploy --config fly.toml` from `api/`
+using the `FLY_API_TOKEN` GitHub secret. For a manual deploy, rebuild `dist/`
+first — `api/Dockerfile` copies prebuilt output and does not compile in the
+container:
 
 ```bash
+npm run build --prefix api     # mandatory before a manual fly deploy
 cd api
 fly launch --no-deploy        # one-time, if the app does not exist yet
-fly secrets set DATABASE_URL=... RESEND_API_KEY=... OPERATOR_ALERT_EMAIL=... \
+fly secrets set DATABASE_URL=... RESEND_API_KEY=... ALERT_FROM_EMAIL=... \
+  OPERATOR_ALERT_EMAIL=... \
   BASE_WS=... BASE_RPC=... UNICHAIN_WS=... UNICHAIN_RPC=... \
   SEPOLIA_WS=... SEPOLIA_RPC=... REACTIVE_WS=... REACTIVE_RPC=...
 fly deploy                    # api/fly.toml: 1 × shared-cpu-1x, 256 MB
 ```
 
-`fly.toml` keeps `auto_stop_machines = false` / `min_machines_running = 1` so
-the WSS subscriptions and Supabase project stay alive. The keeper key must
-live only in the separate Phase E Fly app, never in `handshake-api`.
+`ALERT_FROM_EMAIL` must be a verified Resend sender; `RESEND_FROM` is unused by
+the API. `fly.toml` keeps `auto_stop_machines = false` / `min_machines_running = 1`
+so the WSS subscriptions and Supabase project stay alive. The keeper key must
+live only in the separate Phase E Fly app, never in `handshake-api`. Vercel UI
+deploys and canonical alias re-pointing remain manual (option 3, see
+`docs/VERCEL.md`); backend CI/CD never touches Vercel.
+
+Shutdown drains in-flight gap fills before the DB pool closes, and a failed log
+during gap fill leaves the block cursor at the last successful log for the
+5-minute reconcile to retry (see `docs/PLATFORM.md`).

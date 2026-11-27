@@ -39,8 +39,23 @@ const httpClients = new Map<number, HttpClient>(
 const wsClients = new Map<number, WsClient>();
 const subscriptions = new Map<number, { unsubscribe: () => Promise<unknown> }>();
 const backfilling = new Set<number>();
+/** Tracked fire-and-forget gap fills so shutdown can wait for their DB work. */
+const backfillTasks = new Set<Promise<void>>();
 let reconcileTimer: ReturnType<typeof setInterval> | undefined;
 let started = false;
+let stopping = false;
+
+/** Launch a gap fill that shutdown will drain before the pg pool is closed. */
+function runBackfill(chain: ChainConfig): void {
+  if (stopping) return;
+  const task = backfill(chain);
+  backfillTasks.add(task);
+  void task.finally(() => {
+    backfillTasks.delete(task);
+  }).catch((error) => {
+    log.error({ err: error, chainId: chain.chainId }, 'backfill task rejected');
+  });
+}
 
 function isRangeError(error: unknown): boolean {
   const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
@@ -73,7 +88,7 @@ async function handleLog(chain: ChainConfig, raw: RawLog): Promise<void> {
 
 /** Bounded HTTP eth_getLogs gap fill; one subscription but many chunked requests. */
 export async function backfill(chain: ChainConfig): Promise<void> {
-  if (backfilling.has(chain.chainId)) return;
+  if (stopping || backfilling.has(chain.chainId)) return;
   backfilling.add(chain.chainId);
   const client = httpClients.get(chain.chainId)!;
   const method = 'eth_getLogs';
@@ -96,7 +111,9 @@ export async function backfill(chain: ChainConfig): Promise<void> {
     if (from > head) from = head;
     let chunk = chain.logChunkSize;
     let scanned = 0;
+    let failed = false;
     while (from <= head) {
+      if (stopping) break;
       const to = Math.min(head, from + chunk - 1);
       try {
         const logs = await withRetry(async () => {
@@ -119,18 +136,36 @@ export async function backfill(chain: ChainConfig): Promise<void> {
             if (isRateLimitError(error)) alertWsFailure(chain.chainId, `getLogs rate limited: ${String(error)}`).catch(() => undefined);
           },
         });
+        if (stopping) break;
+        let lastGoodBlock = from - 1;
         for (const raw of logs) {
+          if (stopping) break;
           try {
             await handleLog(chain, raw);
-          } catch {
-            // One bad log must not abandon the rest of the gap fill.
+            lastGoodBlock = Math.max(lastGoodBlock, Number(raw.blockNumber ?? 0));
+          } catch (error) {
+            // Stop this chunk at the first bad log and never commit a cursor
+            // past it: the reconcile loop must replay it.
+            failed = true;
+            log.warn({
+              err: error,
+              chainId: chain.chainId,
+              txHash: raw.transactionHash ?? null,
+              blockNumber: Number(raw.blockNumber ?? 0),
+            }, 'backfill log failed; cursor will not advance past this block');
+            break;
           }
+        }
+        if (stopping) break;
+        if (failed) {
+          if (lastGoodBlock >= from) await updateIndexerStatus(chain.chainId, 'live', lastGoodBlock);
+          break;
         }
         await updateIndexerStatus(chain.chainId, 'live', to);
         scanned += logs.length;
         from = to + 1;
         // The provider may accept larger ranges once a few calls succeed.
-        if (chunk < chain.logChunkSize && scanned === 0 && from % (chunk * 4) === 0) {
+        if (!stopping && chunk < chain.logChunkSize && scanned === 0 && from % (chunk * 4) === 0) {
           chunk = Math.min(chain.logChunkSize, chunk * 2);
         }
       } catch (error) {
@@ -145,7 +180,13 @@ export async function backfill(chain: ChainConfig): Promise<void> {
     metrics.indexerBlockLag.set({
       chain: String(chain.chainId),
     }, lastEventAt > 0 ? (Date.now() - lastEventAt) / 1000 : 0);
-    log.info({ chainId: chain.chainId, from, head, chunk, scanned }, 'gap backfill complete');
+    if (failed) {
+      log.warn({ chainId: chain.chainId, from, head, chunk, scanned }, 'gap backfill stopped at failed log; reconcile will retry');
+    } else if (stopping) {
+      log.warn({ chainId: chain.chainId, from, head, chunk, scanned }, 'gap backfill paused during shutdown');
+    } else {
+      log.info({ chainId: chain.chainId, from, head, chunk, scanned }, 'gap backfill complete');
+    }
   } catch (error) {
     log.error({ err: error, chainId: chain.chainId }, 'gap backfill failed');
     await alertWsFailure(chain.chainId, `Gap backfill failed: ${String(error)}`).catch(() => undefined);
@@ -169,11 +210,12 @@ async function onWsError(chain: ChainConfig, error: unknown): Promise<void> {
   await alertWsFailure(chain.chainId, String(error));
   // viem reconnects + re-subscribes internally; replay anything missed since
   // the last committed block once the socket has had time to come back.
-  setTimeout(() => void backfill(chain), backoffDelay(1, 1_000, 3_000)).unref();
+  setTimeout(() => runBackfill(chain), backoffDelay(1, 1_000, 3_000)).unref();
 }
 
 export async function startIndexer(): Promise<void> {
   if (started) return;
+  stopping = false;
   started = true;
   for (const chain of CHAIN_CONFIGS) {
     try {
@@ -183,6 +225,7 @@ export async function startIndexer(): Promise<void> {
       const subscription = await client.transport.subscribe({
         params: ['logs', { address: chain.addresses, topics: [chain.topic0s] }],
         onData: (data) => {
+          if (stopping) return;
           const logData = (data as { result?: RawLog }).result;
           if (logData) void handleLog(chain, logData).catch((error) => {
             log.error({ err: error, chainId: chain.chainId }, 'subscription log failed');
@@ -195,13 +238,13 @@ export async function startIndexer(): Promise<void> {
       log.info({
         chainId: chain.chainId, name: chain.name, addresses: chain.addresses.length, topics: chain.topic0s.length,
       }, 'subscribed to logs');
-      void backfill(chain);
+      runBackfill(chain);
     } catch (error) {
       // A dead provider must not prevent the HTTP API from starting.
       indexerStats.set(chain.chainId, { status: 'error', subscriptions: 0 });
       log.error({ err: error, chainId: chain.chainId }, 'chain subscription failed');
       await alertWsFailure(chain.chainId, `Subscription failed: ${String(error)}`).catch(() => undefined);
-      void backfill(chain);
+      runBackfill(chain);
     }
   }
   const socketOpened = (chain: ChainConfig) => {
@@ -218,12 +261,15 @@ export async function startIndexer(): Promise<void> {
     }).catch(() => undefined);
   }
   reconcileTimer = setInterval(() => {
-    for (const chain of CHAIN_CONFIGS) void backfill(chain);
+    for (const chain of CHAIN_CONFIGS) runBackfill(chain);
   }, 5 * 60_000);
   reconcileTimer.unref();
 }
 
 export async function stopIndexer(): Promise<void> {
+  // Signal first so no new gap fill or log can start while the pool is alive,
+  // then drain the ones already in flight before index.ts closes the DB.
+  stopping = true;
   if (reconcileTimer) clearInterval(reconcileTimer);
   reconcileTimer = undefined;
   for (const [chainId, subscription] of subscriptions) {
@@ -235,5 +281,7 @@ export async function stopIndexer(): Promise<void> {
     await client.transport.getRpcClient().then((rpc) => rpc.close()).catch(() => undefined);
   }
   wsClients.clear();
+  await Promise.allSettled([...backfillTasks]);
+  backfillTasks.clear();
   started = false;
 }
