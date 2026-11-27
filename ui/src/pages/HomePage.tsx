@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { ArrowRight, Plus } from 'lucide-react'
 import { Button, ChainMark, EmptyState, Panel, RouteStrip, Spinner, StatusPill, TokenMark, icon } from '../components/ui'
@@ -61,6 +61,20 @@ function OrderBookPreview() {
   const [visible, setVisible] = useState(10)
   const preview = orders?.slice(0, visible) ?? []
   const hasMore = !!orders && visible < orders.length
+  const sentinel = useRef<HTMLDivElement>(null)
+
+  // Append the next ten orders automatically as the user scrolls to the end.
+  useEffect(() => {
+    if (!hasMore || !sentinel.current) return
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) setVisible((count) => count + 10)
+      },
+      { rootMargin: '120px' },
+    )
+    observer.observe(sentinel.current)
+    return () => observer.disconnect()
+  }, [hasMore])
 
   return (
     <Panel
@@ -85,13 +99,13 @@ function OrderBookPreview() {
             {preview.map((row) => <PreviewRow key={row.id} row={row} now={now} />)}
           </ul>
           {hasMore && (
-            <div className="border-t border-line px-5 py-3 text-center sm:px-6">
+            <div ref={sentinel} className="border-t border-line px-5 py-3 text-center sm:px-6">
               <button
                 type="button"
                 onClick={() => setVisible((count) => count + 10)}
                 className="min-h-9 rounded-full border border-line px-4 text-[11px] font-medium text-ink-700 transition-colors hover:bg-paper-100 hover:text-accent"
               >
-                Load next {Math.min(10, orders.length - visible)} orders
+                Loading next {Math.min(10, orders.length - visible)} orders…
               </button>
             </div>
           )}
