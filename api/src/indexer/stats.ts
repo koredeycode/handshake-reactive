@@ -1,7 +1,7 @@
 import { CHAIN_CONFIGS } from '../contracts.js';
 
 type ChainStats = {
-  status: 'connecting' | 'live' | 'reconnecting' | 'error';
+  status: 'connecting' | 'live' | 'reconnecting' | 'error' | 'gapFillOnly';
   lastEventAt: number;
   lastBlock: number;
   reconnectCount: number;
