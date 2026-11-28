@@ -107,8 +107,12 @@ async function handleLog(chain: ChainConfig, raw: RawLog): Promise<void> {
       await ingestLog(event);
     }
     const now = Date.now();
+    // An event replayed by gap-fill proves history, not a live subscription.
+    // Only a subscribed chain may report `live`.
+    const subscribed = subscriptions.has(chain.chainId)
+      && (indexerStats.get(chain.chainId)?.subscriptions ?? 0) > 0;
     indexerStats.set(chain.chainId, {
-      status: 'live',
+      status: subscribed ? 'live' : 'gapFillOnly',
       lastEventAt: now,
       lastBlock: Math.max(indexerStats.get(chain.chainId)?.lastBlock ?? 0, event.blockNumber),
     });
