@@ -46,41 +46,43 @@ function directUrlFromPooler(urlString: string): string | undefined {
 
 const directUrl = directUrlFromPooler(env.DATABASE_URL);
 
-/** User-facing REST/SSE reads. Short timeouts: fail fast, never hang a client. */
-export const requestPg = makePool('request', 4, 15, 5);
-
-/** Background + alert pools start on the pooler and are upgraded to the direct
+/** All pools start on the transaction pooler and are upgraded to the direct
  *  host at boot if it answers. Live ESM bindings mean importers see the switch. */
+const requestFallbackPg = makePool('request', 4, 15, 5);
 const backgroundFallbackPg = makePool('background', 2, 10, 5);
 const alertFallbackPg = makePool('alerts', 2, 10, 5);
+const directRequestPg = directUrl ? makePool('request-direct', 4, 15, 5, directUrl) : undefined;
 const directBackgroundPg = directUrl ? makePool('background-direct', 2, 10, 5, directUrl) : undefined;
 const directAlertPg = directUrl ? makePool('alerts-direct', 2, 10, 5, directUrl) : undefined;
 
+export let requestPg = requestFallbackPg;
 export let backgroundPg = backgroundFallbackPg;
 export let alertPg = alertFallbackPg;
+export let db = drizzle(requestPg, { schema });
 export let backgroundDb = drizzle(backgroundPg, { schema });
 export let alertDb = drizzle(alertPg, { schema });
 
-export const db = drizzle(requestPg, { schema });
-
 /** Probe once at boot. Direct connections avoid the Supavisor stall; if they
  *  are unavailable (network policy, connection limit), stay on the pooler. */
-export async function selectNonRequestPools(): Promise<void> {
-  if (!directBackgroundPg || !directAlertPg) return;
+export async function selectPools(): Promise<void> {
+  if (!directRequestPg || !directBackgroundPg || !directAlertPg) return;
   try {
-    await directBackgroundPg`select 1`;
+    await directRequestPg`select 1`;
+    requestPg = directRequestPg;
     backgroundPg = directBackgroundPg;
     alertPg = directAlertPg;
+    db = drizzle(requestPg, { schema });
     backgroundDb = drizzle(backgroundPg, { schema });
     alertDb = drizzle(alertPg, { schema });
-    log.info({ mode: 'direct' }, 'background and alert pools using direct Supabase connection');
+    pg = requestPg;
+    log.info({ mode: 'direct' }, 'all database pools using direct Supabase connection');
   } catch (error) {
     log.warn({ err: error, mode: 'pooler' }, 'direct Supabase unavailable; keeping transaction pooler');
   }
 }
 
 /** Kept as an alias for callers that still reference the raw request pool. */
-export const pg = requestPg;
+export let pg = requestPg;
 
 export async function dbPing(): Promise<boolean> {
   try {
@@ -95,9 +97,10 @@ export async function dbPing(): Promise<boolean> {
 
 export async function closeDb(): Promise<void> {
   await Promise.allSettled([
-    requestPg.end({ timeout: 5 }),
+    requestFallbackPg.end({ timeout: 5 }),
     backgroundFallbackPg.end({ timeout: 5 }),
     alertFallbackPg.end({ timeout: 5 }),
+    directRequestPg?.end({ timeout: 5 }),
     directBackgroundPg?.end({ timeout: 5 }),
     directAlertPg?.end({ timeout: 5 }),
   ]);
