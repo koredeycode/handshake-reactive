@@ -85,8 +85,8 @@ export const metrics = {
   }),
   alertEmail: new Counter({
     name: 'alert_email_total',
-    help: 'Operator alert delivery attempts',
-    labelNames: ['status'] as const,
+    help: 'Operator alert delivery attempts by status and alert kind',
+    labelNames: ['status', 'kind'] as const,
     registers: [registry],
   }),
   rcDebtWei: new Gauge({

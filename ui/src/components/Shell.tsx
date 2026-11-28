@@ -4,11 +4,12 @@ import { Link, NavLink, useLocation } from 'react-router-dom'
 import { useAccount, useConnect, useDisconnect, type Connector } from 'wagmi'
 import { ArrowUpRight, Bell, ChevronDown, ClipboardList, Droplets, House, LogOut, Plus, Search, Wallet, X } from 'lucide-react'
 import { useBalanceGroups, useWalletBalances } from '../lib/balances'
-import { CHAIN_LABELS } from '../lib/chains'
+import { CHAIN_LABELS, chainKeyFromId } from '../lib/chains'
 import { copyText, truncate } from '../lib/format'
 import { useRealtime } from '../lib/RealtimeProvider'
 import { useCopyFeedback } from '../lib/proofs'
-import { Button, ChainMark, ConvergenceMark, icon } from './ui'
+import { hasInjectedWallet } from '../wagmi'
+import { Button, ChainMark, ConvergenceMark, Notice, icon } from './ui'
 
 const NAV = [
   { to: '/', label: 'Home', Icon: House, end: true },
@@ -174,8 +175,10 @@ function WalletControl() {
                 </div>
                 <div className="space-y-2 p-4 sm:p-5">
                   {connectors.length === 0 && (
-                    <p className="py-3 text-center text-[12px] text-ink-400">
-                      No wallets detected. Install a browser wallet or use WalletConnect.
+                    <p className="py-3 text-center text-[12px] leading-relaxed text-ink-500">
+                      {hasInjectedWallet()
+                        ? 'No wallets detected. Allow this site to connect, then try again.'
+                        : 'No browser wallet detected here. Open Handshake in a wallet browser (or install a browser extension). WalletConnect is available when a project ID is configured.'}
                     </p>
                   )}
                   {connectors.map((item, index) => (
@@ -282,41 +285,71 @@ function WalletControl() {
 
 /** SSE connection state plus the in-app notification centre (toasts are transient). */
 function RealtimeControls() {
-  const { status, notifications, unreadCount, acknowledge, clearNotifications } = useRealtime()
+  const { status, resyncedAt, notifications, unreadCount, acknowledge, clearNotifications } = useRealtime()
   const [open, setOpen] = useState(false)
   const root = useRef<HTMLDivElement>(null)
+  const popover = useRef<HTMLDivElement>(null)
+  const bell = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
     if (!open) return
+    const previouslyFocused = document.activeElement as HTMLElement | null
+    popover.current?.querySelector<HTMLElement>('button')?.focus()
     const onPointerDown = (event: PointerEvent) => {
       if (root.current && !root.current.contains(event.target as Node)) setOpen(false)
     }
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(false)
+      if (event.key === 'Escape') {
+        setOpen(false)
+        bell.current?.focus()
+        return
+      }
+      if (event.key !== 'Tab' || !popover.current) return
+      const focusable = Array.from(popover.current.querySelectorAll<HTMLElement>('button:not([disabled])'))
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (!first || !last) return
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
     }
     document.addEventListener('pointerdown', onPointerDown)
     document.addEventListener('keydown', onKeyDown)
     return () => {
       document.removeEventListener('pointerdown', onPointerDown)
       document.removeEventListener('keydown', onKeyDown)
+      const restore = previouslyFocused && document.contains(previouslyFocused) ? previouslyFocused : bell.current
+      restore?.focus()
     }
   }, [open])
 
-  const label = status === 'open' ? 'Live updates' : status === 'reconnecting' ? 'Reconnecting' : 'Connecting'
+  const label = resyncedAt
+    ? 'Resynced'
+    : status === 'open'
+      ? 'Live updates'
+      : status === 'reconnecting'
+        ? 'Reconnecting'
+        : 'Connecting'
   return (
     <div className="flex shrink-0 items-center gap-2">
       <span
         title={`Realtime stream: ${label}`}
         className="inline-flex min-h-10 items-center gap-1.5 rounded-full border border-line bg-paper-0 px-2 text-[10px] text-ink-500 sm:px-2.5"
       >
-        <span className={`h-1.5 w-1.5 rounded-full ${status === 'open' ? 'bg-good' : status === 'reconnecting' ? 'bg-warn animate-pulse' : 'bg-ink-400'}`} />
+        <span className={`h-1.5 w-1.5 rounded-full ${resyncedAt || status === 'open' ? 'bg-good' : status === 'reconnecting' ? 'bg-warn animate-pulse' : 'bg-ink-400'}`} />
         <span className="hidden sm:inline">{label}</span>
       </span>
       <div className="relative" ref={root}>
         <button
+          ref={bell}
           type="button"
           aria-label={`Notifications${unreadCount ? `, ${unreadCount} unread` : ''}`}
           aria-expanded={open}
+          aria-controls="notification-popover"
           onClick={() => {
             setOpen((value) => !value)
             if (!open) notifications.forEach((item) => acknowledge(item.id))
@@ -332,6 +365,8 @@ function RealtimeControls() {
         </button>
         {open && (
           <div
+            ref={popover}
+            id="notification-popover"
             role="region"
             aria-label="Notifications"
             className="absolute right-0 top-full z-40 mt-2 w-[min(340px,calc(100vw-2rem))] rounded-2xl border border-line bg-paper-0 p-3 shadow-[0_18px_45px_rgba(24,24,27,0.12)]"
@@ -362,6 +397,41 @@ function RealtimeControls() {
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+/**
+ * Read-only, app-wide signals from frames the stream actually sends:
+ * SSE health (staleness) and `keeper.status` debt (delayed chains). No keeper
+ * is invented here — if no debt frame arrives, no banner is shown.
+ */
+function LiveBanners() {
+  const { isStale, staleReason, delayedChains } = useRealtime()
+  if (!isStale && delayedChains.length === 0) return null
+  const chainLabels = delayedChains
+    .map((id) => {
+      const key = chainKeyFromId(id)
+      return key ? CHAIN_LABELS[key] : `chain ${id}`
+    })
+    .join(', ')
+  return (
+    <div
+      aria-live="polite"
+      className="space-y-2 border-b border-line bg-paper-0 px-4 py-3 sm:px-6 lg:px-10"
+    >
+      {isStale && (
+        <Notice
+          title={staleReason === 'reconnecting' ? 'Live updates are reconnecting' : 'Showing data that may be up to 60 seconds old'}
+        >
+          Order statuses and balances may lag the chain. Refresh an order before acting on a status that looks out of date.
+        </Notice>
+      )}
+      {delayedChains.length > 0 && (
+        <Notice title={`Delayed · network — ${chainLabels}`}>
+          Reactive callbacks to {chainLabels} are paused while the reactive contract has outstanding debt. Locked funds remain on-chain; settlement resumes when the network catches up. No action is needed from you.
+        </Notice>
+      )}
     </div>
   )
 }
@@ -465,6 +535,8 @@ export default function Shell({ children }: { children: ReactNode }) {
             )}
           </div>
         </header>
+
+        <LiveBanners />
 
         <nav
           aria-label="Primary"

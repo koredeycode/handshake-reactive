@@ -8,6 +8,14 @@ export interface ConfirmDetail {
   value: ReactNode
 }
 
+/** Explicit token provenance for confirmations that lock a custom ERC-20. */
+export interface ConfirmTokenRisk {
+  address?: string | null
+  decimals?: number | null
+  source?: string
+  verified?: boolean
+}
+
 /**
  * Shared pre-flight dialog for irreversible wallet writes. Every detail is
  * explicit — tokens, amounts, chains, deadline, counterparty and the gas note —
@@ -18,6 +26,7 @@ export default function ConfirmModal({
   description,
   details,
   gasNote,
+  tokenRisks,
   confirmLabel = 'Confirm',
   busy = false,
   onConfirm,
@@ -27,6 +36,7 @@ export default function ConfirmModal({
   description?: string
   details: ConfirmDetail[]
   gasNote?: string
+  tokenRisks?: ConfirmTokenRisk[]
   confirmLabel?: string
   busy?: boolean
   onConfirm: () => void
@@ -34,6 +44,13 @@ export default function ConfirmModal({
 }) {
   const dialog = useRef<HTMLDivElement>(null)
   const confirmRef = useRef<HTMLButtonElement>(null)
+  // Callers that do not pass explicit provenance (e.g. an existing leg) still
+  // get the immutability notice whenever a "Token" row is in the summary.
+  const risks: ConfirmTokenRisk[] = tokenRisks ??
+    details.filter((detail) => /token/i.test(detail.label)).map((detail) => ({
+      address: typeof detail.value === 'string' && /^0x[a-fA-F0-9]{40}$/.test(detail.value) ? detail.value : null,
+      source: 'existing order leg / token metadata',
+    }))
 
   useEffect(() => {
     const previouslyFocused = document.activeElement as HTMLElement | null
@@ -110,6 +127,28 @@ export default function ConfirmModal({
               <AlertTriangle {...icon} className="mt-0.5 shrink-0" />
               <span>{gasNote}</span>
             </p>
+          )}
+          {risks.length > 0 && (
+            <div className="mt-3 rounded-xl border border-warn/25 bg-warn-soft/60 px-3 py-2.5">
+              <p className="flex items-start gap-2 text-[11px] font-medium text-warn">
+                <AlertTriangle {...icon} className="mt-0.5 shrink-0" />
+                Token details are final
+              </p>
+              <p className="mt-1 text-[11px] leading-relaxed text-ink-700">
+                This token cannot be changed once locked. Its address, decimals and amounts are bound into the order's
+                terms hash — verify the contract before signing.
+              </p>
+              {risks.map((risk, index) => (
+                <div key={`${risk.address ?? 'token'}-${index}`} className="mt-2 border-t border-warn/20 pt-2 text-[10px] leading-relaxed text-ink-500">
+                  {risk.address && <p className="tnum break-all font-mono text-ink-700">{risk.address}</p>}
+                  <p>
+                    Decimals: {risk.decimals ?? 'read from token metadata'} · Source:{' '}
+                    {risk.source ?? 'order leg / token metadata'}
+                    {risk.verified === false ? ' · Unverified' : ''}
+                  </p>
+                </div>
+              ))}
+            </div>
           )}
         </div>
 

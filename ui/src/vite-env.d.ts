@@ -26,6 +26,12 @@ interface ImportMetaEnv {
   readonly VITE_LASNA_RPC?: string
   /** Enables the hidden /dev diagnostics route in production builds. */
   readonly VITE_DEV_TOOLS?: string
+  /**
+   * FUTURE-ONLY cutover flag for the permissionless `expire` action. Set to 1
+   * ONLY after the Cron100 RC redeploy; the UI also refuses while the configured
+   * RC is the known live address.
+   */
+  readonly VITE_EXPIRE_ENABLED?: string
   /** Optional WalletConnect Cloud project id; enables the WalletConnect connector. */
   readonly VITE_WALLETCONNECT_PROJECT_ID?: string
 }

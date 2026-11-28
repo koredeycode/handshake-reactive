@@ -7,6 +7,13 @@ primary_region = 'iad'
   # Build context is this api/ directory; npm install && npm run build run in
   # Fly's Node builder. Start command below uses the compiled output.
 
+# Fly runs this with the app's secrets (including DATABASE_URL) on a temporary
+# machine BEFORE the new app machines start. GitHub Actions only has
+# FLY_API_TOKEN, so migrations run here rather than in CI. drizzle migrate is
+# idempotent, so it is safe to run on every deploy.
+[deploy]
+  release_command = "node dist/db/migrate.js"
+
 [processes]
   app = 'node dist/index.js'
 

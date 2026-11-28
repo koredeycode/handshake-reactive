@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { ArrowRight, Plus } from 'lucide-react'
+import TraderGuide from '../components/TraderGuide'
 import { Button, ChainMark, EmptyState, Panel, RouteStrip, Skeleton, Spinner, StatusPill, TokenMark, icon } from '../components/ui'
 import { CHAIN_LABELS } from '../lib/chains'
 import { countdown, formatAmount, formatDeadline, truncate } from '../lib/format'
@@ -41,7 +42,7 @@ function PreviewRow({ row, now }: { row: AggregatedOrderRow; now: number }) {
           </span>
         </span>
         <span className="flex items-center gap-3">
-          <StatusPill status={status!} />
+          <StatusPill status={status!} reason={order.refundReason} order={order} />
           <span className={`tnum hidden font-mono text-[11px] sm:inline ${expired ? 'text-warn' : 'text-ink-400'}`}>
             {countdown(order.deadline, now)}
           </span>
@@ -139,6 +140,7 @@ export default function HomePage() {
       </section>
 
       <OrderBookPreview />
+      <TraderGuide />
     </div>
   )
 }

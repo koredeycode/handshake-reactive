@@ -3,8 +3,10 @@
 # One reactive contract (Lasna) + one venue per chain (Base Sepolia, Unichain
 # Sepolia, Ethereum Sepolia). Checks: debt == 0 and reserves > 0 on the RC and
 # every configured escrow, wallet balances, and the 19 active subscriptions
-# (6 per venue + the single Cron10). All fix commands use Foundry keystore
+# (6 per venue + the single Cron100). All fix commands use Foundry keystore
 # `--account` (no raw private keys, no key material in this file).
+# FUTURE Cron100 redeploy: see scripts/preflight-cron100.sh (read-only, no tx).
+# Cron100 wording below assumes that cutover; until then the live RC uses Cron10.
 
 set -uo pipefail
 
@@ -48,7 +50,7 @@ MIN_BASE="${MIN_BASE_BALANCE:-10000000000000000}"
 MIN_UNICHAIN="${MIN_UNICHAIN_BALANCE:-5000000000000000}"
 MIN_PAYMENT="${MIN_PAYMENT_BALANCE:-$MIN_BASE}"
 MIN_ASSET="${MIN_ASSET_BALANCE:-$MIN_UNICHAIN}"
-# 3 venues x 6 escrow topics + 1 Cron10 subscription on the single RC.
+# 3 venues x 6 escrow topics + 1 Cron100 subscription on the single RC.
 MIN_SUBS="${MIN_ACTIVE_SUBSCRIPTIONS:-19}"
 LOOKBACK="${SUBSCRIPTION_LOOKBACK_BLOCKS:-300000}"
 
@@ -201,7 +203,7 @@ PY
   local count detail fix
   count=$(printf '%s\n' "$output" | head -n 1)
   if [ "$count" -ge "$MIN_SUBS" ] 2>/dev/null; then
-    pass "active subscriptions == $count (>= $MIN_SUBS; 3 venues x 6 + Cron10)"
+    pass "active subscriptions == $count (>= $MIN_SUBS; 3 venues x 6 + Cron100)"
   else
     fix=$(cat <<EOF
 cast send --rpc-url $REACTIVE_RPC --account $ACCOUNT $RC "setVenue(uint256,address,address)" 84532 ${PAYMENT_ESCROW:-<base payment escrow>} ${BASE_ASSET_ESCROW:-<base asset escrow>}
@@ -209,7 +211,7 @@ cast send --rpc-url $REACTIVE_RPC --account $ACCOUNT $RC "setVenue(uint256,addre
 cast send --rpc-url $REACTIVE_RPC --account $ACCOUNT $RC "setVenue(uint256,address,address)" 11155111 ${SEPOLIA_PAYMENT_ESCROW:-<sepolia payment escrow>} ${SEPOLIA_ASSET_ESCROW:-<sepolia asset escrow>}
 EOF
 )
-    fail "active subscriptions == $count (< $MIN_SUBS; expected 19 = 6 x 3 venues + Cron10)" "$fix"
+    fail "active subscriptions == $count (< $MIN_SUBS; expected 19 = 6 x 3 venues + Cron100)" "$fix"
   fi
   detail=$(printf '%s\n' "$output" | tail -n +2)
   if [ -n "$detail" ]; then

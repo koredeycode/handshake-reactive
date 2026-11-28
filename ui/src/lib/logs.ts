@@ -15,7 +15,7 @@ import {
   callbackConfigTuple,
   callbackPayloadAbi,
   callbackRequestEvent,
-  cron10Event,
+  cron100Event,
   paymentLockedEvent,
   paymentReleasedEvent,
   paymentRefundedEvent,
@@ -725,7 +725,7 @@ export async function fetchEventFeed(
         clients.lasna,
         'lasna',
         legacy,
-        [{ kind: 'cron10', abi: cron10Event }],
+        [{ kind: 'cron100', abi: cron100Event }],
         { fromBlock: lasnaLatest > 100n ? lasnaLatest - 100n : 0n, toBlock: lasnaLatest },
         undefined,
         resolveTimestamp,
@@ -746,6 +746,7 @@ export async function fetchEventFeed(
     paymentRefunded: 'PaymentRefunded',
     assetRefunded: 'AssetRefunded',
     cron10: 'Cron10',
+    cron100: 'Cron100',
   }
   return batches
     .flat()

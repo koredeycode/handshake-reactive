@@ -6,16 +6,16 @@ import { assetEscrowAbi, erc20Abi, paymentEscrowAbi } from '../lib/contracts'
 import { formatAmount, formatDeadline, isZeroAddress, truncate, ZERO_ADDRESS } from '../lib/format'
 import { logClient } from '../lib/logs'
 import { useAllowance, useErc20Balance, type LegKind } from '../lib/queries'
-import { isOpenOrder } from '../lib/status'
+import { displayRefundReason, isOpenOrder, refundEvidence, refundReasonKey } from '../lib/status'
 import { computeTermsHash } from '../lib/terms'
-import { txToast } from '../lib/toasts'
+import { txErrorMessage, txToast } from '../lib/toasts'
 import { useOrderTokenDisplay } from '../lib/tokenDisplay'
 import { UNVERIFIED_LABEL } from '../lib/tradeTicket'
 import { venueOfOrder } from '../lib/venue'
 import type { Leg, Order } from '../lib/types'
 import ConfirmModal from './ConfirmModal'
 import WriteButton from './WriteButton'
-import { ChainPill, ExternalLink, Skeleton, TokenMark } from './ui'
+import { ChainPill, ExternalLink, Notice, Skeleton, TokenMark, TxLink } from './ui'
 
 function stateLabel(state?: bigint | null): string {
   if (state === undefined || state === null) return 'Not locked'
@@ -28,12 +28,16 @@ export default function LegCard({
   leg,
   orderId,
   refresh,
+  reason,
+  refundTxHash,
 }: {
   kind: LegKind
   order: Order
   leg?: Leg | null
   orderId: Hex
   refresh: () => void
+  reason?: string | null
+  refundTxHash?: string
 }) {
   const { address } = useAccount()
   const { writeContractAsync, isPending } = useWriteContract()
@@ -74,6 +78,13 @@ export default function LegCard({
   const termsHash = computeTermsHash(order)
   const termsMismatch = !!leg && leg.termsHash?.toLowerCase() !== termsHash.toLowerCase()
   const winnerKnown = !!order.winner && !isZeroAddress(order.winner)
+  const evidence = refundEvidence(order, null, isPayment ? { payment: leg } : { asset: leg })
+  if (refundTxHash) {
+    if (isPayment) evidence.paymentHash = true
+    else evidence.assetHash = true
+  }
+  const reasonKey = refundReasonKey(displayRefundReason(reason, evidence))
+  const refundHash = refundTxHash ?? (leg?.state === 3n ? leg.txHash : undefined)
   const counterpartyLabel = open && isPayment
     ? winnerKnown
       ? truncate(order.winner, 8, 6)
@@ -99,15 +110,16 @@ export default function LegCard({
 
   async function write(label: string, fn: () => Promise<Hex>) {
     setError(null)
+    let hash: Hex | undefined
     try {
-      const hash = await fn()
+      hash = await fn()
       txToast(label, hash, chainKey, 'pending')
       await client?.waitForTransactionReceipt({ hash })
       txToast(label, hash, chainKey, 'confirmed')
       refresh()
-    } catch {
-      setError('The transaction did not complete. Check the connected chain and token approval.')
-      txToast(label, '0x', chainKey, 'error')
+    } catch (error) {
+      setError(txErrorMessage(error, chainKey))
+      txToast(label, hash ?? '0x', chainKey, 'error', error)
     }
   }
 
@@ -151,6 +163,7 @@ export default function LegCard({
           </div>
         </div>
         <span
+          aria-live="polite"
           className={`rounded-full border px-2.5 py-1 text-[11px] font-medium ${
             locked ? 'border-accent/25 bg-accent-soft text-accent-ink' : 'border-line bg-paper-50 text-ink-500'
           }`}
@@ -246,7 +259,33 @@ export default function LegCard({
         </p>
       )}
       {error && (
-        <p className="mt-5 rounded-xl border border-bad/25 bg-bad-soft px-3 py-2 text-xs text-bad">{error}</p>
+        <p role="alert" className="mt-5 rounded-xl border border-bad/25 bg-bad-soft px-3 py-2 text-xs text-bad">{error}</p>
+      )}
+
+      {!isPayment && reasonKey === 'race_loser' && (
+        <Notice className="mt-5" title="Another seller locked first">
+          <span>
+            You did not win this open order. Your tASSET was returned automatically on {CHAIN_LABELS[chainKey]}.
+          </span>
+          {winnerKnown && (
+            <span>
+              {' '}Winner:{' '}
+              <ExternalLink href={addressUrl(chainKey, order.winner)} className="text-[11px]">
+                {truncate(order.winner, 8, 6)}
+              </ExternalLink>.
+            </span>
+          )}
+          {refundHash && <span> Refund: <TxLink chain={chainKey} hash={refundHash} />.</span>}
+        </Notice>
+      )}
+
+      {reasonKey === 'late' && (
+        <Notice className="mt-5" title="Your lock arrived too late">
+          <span>
+            This order had already been settled or refunded when the lock reached the escrow. The {isPayment ? 'payment' : 'asset'} was returned automatically on {CHAIN_LABELS[chainKey]}.
+          </span>
+          {refundHash && <span> Refund: <TxLink chain={chainKey} hash={refundHash} />.</span>}
+        </Notice>
       )}
 
       <div className="mt-6 flex flex-wrap items-center gap-3 border-t border-line pt-5">

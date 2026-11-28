@@ -12,8 +12,18 @@ import type {
   SseSettled,
   SseTerminal,
 } from './api'
+import { refundReasonKey } from './status'
 
 const ZERO = '0x0000000000000000000000000000000000000000'
+
+/** On-chain state stages that carry a refund cause, mapped to the API reason. */
+const STAGE_REASON: Record<string, string> = {
+  EXPIRED: 'expired',
+  INVALID: 'invalid',
+  CANCELLED: 'cancelled',
+  LATE_REFUND: 'late',
+  RACE_LOSER_REFUND: 'race_loser',
+}
 
 function text(value: unknown, fallback?: string): string | undefined {
   return typeof value === 'string' && value ? value : fallback
@@ -22,13 +32,20 @@ function text(value: unknown, fallback?: string): string | undefined {
 /** Mirrors the backend's deriveStatus for the fields the UI cares about. */
 export function deriveApiStatus(row: ApiOrderRow): string {
   if (row.status === 'settled' || row.status === 'refunded' || row.status === 'cancelled') return row.status
-  const allClosed = Array.isArray((row as ApiOrderDetail).legs)
-    ? (row as ApiOrderDetail).legs.length >= 2 && (row as ApiOrderDetail).legs.every((leg) => leg.state !== 'locked')
-    : false
+  // API parity: the closure flags are authoritative. The indexer can hold only
+  // one leg row for a fully closed order, so requiring two leg rows contradicts
+  // the client pill (and SSE counts) for that order. This mirrors the backend's
+  // `allLegsClosed()` exactly.
+  const allClosed = !!(row.paymentClosed && row.assetClosed)
+  // API parity: foldEvent persists a reason (race_loser / invalid / late /
+  // expired) without setting `refund_requested`, and the backend's deriveStatus
+  // treats that reason as the refund decision. Combine the decision flags with
+  // the closure flags instead of reading the reason alone or the flag alone.
+  const refundDecision = !!row.refundRequested || !!refundReasonKey(row.refundReason)
   if (allClosed && row.settleRequested) return 'settled'
-  if (allClosed && row.refundRequested) return 'refunded'
+  if (allClosed && refundDecision) return 'refunded'
   if (row.settleRequested) return 'settling'
-  if (row.refundRequested) return 'refunding'
+  if (refundDecision) return 'refunding'
   if (row.paymentSeen && row.assetSeen) return 'bothLocked'
   if (row.paymentSeen || row.assetSeen) return 'awaitingLock'
   return 'open'
@@ -86,9 +103,17 @@ export function patchApiOrder(
       const stage = data as unknown as SseOrderState
       if (typeof stage.nonce === 'number' && stage.nonce < detail.nonce) return detail
       if (typeof stage.nonce === 'number') next.nonce = stage.nonce
+      // The API attaches the persisted reason to state frames; it is
+      // authoritative. Only infer a reason from the stage when no explicit
+      // reason was forwarded (previously the inference overwrote it).
+      const explicitReason = text(data.refundReason)
+      const stageReason = STAGE_REASON[stage.stage]
+      if (explicitReason) next.refundReason = explicitReason
+      else if (stageReason) next.refundReason = stageReason
+      if (stage.stage === 'EXPIRED') next.expired = true
       switch (stage.stage) {
         case 'CREATED': next.status = 'open'; break
-        case 'CANCELLED': next.status = 'cancelled'; next.refundRequested = true; break
+        case 'CANCELLED': next.status = 'cancelled'; next.refundRequested = true; next.refundReason = 'cancelled'; break
         case 'PAYMENT_SEEN': next.paymentSeen = true; break
         case 'ASSET_SEEN': next.assetSeen = true; break
         case 'WINNER': break
@@ -185,8 +210,9 @@ export function patchApiOrder(
       const refunded = data as unknown as SseRefunded
       next.status = 'refunded'
       next.refundRequested = true
+      next.refundReason = refunded.reason || next.refundReason || null
+      if (refundReasonKey(refunded.reason) === 'expired') next.expired = true
       next.legs = next.legs.map((leg) => ({ ...leg, state: 'refunded' }))
-      void refunded
       break
     }
     default:

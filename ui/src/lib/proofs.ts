@@ -13,6 +13,7 @@ import {
 } from './chains'
 import { formatTimestamp, isZeroAddress, truncate } from './format'
 import { logClient, type ProofChainKeys, type ProofClients } from './logs'
+import { displayRefundReason, refundEvidence } from './status'
 import { useOrderDetail } from './apiQueries'
 import type { ApiTimelineEvent } from './api'
 import type { Order, ProofData, ProofEvent, ProofEventKind } from './types'
@@ -53,7 +54,7 @@ const KIND_BY_STAGE: Record<string, ProofEventKind> = {
   assetReleased: 'assetReleased',
   paymentRefunded: 'paymentRefunded',
   assetRefunded: 'assetRefunded',
-  cron10: 'cron10',
+  cron100: 'cron100',
   // Legacy on-chain log names, kept for older cached payloads.
   PaymentLocked: 'paymentLocked',
   'lock.payment': 'paymentLocked',
@@ -67,6 +68,10 @@ const KIND_BY_STAGE: Record<string, ProofEventKind> = {
   AssetReleased: 'assetReleased',
   PaymentRefunded: 'paymentRefunded',
   AssetRefunded: 'assetRefunded',
+  Cron100: 'cron100',
+  // Live Cron10 ticks are legacy events: keep them in their own kind so a
+  // support bundle never exports one as the post-cutover `cron100` topic.
+  cron10: 'cron10',
   Cron10: 'cron10',
 }
 
@@ -215,6 +220,38 @@ export function buildProofMarkdown(
     'Proof assembled from public on-chain logs — no hash is shown unless it was observed.',
   ]
   return lines.join('\n')
+}
+
+/**
+ * Read-only support bundle for a stranded order: identifiers, venue, terms and
+ * every hash actually observed in the public timeline. Never invents a hash.
+ */
+export function buildCaseDetailsText(
+  orderId: string,
+  order: Order | null | undefined,
+  proof: ProofData | null | undefined,
+  chainKeys: ProofChainKeys = orderChainKeys(order),
+): string {
+  const observed = (proof?.events ?? []).map(
+    (event) => `- ${event.kind} · ${CHAIN_LABELS[event.chain]} · ${event.txHash}`,
+  )
+  // A stale reason on a matched order is not a refund claim. Export only the
+  // filtered reason, and let legacy cron10 events keep their own kind.
+  const shownReason = displayRefundReason(order?.refundReason, refundEvidence(order, proof))
+  return [
+    `Handshake case details — ${orderId}`,
+    '',
+    `Order ID: ${orderId}`,
+    `Venue: payment ${CHAIN_LABELS[chainKeys.payment]} (${order?.venue.paymentEscrow ?? '—'}) · asset ${CHAIN_LABELS[chainKeys.asset]} (${order?.venue.assetEscrow ?? '—'})`,
+    `Terms hash: ${order?.termsHash ?? '—'}`,
+    `Refund reason: ${shownReason ?? '—'}`,
+    `Buyer: ${order?.buyer ?? '—'}`,
+    `Seller: ${order?.seller ?? '—'}`,
+    'Observed transactions:',
+    ...(observed.length ? observed : ['- none observed in the public index']),
+    '',
+    'Copied from the public order tracker. Include this bundle when asking for support.',
+  ].join('\n')
 }
 
 /** Small hook used by copy buttons across screens. */

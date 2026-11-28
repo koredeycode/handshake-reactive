@@ -91,8 +91,22 @@ select:focus-visible {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  /* Covers every current and future animation/transition class: page-enter,
+     the route-strip crossfade, pulse, spin and any utility-added motion. */
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    animation-delay: 0ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .page-enter,
   .animate-\[fade-in_0\.35s_ease-out\],
-  .animate-pulse {
+  .animate-pulse,
+  .animate-spin {
     animation: none !important;
   }
 }

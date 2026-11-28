@@ -45,6 +45,14 @@ export default function FlowExplainer({ order }: { order?: Order | null }) {
           {CHAIN_LABELS[chainKeyFromId(order.venue.assetChainId) ?? 'unichain']}
         </p>
       )}
+      {order && (
+        <a
+          href="#settlement-guide"
+          className="mt-2 inline-flex min-h-6 items-center text-[10px] font-medium text-accent underline underline-offset-2"
+        >
+          Full guide: how settlement works / what can go wrong
+        </a>
+      )}
     </div>
   )
 }

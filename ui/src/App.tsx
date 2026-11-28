@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
 import Shell from './components/Shell'
+import MobileWalletHint from './components/MobileWalletHint'
 import DevPage from './pages/DevPage'
 import FaucetPage from './pages/FaucetPage'
 import HomePage from './pages/HomePage'
@@ -12,6 +13,7 @@ import VerifyPage from './pages/VerifyPage'
 export default function App() {
   return (
     <Shell>
+      <MobileWalletHint />
       <Routes>
         <Route path="/" element={<HomePage />} />
         <Route path="/orders" element={<OrdersPage />} />

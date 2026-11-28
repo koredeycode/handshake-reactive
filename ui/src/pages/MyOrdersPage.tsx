@@ -14,7 +14,7 @@ import {
   TxLink,
   icon,
 } from '../components/ui'
-import { countdown, formatAmount, formatDeadline, isZeroAddress, truncate } from '../lib/format'
+import { countdown, formatAmount, formatDeadline, formatTimestamp, isZeroAddress, truncate } from '../lib/format'
 import { buildHops, orderChainKeys, useProof } from '../lib/proofs'
 import { useAllOrders, type AggregatedOrderRow } from '../lib/queries'
 import { useOrderStatus } from '../lib/status'
@@ -85,7 +85,7 @@ function WalletOrderRow({ row, wallet, now }: WalletOrderProps) {
             </span>
           </div>
         </div>
-        <StatusPill status={status!} />
+        <StatusPill status={status!} reason={order.refundReason} order={order} proof={proof.data} />
       </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-[11px] text-ink-400">
@@ -107,6 +107,14 @@ function WalletOrderRow({ row, wallet, now }: WalletOrderProps) {
           Order detail <ArrowRight {...icon} />
         </Link>
       </div>
+
+      <details className="mt-2">
+        <summary className="w-fit cursor-pointer text-[10px] text-ink-400">Advanced</summary>
+        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-ink-400">
+          <span className="tnum font-mono">Nonce {order.nonce.toString()}</span>
+          <span className="tnum font-mono">Last action {formatTimestamp(order.lastActionTimestamp)}</span>
+        </div>
+      </details>
     </li>
   )
 }

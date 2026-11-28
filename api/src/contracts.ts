@@ -50,7 +50,16 @@ export const LEGACY_SYSTEM_CONTRACT = DEPLOYMENTS.legacySystemContract as Addres
 export const REACTIVE_CONTRACT = (process.env.RC_ADDRESS ?? DEPLOYMENTS.reactive) as Address;
 export const MULTICALL3 = '0xcA11bde05977b3631167028862bE2a173976CA11' as Address;
 
-/** topic0 constants — `cast keccak` of the exact signatures (same as scripts/proof.sh). */
+/**
+ * topic0 constants — `cast keccak` of the exact signatures (same as scripts/proof.sh),
+ * except `cron100`, which is the fixed legacy-system-contract constant from the
+ * Reactive docs (not keccak of the local signature).
+ *
+ * FUTURE CRON100 CUTOVER: the indexer/backend must be redeployed and verified
+ * against the new RC + escrow addresses BEFORE any test transaction is sent on
+ * the new deployment. Otherwise those events fall outside the backfill window
+ * and show up as empty terms / empty timelines. See personal/CRON100-RUNBOOK.md.
+ */
 export const TOPICS = {
   orderStateChanged: '0x49ecf21afe0244f5a25b83eafd7d9c0eb898acbb8338e37040e2d0999b9ae306',
   paymentLocked: '0xeb5b40d9e18193862e588be5f3887ec6b361ac7d7ad78e42e11adbd4cd697664',
@@ -60,7 +69,7 @@ export const TOPICS = {
   assetReleased: '0x8e7c2eb1a26bfcaca6a1abcf5add7d581276e708f9f446876015ed75c55397ee',
   assetRefunded: '0x512b6121585cd55600c64960420f18d49179f8611ab38147fe12deb03931f61f',
   callbackRequest: '0xef94dbc611c4b95bf4b8ba34b413972180c2faf26fbb480befacedd83e07b133',
-  cron10: '0x04463f7c1651e6b9774d7f85c85bb94654e3c46ca79b0c16fb16d4183307b687',
+  cron100: '0xb49937fb8970e19fd46d48f7e3fb00d659deac0347f79cd7cb542f0fc1503c70',
   venueRegistered: '0xf34676cc1d86839b1e3d5f8a8757fba03bb160a73e2cc3cc9550b663bcb516c1',
   venueUnregistered: '0x57269d63436b5c61a11ca8ed151cfb2a6e1ab1d7b9d087d8ebaca7114c79c6b0',
   transfer: '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef',
@@ -97,7 +106,7 @@ export const venueUnregisteredEvent = parseAbiItem(
 export const callbackRequestEvent = parseAbiItem(
   'event CallbackRequest(uint256 indexed chainId_, address indexed contract_, address indexed subscriber_, uint8 version_, bytes config_)',
 );
-export const cron10Event = parseAbiItem('event Cron10(uint256)');
+export const cron100Event = parseAbiItem('event Cron100(uint256)');
 export const transferEvent = parseAbiItem('event Transfer(address indexed from, address indexed to, uint256 value)');
 
 /** `config_` is abi.encode(CallbackConfiguration_V_1_0) — a single tuple. */
@@ -149,7 +158,7 @@ export const eventAbis: Record<string, AbiEvent> = Object.fromEntries(
     venueRegisteredEvent,
     venueUnregisteredEvent,
     callbackRequestEvent,
-    cron10Event,
+    cron100Event,
     transferEvent,
   ].map((item) => [item.name, item]),
 );
@@ -185,7 +194,7 @@ export const CHAIN_CONFIGS: ChainConfig[] = [
     topic0s: [
       TOPICS.orderStateChanged,
       TOPICS.callbackRequest,
-      TOPICS.cron10,
+      TOPICS.cron100,
       TOPICS.venueRegistered,
       TOPICS.venueUnregistered,
     ],

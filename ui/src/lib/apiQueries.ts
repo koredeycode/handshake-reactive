@@ -20,6 +20,7 @@ import {
 import { CHAIN_IDS, type ChainKey, type TradingChainKey } from './chains'
 import { ZERO_ADDRESS } from './format'
 import { useRealtime } from './RealtimeProvider'
+import { refundReasonKey } from './status'
 import { queryKeys } from './queryKeys'
 import { useConfig } from './config'
 import { useVenues } from './venues'
@@ -93,6 +94,9 @@ export function mapApiOrder(row: ApiOrderRow, venues: VenueRegistration[]): Orde
     assetLockCount: BigInt(row.assetLockCount ?? 0),
     paymentRequestNonce: BigInt(row.paymentRequestNonce ?? 0),
     assetRequestNonce: BigInt(row.assetRequestNonce ?? 0),
+    refundReason: row.refundReason ?? null,
+    expired: !!row.expired || row.status === 'expired' || refundReasonKey(row.refundReason) === 'expired',
+    termsHash: row.termsHash ?? null,
     venue: escrowPair(row, venues),
     missing: Object.keys(missing).length > 0 ? missing : undefined,
   }
@@ -112,6 +116,7 @@ function mapApiLeg(detail: ApiOrderDetail, leg: ApiOrderLeg): Leg {
     deadline: BigInt(detail.deadline ?? 0),
     state: legState(leg.state),
     nonce: BigInt(leg.nonce ?? 0),
+    txHash: leg.txHash || undefined,
   }
 }
 

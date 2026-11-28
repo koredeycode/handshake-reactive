@@ -72,8 +72,10 @@ curated-token catalogues (idempotent) and prunes expired rows (outbox 7 d, event
 - Decodes `PaymentLocked`, `AssetLocked`, `PaymentReleased`, `PaymentRefunded`,
   `AssetReleased`, `AssetRefunded`, RC `OrderStateChanged`, system-contract
   `CallbackRequest` (config tuple → payload → orderId, which is **not**
-  indexed), `Cron10` heartbeat, venue registry events, and curated-token
-  `Transfer` (wallet balance hint).
+  indexed), `Cron100` heartbeat, venue registry events, and curated-token
+  `Transfer` (wallet balance hint). The `Cron100` topic0 is the fixed legacy
+  system-contract constant; `Cron10` logs are ignored, and only `Cron100`
+  drives the liveness heartbeat.
 - Idempotent upsert on `(chain_id, tx_hash, log_index)`. On reconnect/startup,
   bounded HTTP `eth_getLogs` gap fill uses the proven caps: Base 200,
   Unichain 1000, Sepolia 500, Lasna 30 000 blocks, with 429 backoff and halving
@@ -86,6 +88,63 @@ curated-token catalogues (idempotent) and prunes expired rows (outbox 7 d, event
 - Event insert + order/leg fold + outbox rows commit in **one Drizzle
   transaction**; the typed in-process `EventBus` is published only after
   commit (`src/lib/bus.ts`) and can be swapped for a `PgNotifyBus` later.
+
+**Cron100 cutover (future, plan only):** update every address/topic source
+(`api/src/contracts.ts` included), redeploy this backend and confirm `/health`
+shows the new escrows **before** sending any test transaction on the new RC.
+Otherwise those events fall outside the initial backfill window and appear as
+empty terms / empty timelines. Details in `personal/CRON100-RUNBOOK.md`.
+
+### Buyer-UX indexer remediations (future, plan only)
+
+These are code changes only; nothing is applied to a live database or service.
+
+- `orders.refund_reason` (`refundReason` in API JSON) persists the cause carried
+  by `OrderStateChanged` / `LATE_REFUND` / `RACE_LOSER_REFUND` / `INVALID` /
+  `CANCELLED` / `EXPIRED`. `migrations/0001_refund_reason.sql` adds the nullable
+  text column; the Drizzle `meta/` snapshot and journal were regenerated offline
+  with `npm run db:generate` (no DB connection). The reason is forwarded on the
+  `order.state` SSE frame, is already the `reason` of `order.refunded`, and is
+  returned by both `GET /orders` and `GET /orders/:id`. The
+  `settle_requested` terminal rule (including the DB CHECK constraint) is
+  unchanged. Historical rows that predate the column have a blank reason until
+  their events are replayed (or a new stage arrives); there is no SQL backfill
+  from `order_events`, because deriving a cause from old rows would be fragile.
+  The fold uses `expired` only as a last-resort fallback when no persisted
+  reason exists and never overwrites a true reason with it.
+- Refund status is derived from the order-level `refundRequested` decision flag
+  plus the two closure flags, matching the UI. `REFUND_REQUESTED`, `EXPIRED`,
+  `CANCELLED`, `LATE_REFUND` and `INVALID` set that decision; `RACE_LOSER_REFUND`
+  is leg-level and records a `race_loser` reason without marking the whole order
+  refunded, so a winner may still settle. `WINNER` no longer implies a race
+  loser, and a stale reason is cleared on `SETTLE_REQUESTED`.
+- Terminal/settled derivation now uses the origin-chain closure flags
+  (`paymentClosed && assetClosed`) alone, matching the client. A missing leg row
+  can no longer leave a genuinely closed order stuck in `settling`.
+- Origin locks are folded even when their event precedes `CREATED` on Lasna:
+  a `PaymentLocked`/`AssetLocked` from a subscribed escrow introduces an order
+  only when RC hydration supplies the full terms; with failed hydration the
+  event is kept as an audit row and the leg is repaired once the order exists.
+  Re-delivered events repair only a missing leg (keyed by role + seller), so no
+  lock is double-counted and no duplicate SSE frame or notification is
+  published.
+- `keeper.status` frames are now published from the read-only on-chain RC
+  telemetry poll (`readRcTelemetry`) so the UI's delayed-chain signal works
+  without a signing keeper. These frames carry Lasna `chainId`, RC `target`,
+  `debtWei` and `reservesWei`, and reuse the last successful reading if a poll
+  goes stale. They write no `keeper_state` rows and send no email; existing
+  operator alerts are unchanged.
+
+**Cutover caveat (future):** `0001_refund_reason.sql` must reach the target DB
+before this build serves traffic. `api/fly.toml` declares
+`[deploy] release_command = "node dist/db/migrate.js"`: Fly runs it with the
+app's `DATABASE_URL` secret on a temporary machine **before** the new app
+machines start, so no GitHub secret and no manual DB step are needed. The
+migrator is idempotent (safe on every deploy), `api/Dockerfile` copies
+`migrations/` next to `dist/`, and the compiled migrator imports only production
+dependencies. Orders already stuck with both closure flags set need a
+reindex/replay (or a new event) to be re-derived with the new status logic — the
+migration does not backfill state or historical reasons.
 
 ### Deliberate deviations from the plan
 

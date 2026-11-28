@@ -140,6 +140,22 @@ export const reactiveAbi = [
     inputs: [{ name: 'orderId_', type: 'bytes32' }],
     outputs: [],
   },
+  /**
+   * POST-CRON100-REDEPLOY ONLY — not deployed on the live RC. Permissionless
+   * expiry: requests refund callbacks for a past-deadline order with no
+   * decision. On the current deployment this selector does not exist, so a
+   * write would revert. The UI does NOT offer this yet: it requires BOTH the
+   * `VITE_EXPIRE_ENABLED=1` build flag and an RC address other than the known
+   * live one (see `expireEnabled()` in lib/config.ts). Never call it on the
+   * live RC, even if an address override is present.
+   */
+  {
+    type: 'function',
+    name: 'expire',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'orderId_', type: 'bytes32' }],
+    outputs: [],
+  },
   {
     type: 'function',
     name: 'coverDebt',
@@ -433,9 +449,10 @@ export const callbackRequestEvent = {
   ],
 } as const
 
-export const cron10Event = {
+/** Post-Cron100-redeploy only: the prepared RC ignores Cron10 logs. */
+export const cron100Event = {
   type: 'event',
-  name: 'Cron10',
+  name: 'Cron100',
   inputs: [{ name: 'number', type: 'uint256', indexed: false }],
 } as const
 

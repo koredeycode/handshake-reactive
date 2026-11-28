@@ -15,8 +15,8 @@ const CAVEATS = [
     body: 'One leg can release while the second callback is still in flight. Both callbacks are requested from one reactive transaction, and each escrow is independently correct, but this is not bridge-grade atomicity.',
   },
   {
-    title: 'Cron cost and ~10s granularity',
-    body: 'The deadline sweep runs on Cron10. Expired orders settle within roughly one tick, not at the exact second.',
+    title: 'Cron cost and ~2 min granularity (after Cron100 cutover)',
+    body: 'After the Cron100 redeploy, the deadline sweep runs on Cron100. Expired orders would settle within roughly one tick (~2 min), not at the exact second.',
   },
   {
     title: 'Cancellation before matching',
@@ -119,6 +119,10 @@ export default function WarningsPanel() {
       </Panel>
 
       <Panel title="Protocol caveats" subtitle="What this testnet does not prove">
+        <p className="mb-4 rounded-xl border border-warn/25 bg-warn-soft/60 px-3 py-2 text-[11px] leading-relaxed text-warn">
+          Prepared Cron100 labels and timings below describe the system <span className="font-medium">after Cron100 cutover</span>.
+          The live deployment still uses Cron10 — do not read these figures as current behaviour.
+        </p>
         <div className="grid gap-3 md:grid-cols-2">
           {CAVEATS.map((item) => (
             <div key={item.title} className="rounded-xl border border-line bg-paper-50 p-4">

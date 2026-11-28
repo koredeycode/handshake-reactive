@@ -5,26 +5,54 @@ import { useAccount } from 'wagmi'
 import { TRADING_CHAIN_KEYS, type TradingChainKey } from '../lib/chains'
 import { countdown, dashIfMissing, formatAmount, formatDeadline, isZeroAddress, truncate } from '../lib/format'
 import { useAllOrders, type AggregatedOrderRow } from '../lib/queries'
-import { isOpenOrder, useOrderStatus } from '../lib/status'
+import { useRealtime } from '../lib/RealtimeProvider'
+import { deriveStatus, isOpenOrder, isOrderDelayed, isOrderTerminal, useOrderStatus } from '../lib/status'
 import { useOrderTokenDisplay } from '../lib/tokenDisplay'
 import { pairId, venueOfOrder } from '../lib/venue'
 import { useNow } from '../lib/useNow'
+import type { Order } from '../lib/types'
 import { Button, ChainMark, ChainPill, EmptyState, PairSelect, Panel, Skeleton, Spinner, StatusPill, TokenMark, icon } from './ui'
 
-type BoardFilter = 'all' | 'open' | 'mine'
+type BoardFilter = 'all' | 'open' | 'mine' | 'attention'
 
 const TABS: Array<{ id: BoardFilter; label: string }> = [
   { id: 'all', label: 'All' },
   { id: 'open', label: 'Open' },
   { id: 'mine', label: 'Mine' },
+  { id: 'attention', label: 'Needs attention' },
 ]
+
+/**
+ * The filter is expressed in terms of the shared status vocabulary from
+ * lib/status + lib/types. The extra names are future names from the state-machine
+ * work; comparing as strings keeps this file independent of when that union lands.
+ */
+const ATTENTION_STATUSES = new Set<string>([
+  'DELAYED',
+  'STALLED',
+  'NEEDS_ATTENTION',
+  'WAITING_FOR_EXPIRY',
+  'REFUND_STALLED',
+])
+
+function needsAttention(order: Order, now: number, delayed = false): boolean {
+  // Use the realtime delayedChains signal, not just the wall clock: a debt on
+  // any of the order's chains makes delivery DELAYED and needs attention.
+  const status = deriveStatus(order, now, delayed) as string
+  if (ATTENTION_STATUSES.has(status)) return true
+  if (isOrderTerminal(order)) return false
+  const expired = Number(order.deadline) > 0 && Number(order.deadline) <= now
+  const noDecision = !order.settleRequested && !order.refundRequested
+  const openLeg = (order.paymentSeen && !order.paymentClosed) || (order.assetSeen && !order.assetClosed)
+  return expired && (noDecision || openLeg)
+}
 
 const PAIRS = TRADING_CHAIN_KEYS.flatMap((payment) =>
   TRADING_CHAIN_KEYS.filter((asset) => asset !== payment).map((asset) => ({ payment, asset })),
 )
 
 /** Each row derives chain marks and token marks from the order's own venue. */
-function OrderRow({ row, now }: { row: AggregatedOrderRow; now: number }) {
+function OrderRow({ row, now, delayed }: { row: AggregatedOrderRow; now: number; delayed: boolean }) {
   const { id, order } = row
   const payment = useOrderTokenDisplay(order, 'payment')
   const asset = useOrderTokenDisplay(order, 'asset')
@@ -35,6 +63,7 @@ function OrderRow({ row, now }: { row: AggregatedOrderRow; now: number }) {
   const steps = Number(order.paymentSeen) + Number(order.assetSeen) + (order.settleRequested ? 1 : 0)
   const expired = countdown(order.deadline, now) === 'expired'
   const open = isOpenOrder(order)
+  const attention = needsAttention(order, now, delayed)
 
   return (
     <li>
@@ -67,7 +96,15 @@ function OrderRow({ row, now }: { row: AggregatedOrderRow; now: number }) {
               </span>
             )}
           </span>
-          <StatusPill status={status!} />
+          <StatusPill status={status!} reason={order.refundReason} order={order} />
+          {attention && (status as string) !== 'STALLED' && (
+            <span
+              className="rounded-full border border-warn/25 bg-warn-soft px-2 py-0.5 text-[10px] font-medium text-warn"
+              title="Deadline passed with no recorded decision, or delivery is delayed. Refresh and check the settlement trail."
+            >
+              Needs attention
+            </span>
+          )}
         </div>
 
         <div className="mt-3 flex flex-wrap items-end justify-between gap-4">
@@ -118,6 +155,7 @@ export default function OrderBoard({ scrollable = false }: { scrollable?: boolea
   const navigate = useNavigate()
   const { address } = useAccount()
   const { data: orders, isLoading, isError, error, refetch, isFetching } = useAllOrders()
+  const { delayedChains } = useRealtime()
   const now = useNow()
   const [filter, setFilter] = useState<BoardFilter>('all')
   const [pair, setPair] = useState<string>('all')
@@ -128,6 +166,7 @@ export default function OrderBoard({ scrollable = false }: { scrollable?: boolea
       const asset = venueOfOrder(order, 'asset').chainKey
       if (pairId(payment, asset as TradingChainKey) !== pair) return false
     }
+    if (filter === 'attention') return needsAttention(order, now, isOrderDelayed(order, delayedChains))
     if (filter === 'open') return isOpenOrder(order)
     if (filter === 'mine') {
       if (!address) return false
@@ -197,13 +236,15 @@ export default function OrderBoard({ scrollable = false }: { scrollable?: boolea
       ) : !rows.length ? (
         <div className="p-6">
           <EmptyState
-            title={filter === 'open' ? 'No open orders' : filter === 'mine' ? 'No orders from this wallet' : 'No orders yet'}
+            title={filter === 'attention' ? 'No orders need attention' : filter === 'open' ? 'No open orders' : filter === 'mine' ? 'No orders from this wallet' : 'No orders yet'}
             message={
-              filter === 'open'
-                ? 'Open orders appear here for any seller to match.'
-                : filter === 'mine'
-                  ? 'Trades you create, match or fulfill will appear here.'
-                  : 'Create a trade to put a pair on the book.'
+              filter === 'attention'
+                ? 'No order is past its deadline without a decision, or waiting on a delayed network.'
+                : filter === 'open'
+                  ? 'Open orders appear here for any seller to match.'
+                  : filter === 'mine'
+                    ? 'Trades you create, match or fulfill will appear here.'
+                    : 'Create a trade to put a pair on the book.'
             }
             action={
               <Button variant="primary" icon={<Plus {...icon} />} onClick={() => navigate('/new')}>
@@ -215,7 +256,12 @@ export default function OrderBoard({ scrollable = false }: { scrollable?: boolea
       ) : (
         <ul className="divide-y divide-line">
           {rows.map((row) => (
-            <OrderRow key={row.id} row={row} now={now} />
+            <OrderRow
+              key={row.id}
+              row={row}
+              now={now}
+              delayed={isOrderDelayed(row.order, delayedChains)}
+            />
           ))}
         </ul>
       )}

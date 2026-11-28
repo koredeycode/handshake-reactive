@@ -4,9 +4,18 @@ import { CHAIN_LABELS, CHAIN_LOGO, CHAIN_SHORT_LABELS, TRADING_CHAIN_KEYS, txUrl
 import { copyText, truncate } from '../lib/format'
 import { useMarket } from '../lib/markets'
 import { useCopyFeedback } from '../lib/proofs'
-import { STATUS_DOT, STATUS_LABEL, STATUS_STYLES } from '../lib/status'
+import {
+  STATUS_DOT,
+  STATUS_LABEL,
+  STATUS_STYLES,
+  displayRefundReason,
+  refundEvidence,
+  refundReasonLabel,
+  statusTooltip,
+  type PillStatus,
+} from '../lib/status'
 import type { ChainKey } from '../lib/chains'
-import type { OrderStatus } from '../lib/types'
+import type { Leg, Order, ProofData } from '../lib/types'
 
 /** One icon set, one size, one stroke across the product. */
 export const icon = { size: 16, strokeWidth: 1.5 } as const
@@ -545,14 +554,61 @@ export function CopyButton({
   )
 }
 
-export function StatusPill({ status }: { status: OrderStatus }) {
+export function StatusPill({
+  status,
+  reason,
+  order,
+  proof,
+  legs,
+}: {
+  status: PillStatus
+  reason?: string | null
+  order?: Order | null
+  proof?: Pick<ProofData, 'paymentRefunded' | 'assetRefunded'> | null
+  legs?: { payment?: Pick<Leg, 'state'> | null; asset?: Pick<Leg, 'state'> | null } | null
+}) {
+  const evidence = refundEvidence(order, proof, legs)
+  const cause = refundReasonLabel(displayRefundReason(reason, evidence))
   return (
     <span
+      aria-live="polite"
+      role="status"
+      title={statusTooltip(status, reason, evidence)}
       className={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-[11px] font-medium ${STATUS_STYLES[status]}`}
     >
-      <span className={`h-1.5 w-1.5 rounded-full ${STATUS_DOT[status]}`} />
+      <span aria-hidden="true" className={`shrink-0 ${STATUS_DOT[status]}`} />
       {STATUS_LABEL[status]}
+      {cause && <span className="font-normal opacity-80">· {cause}</span>}
     </span>
+  )
+}
+
+/**
+ * Shared inline notice for non-happy-path states. `role="status"` makes the
+ * explanation announced once when it appears (no repeated live churn).
+ */
+export function Notice({
+  title,
+  children,
+  tone = 'warn',
+  className = '',
+}: {
+  title: string
+  children?: ReactNode
+  tone?: 'warn' | 'bad' | 'accent'
+  className?: string
+}) {
+  const toneClass =
+    tone === 'bad'
+      ? 'border-bad/25 bg-bad-soft text-bad'
+      : tone === 'accent'
+        ? 'border-accent/25 bg-accent-soft text-accent-ink'
+        : 'border-warn/25 bg-warn-soft text-warn'
+  return (
+    <div role="status" className={`rounded-xl border px-3 py-2.5 text-xs ${toneClass} ${className}`}>
+      <p className="font-medium">{title}</p>
+      {children && <div className="mt-1 leading-relaxed opacity-90">{children}</div>}
+    </div>
   )
 }
 

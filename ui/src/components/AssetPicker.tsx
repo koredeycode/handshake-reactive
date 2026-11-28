@@ -129,11 +129,14 @@ export default function AssetPicker({
                   </span>
                 </div>
                 <p className="tnum mt-2 break-all font-mono text-[10px] text-ink-500" title={lookup.token.address}>
-                  {CHAIN_LABELS[chain]} · {lookup.token.address}
+                  Full address: {lookup.token.address}
                 </p>
                 <p className="mt-1 text-[10px] text-ink-500">
-                  {lookup.token.name} · {lookup.token.decimals} decimals
+                  {CHAIN_LABELS[chain]} · {lookup.token.name} · {lookup.token.decimals} decimals · source: on-chain token metadata ({UNVERIFIED_LABEL.toLowerCase()})
                   {lookup.balance !== null && ` · balance ${truncate(lookup.balance.toString(), 6, 4)}`}
+                </p>
+                <p className="mt-1 text-[10px] leading-relaxed text-warn">
+                  This token cannot be changed once it is locked into an order. Check the address and decimals on your explorer before approving.
                 </p>
                 <label className="mt-2 flex min-h-10 cursor-pointer items-start gap-2 text-[11px] leading-snug text-ink-700">
                   <input
@@ -142,7 +145,7 @@ export default function AssetPicker({
                     onChange={(event) => setConfirmed(event.target.checked)}
                     className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-[var(--accent)]"
                   />
-                  <span>I verified this contract address and want to use it as a leg. The metadata comes from the token itself.</span>
+                  <span>I verified this contract address, decimals and source, and want to use it as a leg. The metadata comes from the token itself.</span>
                 </label>
                 <button
                   type="button"
@@ -193,12 +196,12 @@ export default function AssetPicker({
                       )}
                     </span>
                     {!option.verified && (
-                      <span className="tnum block truncate font-mono text-[10px] text-ink-400" title={option.address}>
-                        {CHAIN_LABELS[chain]} · {option.address}
+                      <span className="tnum block break-all font-mono text-[10px] text-ink-400" title={option.address}>
+                        Full address: {option.address}
                       </span>
                     )}
                     <span className="tnum block truncate font-mono text-[10px] text-ink-400">
-                      {option.name} · {option.decimals} decimals
+                      {option.name} · {option.decimals} decimals · source: {option.verified ? 'curated catalog' : 'on-chain metadata (unverified)'}
                     </span>
                   </span>
                   {isSelected && <Check {...icon} className="shrink-0 text-accent" />}

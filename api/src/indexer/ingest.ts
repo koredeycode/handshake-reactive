@@ -1,5 +1,6 @@
 import { and, asc, eq, gt, sql } from 'drizzle-orm';
 import { env } from '../config.js';
+import { ZERO_ADDRESS } from '../contracts.js';
 import { bus, type PublishedEvent } from '../lib/bus.js';
 import type { OutboxDraft, OutboxPayload, SseEventType, StoredOrderEvent } from '../lib/events.js';
 import { log } from '../lib/log.js';
@@ -50,6 +51,7 @@ function orderValues(state: FoldOrderState) {
     paymentRequestNonce: state.paymentRequestNonce,
     assetRequestNonce: state.assetRequestNonce,
     protocolViolation: state.protocolViolation ?? null,
+    refundReason: state.refundReason ?? null,
     updatedAt: new Date(),
   };
 }
@@ -147,6 +149,48 @@ function isCreatedEvent(event: DecodedEvent): boolean {
     && String(event.fields.stage ?? '').toUpperCase() === 'CREATED';
 }
 
+function isOriginLock(event: DecodedEvent): boolean {
+  return event.name === 'paymentLocked' || event.name === 'assetLocked';
+}
+
+/** Leg identity is (role, seller); the single payment leg uses the zero seller. */
+function lockLegKey(event: DecodedEvent): { role: 'payment' | 'asset'; seller: string } {
+  if (event.name === 'paymentLocked') return { role: 'payment', seller: ZERO_ADDRESS };
+  const depositor = event.fields.depositor;
+  return { role: 'asset', seller: typeof depositor === 'string' ? depositor : ZERO_ADDRESS };
+}
+
+async function hasLockLeg(
+  tx: Tx,
+  orderId: string,
+  key: { role: 'payment' | 'asset'; seller: string },
+): Promise<boolean> {
+  const [row] = await tx.select({ id: orderLegs.id }).from(orderLegs).where(and(
+    eq(orderLegs.orderId, orderId),
+    eq(orderLegs.role, key.role),
+    sql`lower(${orderLegs.seller}) = lower(${key.seller})`,
+  )).limit(1);
+  return Boolean(row);
+}
+
+/**
+ * CREATED is emitted on Lasna while origin locks are emitted on the escrow
+ * chains, so a lock can be recorded before the order row exists and get skipped
+ * by the unknown-order guard. When that event is re-delivered and its leg is
+ * still missing, fold it once so `upsertLeg` writes the leg from the event
+ * payload. Drafts/notifications are dropped: this repairs the projection, it is
+ * not a new on-chain event, so no duplicate SSE frame or notification is sent.
+ * The leg-key check makes the repair idempotent (no double-count of locks).
+ */
+async function repairMissingLockLeg(tx: Tx, orderId: string, event: DecodedEvent, now: Date): Promise<void> {
+  const key = lockLegKey(event);
+  const [row] = await tx.select().from(orders).where(eq(orders.orderId, orderId)).limit(1);
+  if (!row || await hasLockLeg(tx, orderId, key)) return;
+  const legs = await tx.select().from(orderLegs).where(eq(orderLegs.orderId, orderId));
+  const folded = foldEvent(stateFromRow(row, legs), event, now);
+  if (folded.changed) await persistState(tx, folded.state);
+}
+
 /**
  * Existing rows have event-derived flags/nonces: only fill fields they are
  * missing. A fresh row can take the full RC snapshot before the stage is folded.
@@ -178,6 +222,21 @@ function hasMissingTerms(row: {
 }
 
 /**
+ * A pre-CREATED origin lock may introduce an order only with a complete RC
+ * snapshot. A lock's own payload has no buyer or payment terms, so folding it
+ * with hydration missing would persist a term-less phantom order. The raw event
+ * stays in `order_events` and its leg is repaired once the order exists.
+ */
+function hasAuthoritativeTerms(terms: HydratedTerms | undefined): boolean {
+  return Boolean(
+    terms && terms.termsHash && terms.buyer && terms.seller
+    && terms.paymentToken && terms.paymentAmount && terms.assetToken
+    && terms.assetAmount && terms.deadline
+    && terms.paymentChainId !== undefined && terms.assetChainId !== undefined,
+  );
+}
+
+/**
  * Idempotent ingestion. The event insert, order fold, leg state and outbox rows
  * all commit in one transaction; the typed bus publish happens after commit.
  * Terms hydration is a best-effort read outside the transaction: the RC holds
@@ -188,7 +247,7 @@ export async function ingestLog(event: DecodedEvent, blockTimestamp?: Date): Pro
   let published: PublishedEvent[] = [];
   const created = isCreatedEvent(event);
   let hydrated: HydratedTerms | undefined;
-  if (event.orderId && event.name !== 'cron10') {
+  if (event.orderId && event.name !== 'cron100') {
     if (created) {
       hydrated = await hydrateOrderTerms(event.orderId);
     } else {
@@ -202,7 +261,12 @@ export async function ingestLog(event: DecodedEvent, blockTimestamp?: Date): Pro
         assetToken: orders.assetToken, assetAmount: orders.assetAmount,
         deadline: orders.deadline,
       }).from(orders).where(eq(orders.orderId, event.orderId)).limit(1);
-      if (existing && hasMissingTerms(existing)) hydrated = await hydrateOrderTerms(event.orderId);
+      // A lock from an escrow chain can precede CREATED on Lasna. Hydrate it
+      // before folding so that, if it introduces the order row, the row is
+      // authoritative. If hydration fails, the event stays an audit row: no
+      // order with a null buyer/payment terms is created (see the guard below).
+      if (!existing && isOriginLock(event)) hydrated = await hydrateOrderTerms(event.orderId);
+      else if (existing && hasMissingTerms(existing)) hydrated = await hydrateOrderTerms(event.orderId);
     }
   }
   try {
@@ -219,7 +283,15 @@ export async function ingestLog(event: DecodedEvent, blockTimestamp?: Date): Pro
         removed: event.removed,
       }).onConflictDoNothing({ target: [orderEvents.chainId, orderEvents.txHash, orderEvents.logIndex] }).returning({ id: orderEvents.id });
 
-      if (inserted.length === 0) return; // at-least-once delivery: already folded
+      if (inserted.length === 0) {
+        // At-least-once delivery: already folded. A lock recorded while the
+        // order row was absent was never folded, though — repair just its
+        // missing leg (no duplicate outbox/notification, no double-count).
+        if (isOriginLock(event) && event.orderId) {
+          await repairMissingLockLeg(tx, event.orderId, event, now);
+        }
+        return;
+      }
 
       if (event.name === 'venueRegistered' || event.name === 'venueUnregistered') {
         const chainId = Number(event.fields.venueChainId ?? event.chainId);
@@ -251,14 +323,15 @@ export async function ingestLog(event: DecodedEvent, blockTimestamp?: Date): Pro
 
       metrics.indexerEvents.inc({ chain: String(event.chainId), event: event.name });
 
-      if (!event.orderId || event.name === 'cron10') return;
+      if (!event.orderId || event.name === 'cron100') return;
       const orderId = event.orderId;
       const [row] = await tx.select().from(orders).where(eq(orders.orderId, orderId)).limit(1);
-      // Only CREATED introduces an order. A lock/terminal/callback event for
-      // an ID we have never seen at CREATED would otherwise fold from an empty
-      // state and persist a term-less phantom order. Keep the raw event row
-      // for audit, but do not fold, persist state or publish anything.
-      if (!row && !created) return;
+      // CREATED introduces an order. A pre-CREATED origin lock may do so too,
+      // but only with an authoritative RC snapshot; if hydration failed, defer
+      // row creation to CREATED (or a successful later read) and keep only the
+      // raw event. Terminal/callback-only events for an unknown ID are always
+      // audit rows only — they must not synthesize a term-less phantom order.
+      if (!row && !created && !(isOriginLock(event) && hasAuthoritativeTerms(hydrated))) return;
       const legs = await tx.select().from(orderLegs).where(eq(orderLegs.orderId, orderId));
       const base = row ? stateFromRow(row, legs) : emptyOrderState(orderId);
       const state = mergeHydratedTerms(base, hydrated, !row);

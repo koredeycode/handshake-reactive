@@ -66,6 +66,9 @@ export const orders = pgTable(
     status: text('status').notNull().default('open'),
     settleRequested: boolean('settle_requested').notNull().default(false),
     refundRequested: boolean('refund_requested').notNull().default(false),
+    // Stage/reason carried by OrderStateChanged (LATE_REFUND / RACE_LOSER_REFUND /
+    // EXPIRED / INVALID / CANCELLED). Null for orders with no refund decision.
+    refundReason: text('refund_reason'),
     paymentSeen: boolean('payment_seen').notNull().default(false),
     assetSeen: boolean('asset_seen').notNull().default(false),
     paymentClosed: boolean('payment_closed').notNull().default(false),
