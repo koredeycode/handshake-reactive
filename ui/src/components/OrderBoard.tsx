@@ -9,7 +9,7 @@ import { isOpenOrder, useOrderStatus } from '../lib/status'
 import { useOrderTokenDisplay } from '../lib/tokenDisplay'
 import { pairId, venueOfOrder } from '../lib/venue'
 import { useNow } from '../lib/useNow'
-import { Button, ChainMark, ChainPill, EmptyState, PairSelect, Panel, Spinner, StatusPill, TokenMark, icon } from './ui'
+import { Button, ChainMark, ChainPill, EmptyState, PairSelect, Panel, Skeleton, Spinner, StatusPill, TokenMark, icon } from './ui'
 
 type BoardFilter = 'all' | 'open' | 'mine'
 
@@ -28,6 +28,7 @@ function OrderRow({ row, now }: { row: AggregatedOrderRow; now: number }) {
   const { id, order } = row
   const payment = useOrderTokenDisplay(order, 'payment')
   const asset = useOrderTokenDisplay(order, 'asset')
+  const metadataReady = payment.metadataReady && asset.metadataReady
   const paymentVenue = venueOfOrder(order, 'payment')
   const assetVenue = venueOfOrder(order, 'asset')
   const status = useOrderStatus(order)
@@ -45,13 +46,21 @@ function OrderRow({ row, now }: { row: AggregatedOrderRow; now: number }) {
       >
         <div className="flex flex-wrap items-center justify-between gap-3">
           <span className="flex flex-wrap items-center gap-2">
-            <TokenMark symbol={payment.symbol} kind="payment" size="sm" mark={payment.mark} color={payment.color} />
-            <span className="text-[13px] font-medium text-ink-900">{payment.symbol}</span>
-            {!payment.verified && !payment.missing && <span className="rounded-full border border-warn/25 bg-warn-soft px-1.5 py-0.5 text-[9px] text-warn" title={payment.address ?? undefined}>Unverified</span>}
+            <TokenMark symbol={payment.symbol} kind="payment" size="sm" mark={payment.mark} color={payment.color} loading={!metadataReady} />
+            {metadataReady ? (
+              <span className="text-[13px] font-medium text-ink-900">{payment.symbol}</span>
+            ) : (
+              <Skeleton className="h-3.5 w-10" />
+            )}
+            {metadataReady && !payment.verified && !payment.missing && <span className="rounded-full border border-warn/25 bg-warn-soft px-1.5 py-0.5 text-[9px] text-warn" title={payment.address ?? undefined}>Unverified</span>}
             <span className="text-ink-400">/</span>
-            <TokenMark symbol={asset.symbol} kind="asset" size="sm" mark={asset.mark} color={asset.color} />
-            <span className="text-[13px] font-medium text-ink-900">{asset.symbol}</span>
-            {!asset.verified && !asset.missing && <span className="rounded-full border border-warn/25 bg-warn-soft px-1.5 py-0.5 text-[9px] text-warn" title={asset.address ?? undefined}>Unverified</span>}
+            <TokenMark symbol={asset.symbol} kind="asset" size="sm" mark={asset.mark} color={asset.color} loading={!metadataReady} />
+            {metadataReady ? (
+              <span className="text-[13px] font-medium text-ink-900">{asset.symbol}</span>
+            ) : (
+              <Skeleton className="h-3.5 w-10" />
+            )}
+            {metadataReady && !asset.verified && !asset.missing && <span className="rounded-full border border-warn/25 bg-warn-soft px-1.5 py-0.5 text-[9px] text-warn" title={asset.address ?? undefined}>Unverified</span>}
             {open && (
               <span className="rounded-full border border-accent/25 bg-accent-soft px-2 py-0.5 text-[10px] font-medium text-accent-ink">
                 Open · {order.assetLockCount.toString()} {order.assetLockCount === 1n ? 'match' : 'matches'}
@@ -68,7 +77,9 @@ function OrderRow({ row, now }: { row: AggregatedOrderRow; now: number }) {
                 <ChainMark chain={payment.chain} /> Payment leg · {payment.chainLabel}
               </div>
               <div className="tnum font-mono text-[15px] font-medium text-ink-900">
-                {dashIfMissing(order.missing?.paymentAmount, formatAmount(order.paymentAmount, payment.decimals, payment.symbol))}
+                {metadataReady
+                  ? dashIfMissing(order.missing?.paymentAmount, formatAmount(order.paymentAmount, payment.decimals, payment.symbol))
+                  : <Skeleton className="h-4 w-20" />}
               </div>
             </div>
             <ArrowRight {...icon} className="mb-1 text-ink-400" />
@@ -77,7 +88,9 @@ function OrderRow({ row, now }: { row: AggregatedOrderRow; now: number }) {
                 <ChainMark chain={asset.chain} /> Asset leg · {asset.chainLabel}
               </div>
               <div className="tnum font-mono text-[15px] font-medium text-ink-900">
-                {dashIfMissing(order.missing?.assetAmount, formatAmount(order.assetAmount, asset.decimals, asset.symbol))}
+                {metadataReady
+                  ? dashIfMissing(order.missing?.assetAmount, formatAmount(order.assetAmount, asset.decimals, asset.symbol))
+                  : <Skeleton className="h-4 w-20" />}
               </div>
             </div>
           </div>

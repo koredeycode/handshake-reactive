@@ -3,7 +3,7 @@ import { chainKeyFromId } from '../lib/chains'
 import { useTradeTicket } from '../lib/tradeTicket'
 import { useOrderTokenDisplay } from '../lib/tokenDisplay'
 import type { Order } from '../lib/types'
-import { ChainName, ConvergenceMark } from './ui'
+import { ChainName, ConvergenceMark, Skeleton } from './ui'
 
 /**
  * Compact explanation for either the trade ticket or a stored order. When an
@@ -15,10 +15,14 @@ export default function FlowExplainer({ order }: { order?: Order | null }) {
   const asset = useOrderTokenDisplay(order, 'asset')
   // A stored order carries its own token addresses; the ticket is the source
   // of truth on /new, where custom selections must keep their resolved symbol.
+  // On the trade form the ticket owns the selected token (bundled metadata or
+  // an explicitly confirmed custom token), so only stored orders need gating.
+  const metadataReady = !order || (payment.metadataReady && asset.metadataReady)
   const paymentSymbol = order ? payment.symbol : ticket.tokenFor('payment')?.symbol ?? payment.symbol
   const assetSymbol = order ? asset.symbol : ticket.tokenFor('asset')?.symbol ?? asset.symbol
   const paymentChain = order ? payment.chain : ticket.paymentChain
   const assetChain = order ? asset.chain : ticket.assetChain
+  const label = (value: string) => metadataReady ? <span className="font-mono text-ink-700">{value}</span> : <Skeleton className="h-3 w-12" />
 
   return (
     <div className="rounded-2xl border border-line bg-paper-50 px-5 py-4">
@@ -30,9 +34,9 @@ export default function FlowExplainer({ order }: { order?: Order | null }) {
       </div>
       <p className="mt-2 text-[11px] leading-relaxed text-ink-500">
         <span className="font-medium text-ink-700">Buyer</span> creates the order and locks{' '}
-        <span className="font-mono text-ink-700">{paymentSymbol}</span> on <ChainName chain={paymentChain} />.{' '}
+        {label(paymentSymbol)} on <ChainName chain={paymentChain} />.{' '}
         <span className="font-medium text-ink-700">Seller</span> locks{' '}
-        <span className="font-mono text-ink-700">{assetSymbol}</span> on <ChainName chain={assetChain} />.
+        {label(assetSymbol)} on <ChainName chain={assetChain} />.
         One decision on <ChainName chain="lasna" /> releases both legs.
       </p>
       {order && (

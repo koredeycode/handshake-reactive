@@ -91,7 +91,8 @@ select:focus-visible {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .animate-\[fade-in_0\.35s_ease-out\] {
+  .animate-\[fade-in_0\.35s_ease-out\],
+  .animate-pulse {
     animation: none !important;
   }
 }

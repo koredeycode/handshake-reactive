@@ -7,6 +7,7 @@ import {
   ChainMark,
   EmptyState,
   Panel,
+  Skeleton,
   Spinner,
   StatusPill,
   TokenMark,
@@ -32,6 +33,7 @@ function WalletOrderRow({ row, wallet, now }: WalletOrderProps) {
   const { id, order } = row
   const payment = useOrderTokenDisplay(order, 'payment')
   const asset = useOrderTokenDisplay(order, 'asset')
+  const metadataReady = payment.metadataReady && asset.metadataReady
   const address = wallet.toLowerCase()
   const isBuyer = order.buyer.toLowerCase() === address
   const isSeller =
@@ -69,16 +71,16 @@ function WalletOrderRow({ row, wallet, now }: WalletOrderProps) {
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
             <span className="flex items-center gap-2">
-              <TokenMark symbol={payment.symbol} kind="payment" size="sm" mark={payment.mark} color={payment.color} />
+              <TokenMark symbol={payment.symbol} kind="payment" size="sm" mark={payment.mark} color={payment.color} loading={!metadataReady} />
               <span className="tnum font-mono text-[13px] font-medium text-ink-900">
-                {formatAmount(order.paymentAmount, payment.decimals, payment.symbol)}
+                {metadataReady ? formatAmount(order.paymentAmount, payment.decimals, payment.symbol) : <Skeleton className="h-4 w-20" />}
               </span>
             </span>
             <ArrowRight {...icon} className="text-ink-400" />
             <span className="flex items-center gap-2">
-              <TokenMark symbol={asset.symbol} kind="asset" size="sm" mark={asset.mark} color={asset.color} />
+              <TokenMark symbol={asset.symbol} kind="asset" size="sm" mark={asset.mark} color={asset.color} loading={!metadataReady} />
               <span className="tnum font-mono text-[13px] font-medium text-ink-900">
-                {formatAmount(order.assetAmount, asset.decimals, asset.symbol)}
+                {metadataReady ? formatAmount(order.assetAmount, asset.decimals, asset.symbol) : <Skeleton className="h-4 w-20" />}
               </span>
             </span>
           </div>

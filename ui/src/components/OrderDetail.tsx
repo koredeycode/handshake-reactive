@@ -50,6 +50,7 @@ export default function OrderDetail({ orderId }: { orderId: Hex }) {
   const assetLeg = useLeg('asset', orderId, raceSeller, assetVenue, settled)
   const paymentToken = useOrderTokenDisplay(order, 'payment')
   const assetToken = useOrderTokenDisplay(order, 'asset')
+  const metadataReady = paymentToken.metadataReady && assetToken.metadataReady
   const chainKeys = orderChainKeys(order)
   const now = useNow()
   const [confirmAction, setConfirmAction] = useState<'retry' | 'cancel' | null>(null)
@@ -141,6 +142,7 @@ export default function OrderDetail({ orderId }: { orderId: Hex }) {
             amount: dashIfMissing(order.missing?.paymentAmount, formatAmount(order.paymentAmount, paymentDecimals)),
             tokenAddress: paymentToken.address,
             verified: paymentToken.verified,
+            loading: !metadataReady,
             hint: `${paymentToken.name} · payment leg on ${paymentToken.chainLabel}`,
           }}
           receive={{
@@ -152,6 +154,7 @@ export default function OrderDetail({ orderId }: { orderId: Hex }) {
             amount: dashIfMissing(order.missing?.assetAmount, formatAmount(order.assetAmount, assetDecimals)),
             tokenAddress: assetToken.address,
             verified: assetToken.verified,
+            loading: !metadataReady,
             hint: `${assetToken.name} · asset leg on ${assetToken.chainLabel}`,
           }}
         />
@@ -234,8 +237,8 @@ export default function OrderDetail({ orderId }: { orderId: Hex }) {
           details={[
             { label: 'Order', value: truncate(orderId, 12, 10) },
             { label: 'Action', value: confirmAction === 'cancel' ? 'Cancel order' : 'Retry settlement' },
-            { label: 'Payment', value: `${dashIfMissing(order.missing?.paymentAmount, formatAmount(order.paymentAmount, paymentDecimals, paymentSymbol))} · ${paymentToken.chainLabel}` },
-            { label: 'Asset', value: `${dashIfMissing(order.missing?.assetAmount, formatAmount(order.assetAmount, assetDecimals, assetSymbol))} · ${assetToken.chainLabel}` },
+            { label: 'Payment', value: `${dashIfMissing(order.missing?.paymentAmount, metadataReady ? formatAmount(order.paymentAmount, paymentDecimals, paymentSymbol) : '—')} · ${paymentToken.chainLabel}` },
+            { label: 'Asset', value: `${dashIfMissing(order.missing?.assetAmount, metadataReady ? formatAmount(order.assetAmount, assetDecimals, assetSymbol) : '—')} · ${assetToken.chainLabel}` },
             { label: 'Counterparty', value: open ? 'Open to any seller' : dashIfMissing(order.missing?.seller, truncate(order.seller, 10, 8)) },
             { label: 'Deadline', value: formatDeadline(order.deadline) },
             { label: 'Network', value: 'Reactive Lasna' },

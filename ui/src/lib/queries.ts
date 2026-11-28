@@ -11,7 +11,7 @@ import {
   type TradingChainKey,
 } from './chains'
 import { DEFAULT_CONFIG, configuredAddress, type AppConfig } from './config'
-import { deriveTokenDisplay, useTokenRegistry } from './tokenDisplay'
+import { deriveTokenDisplay, useTokenRegistry, type TokenRegistry } from './tokenDisplay'
 import { pairId, venueOfOrder } from './venue'
 import type { Market } from './markets'
 import type { Order } from './types'
@@ -42,11 +42,10 @@ export {
 export type { TicketKind as LegKind } from './tradeTicket'
 
 /** Build display data for a row entirely from the order's own venue tuple. */
-export function marketFromOrder(order: Order): Market {
+export function marketFromOrder(order: Order, registry?: TokenRegistry): Market {
   const payment = venueOfOrder(order, 'payment')
   const asset = venueOfOrder(order, 'asset')
   const config: AppConfig = DEFAULT_CONFIG
-  const registry = undefined
   const paymentDisplay = deriveTokenDisplay(payment.chainKey, payment.token, registry)
   const assetDisplay = deriveTokenDisplay(asset.chainKey, asset.token, registry)
   const proxyFor = (chain: TradingChainKey) => config.chains[chain]?.callbackProxy ?? ''
@@ -88,21 +87,10 @@ export interface AggregatedOrderRow extends OrderRow {
 export function useAllOrders(): OrdersResult<AggregatedOrderRow> {
   const orders = useOrders()
   const registry = useTokenRegistry()
-  const rows: AggregatedOrderRow[] = (orders.data ?? []).map((row) => {
-    const market = marketFromOrder(row.order)
-    const p = venueOfOrder(row.order, 'payment')
-    const a = venueOfOrder(row.order, 'asset')
-    const pDisplay = deriveTokenDisplay(p.chainKey, p.token, registry.data)
-    const aDisplay = deriveTokenDisplay(a.chainKey, a.token, registry.data)
-    return {
-      ...row,
-      market: {
-        ...market,
-        payment: { ...market.payment, tokenSymbol: pDisplay.symbol, tokenDecimals: pDisplay.decimals },
-        asset: { ...market.asset, tokenSymbol: aDisplay.symbol, tokenDecimals: aDisplay.decimals },
-      },
-    }
-  })
+  const rows: AggregatedOrderRow[] = (orders.data ?? []).map((row) => ({
+    ...row,
+    market: marketFromOrder(row.order, registry.data),
+  }))
   return { ...orders, data: orders.data ? rows : undefined }
 }
 
