@@ -4,6 +4,7 @@ import { bus, type PublishedEvent } from '../lib/bus.js';
 import type { OutboxDraft, OutboxPayload, SseEventType, StoredOrderEvent } from '../lib/events.js';
 import { log } from '../lib/log.js';
 import { metrics } from '../lib/metrics.js';
+import { withRetry } from '../lib/retry.js';
 import { backgroundDb as db } from '../db/client.js';
 import {
   indexerState,
@@ -444,7 +445,9 @@ async function flushIndexerStatus(chainId: number): Promise<void> {
   if (!pending) return;
   pendingStatus.delete(chainId);
   lastStatusWriteAt.set(chainId, Date.now());
-  await db.insert(indexerState).values({
+  // The upsert is idempotent, so an unknown-outcome CANCEL_UNANSWERED is safe
+  // to retry. Keep these tiny writes below the pooler's stall window.
+  await withRetry(() => db.insert(indexerState).values({
     chainId,
     lastBlock: pending.blockNumber ?? 0,
     lastBlockHash: pending.blockHash ?? null,
@@ -457,6 +460,11 @@ async function flushIndexerStatus(chainId: number): Promise<void> {
       ...(pending.blockHash ? { lastBlockHash: pending.blockHash } : {}),
       updatedAt: new Date(),
     },
+  }), {
+    attempts: 3,
+    baseDelayMs: 500,
+    maxDelayMs: 5_000,
+    onRetry: (error, attempt, delay) => log.warn({ err: error, chainId, attempt, delay }, 'indexer status write retry'),
   });
 }
 

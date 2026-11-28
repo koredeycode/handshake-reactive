@@ -51,9 +51,9 @@ export const requestPg = makePool('request', 4, 15, 5);
 
 /** Background + alert pools start on the pooler and are upgraded to the direct
  *  host at boot if it answers. Live ESM bindings mean importers see the switch. */
-const backgroundFallbackPg = makePool('background', 2, 30, 10);
+const backgroundFallbackPg = makePool('background', 2, 10, 5);
 const alertFallbackPg = makePool('alerts', 2, 10, 5);
-const directBackgroundPg = directUrl ? makePool('background-direct', 2, 30, 10, directUrl) : undefined;
+const directBackgroundPg = directUrl ? makePool('background-direct', 2, 10, 5, directUrl) : undefined;
 const directAlertPg = directUrl ? makePool('alerts-direct', 2, 10, 5, directUrl) : undefined;
 
 export let backgroundPg = backgroundFallbackPg;
