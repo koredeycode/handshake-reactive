@@ -11,6 +11,11 @@ export const pg = postgres(env.DATABASE_URL, {
   max: 5,
   idle_timeout: 20,
   connect_timeout: 10,
+  // A silent server/network must not pin a pool connection for hours. Postgres.js
+  // cancels after 30s and closes the connection if the cancel is unanswered,
+  // which keeps /health and /orders responsive instead of hanging indefinitely.
+  query_timeout: 30,
+  queue_timeout: 10,
   prepare: false,
   onnotice: () => undefined,
 });
