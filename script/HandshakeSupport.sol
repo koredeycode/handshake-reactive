@@ -18,7 +18,55 @@ address constant UNICHAIN_CALLBACK_PROXY = 0x775c9B990ADe401060B78D0e98684eEf8d2
 address constant SEPOLIA_CALLBACK_PROXY = 0xAa14d9Cd0f788Ca23d11805986C1d8bd035D23b4;
 
 /// @notice Minimal RC surface needed by deployment scripts.
+/// @dev FUTURE-ONLY additions (post-Cron100-redeploy only): expire/rescueNative/getOrder
+///      and the rescue events. Deployment scripts must never call createOrder/expire or
+///      otherwise emit subscribed events: the indexer/backend cutover must be verified
+///      FIRST (see personal/CRON100-RUNBOOK.md). setVenue is allowed at deploy time — it
+///      only installs the 19 subscriptions.
 interface IHandshakeReactive {
+    /// @notice Mirrors the RC's Venue/Order tuples exactly for script-side decoding.
+    struct Venue {
+        uint256 paymentChainId;
+        address paymentEscrow;
+        uint256 assetChainId;
+        address assetEscrow;
+    }
+
+    struct Order {
+        address buyer;
+        address seller;
+        address paymentToken;
+        uint256 paymentAmount;
+        address assetToken;
+        uint256 assetAmount;
+        uint256 deadline;
+        bool paymentSeen;
+        bool assetSeen;
+        bool settleRequested;
+        bool refundRequested;
+        bool paymentClosed;
+        bool assetClosed;
+        bool paymentRefundRequested;
+        bool assetRefundRequested;
+        bool invalid;
+        uint64 nonce;
+        uint256 lastActionTimestamp;
+        address winner;
+        uint256 assetLockCount;
+        uint64 paymentRequestNonce;
+        uint64 assetRequestNonce;
+        Venue venue;
+    }
+
+    /// @notice FUTURE-ONLY: post-Cron100-redeploy only.
+    event OrderStateChanged(bytes32 indexed orderId, string stage, uint64 nonce);
+    /// @notice FUTURE-ONLY: post-Cron100-redeploy only.
+    event NativeRescued(address indexed to, uint256 amount, uint256 debtAtCall);
+    /// @notice Escrow events, declared here for script-side ABI decoding; they are
+    ///         emitted by the escrows, not by the RC. FUTURE-ONLY, post-Cron100-redeploy only.
+    event TokenRescued(address indexed token, address indexed to, uint256 amount);
+    event EscrowNativeRescued(address indexed to, uint256 amount);
+
     function setVenue(uint256 chainId_, address paymentEscrow_, address assetEscrow_) external;
 
     function createOrder(
@@ -42,6 +90,64 @@ interface IHandshakeReactive {
     function orderCount() external view returns (uint256);
     function registeredChainIds() external view returns (uint256[] memory);
     function subscriptionCount() external view returns (uint256);
+
+    /// @notice Bounds for the permissionless order registry and per-order asset logs.
+    // forge-lint: disable-next-line(mixed-case-function) — mirrors public constant getters
+    function MAX_ORDERS() external view returns (uint256);
+    // forge-lint: disable-next-line(mixed-case-function) — mirrors public constant getters
+    function MAX_ASSET_LOCKS() external view returns (uint256);
+
+    /// @notice Permissionless removal of closed ids from the sweep index; `orders[id]`
+    ///         remains readable. Scripts need not call this, but the mirror keeps the
+    ///         deployed surface complete for tooling/ABI generation.
+    function pruneClosedOrders(uint256 limit_) external;
+
+    /// @notice FUTURE-ONLY: post-Cron100-redeploy only. Permissionless expiry of a
+    ///         stranded order. Never call from a deploy/broadcast script before the
+    ///         indexer/backend cutover has been verified.
+    function expire(bytes32 orderId_) external;
+
+    /// @notice FUTURE-ONLY: post-Cron100-redeploy only. Owner-only rescue of the RC's
+    ///         own native balance (never system reserves).
+    function rescueNative(address payable to, uint256 amount) external;
+
+    /// @notice FUTURE-ONLY: post-Cron100-redeploy only. Mirrors the RC's Order tuple.
+    function getOrder(bytes32 orderId_) external view returns (Order memory);
+}
+
+/// @notice FUTURE-ONLY escrow surfaces used by tooling to recover logs lost during
+///         callback-delivery debt. Re-announcement is event-only and permissionless.
+interface IPaymentEscrowReannounce {
+    event PaymentLocked(
+        bytes32 indexed orderId,
+        address indexed depositor,
+        address indexed counterparty,
+        address token,
+        uint256 amount,
+        bytes32 termsHash,
+        uint256 deadline
+    );
+    event PaymentReleased(bytes32 indexed orderId, address indexed recipient, uint256 amount, uint64 nonce);
+    event PaymentRefunded(bytes32 indexed orderId, address indexed depositor, uint256 amount, uint64 nonce);
+
+    function reannounce(bytes32 orderId_) external;
+}
+
+/// @notice FUTURE-ONLY asset escrow re-announcement surface (keyed by order + seller).
+interface IAssetEscrowReannounce {
+    event AssetLocked(
+        bytes32 indexed orderId,
+        address indexed depositor,
+        address indexed counterparty,
+        address token,
+        uint256 amount,
+        bytes32 termsHash,
+        uint256 deadline
+    );
+    event AssetReleased(bytes32 indexed orderId, address indexed recipient, uint256 amount, uint64 nonce);
+    event AssetRefunded(bytes32 indexed orderId, address indexed depositor, uint256 amount, uint64 nonce);
+
+    function reannounce(bytes32 orderId_, address seller_) external;
 }
 
 /// @notice The payer interface exposed by both the SYSTEM contract and callback proxies.

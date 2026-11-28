@@ -104,6 +104,14 @@ export const reactiveAbi = [
     'function sweepCursor() view returns (uint256)',
     'function coverDebt()',
     'function unsubscribeAll()',
+    // FUTURE — Cron100 redeploy only, never call/deploy as part of platform work:
+    // rescue the RC's OWN native balance (never system reserves) and let anyone
+    // close an expired order with no decision/seen legs. See personal/CRON100-RUNBOOK.md.
+    'function rescueNative(address payable to, uint256 amount)',
+    'function expire(bytes32 orderId_)',
+    'event NativeRescued(address indexed to, uint256 amount, uint256 debtAtCall)',
+    'error OutstandingDebt(uint256 debt)',
+    'error RescueWouldStarveSubscriptions(uint256 remaining, uint256 floor)',
     // `stage` is a string ("CREATED", "PAYMENT_SEEN", "SETTLE_REQUESTED", ...).
     'event OrderStateChanged(bytes32 indexed orderId, string stage, uint64 nonce)',
     'event VenueRegistered(uint256 indexed chainId, address paymentEscrow, address assetEscrow)',
@@ -114,6 +122,24 @@ export const reactiveAbi = [
 
 const escrowLock =
   'function lock(bytes32 orderId_, address token_, uint256 amount_, address counterparty_, bytes32 termsHash_, uint256 deadline_)';
+
+/**
+ * FUTURE — Cron100 redeploy only: rescue surface shared by both escrows.
+ * `lockedByToken` reports the amount attributable to LOCKED legs; only the
+ * excess (`balanceOf(this) - lockedByToken`) is rescuable. Native is always
+ * eligible because no leg holds native. Never part of the current platform work.
+ */
+const escrowRescueFunctions = [
+  'function lockedByToken(address) view returns (uint256)',
+  'function rescueToken(address token, address to, uint256 amount)',
+  'function rescueNative(address payable to, uint256 amount)',
+] as const;
+
+/** FUTURE rescue events — identical on both escrows (Cron100 redeploy only). */
+const escrowRescueEvents = [
+  'event TokenRescued(address indexed token, address indexed to, uint256 amount)',
+  'event EscrowNativeRescued(address indexed to, uint256 amount)',
+] as const;
 
 /** Lock/terminal event shapes are identical on both escrows. */
 const escrowEvents = [
@@ -131,6 +157,8 @@ export const paymentEscrowAbi = [
     'function release(address reactive_, bytes32 orderId_, address recipient_, uint256 amount_, uint64 nonce_)',
     'function refund(address reactive_, bytes32 orderId_, uint64 nonce_)',
     ...escrowEvents,
+    ...escrowRescueFunctions,
+    ...escrowRescueEvents,
   ]),
   paymentLegGetter,
 ] as const;
@@ -142,6 +170,8 @@ export const assetEscrowAbi = [
     'function refund(address reactive_, bytes32 orderId_, address seller_, uint64 nonce_)',
     'function sellersOf(bytes32 orderId_) view returns (address[] sellers_)',
     ...escrowEvents,
+    ...escrowRescueFunctions,
+    ...escrowRescueEvents,
   ]),
   assetLegGetter,
 ] as const;

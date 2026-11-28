@@ -1,8 +1,10 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
-import { Search } from 'lucide-react'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { RefreshCw, Search } from 'lucide-react'
 import HopTimeline from '../components/HopTimeline'
+import RawEventsPanel from '../components/RawEventsPanel'
 import TradeTicket from '../components/TradeTicket'
+import TraderGuide from '../components/TraderGuide'
 import {
   Button,
   ChainPill,
@@ -12,12 +14,14 @@ import {
   Panel,
   Spinner,
   StatusPill,
+  TxLink,
   inputClass,
   icon,
 } from '../components/ui'
+import { ApiError } from '../lib/api'
 import { CHAIN_LABELS, EXPLORER_NAMES, txUrl } from '../lib/chains'
 import { configuredAddress, useConfig } from '../lib/config'
-import { countdown, formatAmount, formatDeadline, normalizeOrderId, truncate } from '../lib/format'
+import { countdown, formatAmount, formatDeadline, formatTimestamp, normalizeOrderId, truncate } from '../lib/format'
 import { orderChainKeys, useProof } from '../lib/proofs'
 import { useOrder } from '../lib/queries'
 import { useOrderStatus } from '../lib/status'
@@ -60,10 +64,13 @@ function ExplorerCard({
 function VerifyDetail({ orderId }: { orderId: Hex }) {
   const config = useConfig()
   const now = useNow()
+  const [params] = useSearchParams()
+  const tx = params.get('tx')
   const orderQuery = useOrder(orderId)
   const order = orderQuery.data
   const proof = useProof(orderId).data
   const status = useOrderStatus(order)
+  const is404 = orderQuery.error instanceof ApiError && orderQuery.error.status === 404
   const notFound = !orderQuery.isLoading && !order
   const paymentToken = useOrderTokenDisplay(order, 'payment')
   const assetToken = useOrderTokenDisplay(order, 'asset')
@@ -79,13 +86,40 @@ function VerifyDetail({ orderId }: { orderId: Hex }) {
       </Panel>
     )
   }
+  if (notFound && is404) {
+    return (
+      <div className="space-y-6">
+        <EmptyState
+          title="Order may not be indexed yet"
+          message="This ID is not in the public index yet. A newly created order can take up to ~60 seconds to appear, and a shortened ID will not match. Refresh, or follow the shared transaction on Reactscan."
+          action={
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              <Button icon={<RefreshCw {...icon} />} onClick={() => void orderQuery.refetch()}>Refresh</Button>
+              {tx ? (
+                <TxLink chain="lasna" hash={tx} label="View creation tx on Reactscan" />
+              ) : (
+                <ExternalLink href="https://lasna.reactscan.net/">Search Reactscan</ExternalLink>
+              )}
+            </div>
+          }
+        />
+        <TraderGuide />
+      </div>
+    )
+  }
   if (notFound) {
-    return <EmptyState title="No order found" message="Check the order ID and try again." />
+    return (
+      <EmptyState
+        title="Order details unavailable"
+        message="The public API could not load this order. Check your connection and try again."
+        action={<Button icon={<RefreshCw {...icon} />} onClick={() => void orderQuery.refetch()}>Retry</Button>}
+      />
+    )
   }
 
   return (
     <div className="space-y-6">
-      <Panel title={`Order ${truncate(orderId, 12, 8)}`} subtitle="Terms read from the single reactive contract" action={status && <StatusPill status={status} />}>
+      <Panel title={`Order ${truncate(orderId, 12, 8)}`} subtitle="Terms read from the single reactive contract" action={status && <StatusPill status={status} reason={order?.refundReason} order={order} proof={proof} />}>
         <TradeTicket
           pay={{
             symbol: paymentToken.symbol,
@@ -123,6 +157,19 @@ function VerifyDetail({ orderId }: { orderId: Hex }) {
             Venue · payment {CHAIN_LABELS[chainKeys.payment]} ({order.venue.paymentEscrow}) · asset {CHAIN_LABELS[chainKeys.asset]} ({order.venue.assetEscrow})
           </p>
         )}
+        {order && (
+          <details className="mt-3 border-t border-line pt-3">
+            <summary className="cursor-pointer text-[11px] font-medium text-ink-500">
+              Advanced · nonces and last action
+            </summary>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+              <Metric label="Order nonce" value={order.nonce.toString()} />
+              <Metric label="Payment request nonce" value={order.paymentRequestNonce.toString()} />
+              <Metric label="Asset request nonce" value={order.assetRequestNonce.toString()} />
+              <Metric label="Last action" value={formatTimestamp(order.lastActionTimestamp)} />
+            </div>
+          </details>
+        )}
       </Panel>
 
       <div>
@@ -134,7 +181,10 @@ function VerifyDetail({ orderId }: { orderId: Hex }) {
         </div>
       </div>
 
-      <HopTimeline order={order} proof={proof} />
+      <HopTimeline order={order} proof={proof} reason={order?.refundReason} />
+
+      <RawEventsPanel orderId={orderId} />
+      <TraderGuide />
     </div>
   )
 }

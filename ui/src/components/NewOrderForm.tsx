@@ -454,6 +454,20 @@ export default function NewOrderForm() {
             { label: 'Network', value: 'Reactive Lasna' },
           ]}
           gasNote="You will pay gas on Reactive Lasna to create the order. The backend never signs or holds your keys."
+          tokenRisks={[
+            {
+              address: paymentToken?.address,
+              decimals: paymentToken?.decimals,
+              verified: paymentToken?.verified,
+              source: paymentToken?.verified ? 'curated catalog' : 'custom ERC-20 (unverified)',
+            },
+            {
+              address: assetToken?.address,
+              decimals: assetToken?.decimals,
+              verified: assetToken?.verified,
+              source: assetToken?.verified ? 'curated catalog' : 'custom ERC-20 (unverified)',
+            },
+          ]}
           confirmLabel="Create trade"
           busy={submitting || isPending}
           onCancel={() => setConfirmOpen(false)}

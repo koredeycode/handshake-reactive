@@ -25,6 +25,7 @@ orderRoutes.get('/orders', async (c) => {
     .where(conditions.length ? and(...conditions) : undefined)
     .orderBy(asc(orders.orderId))
     .limit(limit + 1);
+  // Full-row selects carry `refundReason` (orders.refund_reason) on every item.
   const items = rows.slice(0, limit);
   return c.json({
     items,
@@ -60,7 +61,8 @@ orderRoutes.get('/orders/:id', async (c) => {
     stage: event.eventName,
     payload: event.payload,
   }));
-  return c.json({ ...order, legs, timeline });
+  // `...order` includes `refundReason`, the persisted OrderStateChanged cause.
+  return c.json({ ...order, refundReason: order.refundReason, legs, timeline });
 });
 
 // Keyset pagination helper kept here for the status board /health counters.

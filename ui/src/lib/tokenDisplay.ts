@@ -1,6 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
 import type { Hex } from 'viem'
-import bundledTokenCatalog from '../../public/tokens.json'
+// Bundled from src/ (Vite cannot import files from public/). The public/ copy is
+// still served at /tokens.json for tooling; keep the two catalogues in sync.
+import bundledTokenCatalog from './tokens.json'
 import { fetchTokens, useApiBaseUrl, type ApiTokenRow } from './api'
 import { CHAIN_LABELS, chainKeyFromId, type ChainKey, type TradingChainKey } from './chains'
 import { SEPOLIA_TOKEN_ADDRESSES } from './config'

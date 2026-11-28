@@ -25,8 +25,8 @@ transactions and settlement proof for the contracts live in
 ```text
 4 chains over WSS ──one raw eth_subscribe("logs") per chain──▶ indexer
                                                                │ decode + fold + dedupe
-                                                               │ (Cron10 excluded: liveness only,
-                                                               │  never stored as an event row)
+                                                               │ (cron heartbeat excluded: liveness only,
+                                                               │  never stored; Cron10 today → Cron100 after cutover)
                                                                ▼
                                            Supabase (orders, legs, events, outbox,
                                            tokens, wallet cache, keeper tables)
@@ -50,11 +50,16 @@ transactions and settlement proof for the contracts live in
   the typed in-process bus (`api/src/lib/bus.ts`) publishes only after commit.
   Reorged logs are marked removed and affected orders are rebuilt from surviving
   events, after which clients receive a `resync` frame. `Cron10` ticks are
-  liveness-only: they update indexer status and metrics but are not stored as
-  event rows, published or folded into orders. Foreign `CallbackRequest` logs
-  (subscriber other than our reactive contract) are ignored, and events for an
-  unknown order are never folded unless they are `OrderStateChanged("CREATED")`,
-  so term-less orders cannot be synthesized from foreign or late events.
+  liveness-only today: they update indexer status and metrics but are not stored
+  as event rows, published or folded into orders. **FUTURE (plan only):** after
+  the cutover `Cron100` ticks play the same liveness-only role. Foreign
+  `CallbackRequest` logs (subscriber other than our reactive contract) are
+  ignored, and events for an unknown order are never folded unless they are
+  `OrderStateChanged("CREATED")` or — **FUTURE (plan only)** — an origin lock
+  (`PaymentLocked`/`AssetLocked`) whose terms were successfully hydrated from
+  the RC; a lock with failed hydration stays an audit row and only repairs its
+  leg once the order exists. Term-less orders cannot be synthesized from
+  foreign or late events.
   `OrderStateChanged` only carries the stage, so terms for new and partial rows
   are hydrated from the RC with `getOrder(bytes32)`/`termsHash(bytes32)` (cached
   per order, failure-tolerant, with a bounded one-shot startup reconciliation
@@ -132,8 +137,12 @@ short-lived projection rather than the source of truth.
   `order.state`, `lock.payment`, `lock.asset`, `callback.requested`,
   `terminal.release`, `terminal.refund`, `order.settled`, `order.refunded`,
   `wallet.balance`, `notification`, `keeper.status`, `resync`, `heartbeat`.
-  `keeper.status` frames are read-only telemetry derived from `keeper_state`
-  rows; with no keeper process deployed, no such rows are written.
+  `keeper.status` frames are read-only. With no keeper process deployed,
+  `keeper_state` rows are not written. **FUTURE (plan only):** the frames also
+  come from the read-only on-chain RC telemetry poll (`readRcTelemetry`),
+  carrying Lasna `chainId`, RC `target`, `debtWei` and `reservesWei`, reusing the
+  last successful reading if a poll goes stale — no signing key, no
+  `keeper_state` write and no email.
 - Public order events go to all streams. `notification` and `wallet.balance` are
   wallet-scoped and only reach a stream whose `?wallet=` filter matches.
   Notifications are whitelisted to `counterparty_locked`, `settled`, `refunded`,
@@ -143,9 +152,10 @@ short-lived projection rather than the source of truth.
 ## Resend = operator alerts only
 
 Resend delivers error alerts to a **single operator recipient**: uncaught 5xx,
-indexer disconnect / stale last event, DB failure / outbox backlog, and (when a
-keeper exists) debt/top-up failures. Delivery is deduped with a storm window and
-backed by an alert-delivery row with retry. Without `RESEND_API_KEY` and
+indexer disconnect / stale last event, DB failure, and (when a keeper exists)
+debt/top-up failures. Outbox depth is observability only and never sends an
+email. Delivery is deduped with a storm window and backed by an alert-delivery
+row with retry. Without `RESEND_API_KEY` and
 `OPERATOR_ALERT_EMAIL`, alerts are **log-only**. There is no user email path and
 no notification opt-in table.
 
@@ -196,15 +206,18 @@ gap-fill tasks **before** `closeDb()`. A failed log inside a gap fill is logged
 with `txHash` and the block cursor stops at the last successfully processed log,
 so the 5-minute reconcile replays it instead of silently skipping it. Resend
 API `{ error }` responses are treated as failures (retry + `status: 'failed'`),
-so `alert_email_total{status="sent"}` only counts accepted sends.
+so `alert_email_total{status="sent",kind="..."}` only counts accepted sends
+(the metric also carries a `kind` label).
 
 ## Keeper: DEFERRED (not implemented)
 
 The signing keeper is **not built or deployed**. The current RC is kept alive by
 manual top-ups, so there is no key in Fly, Supabase or the UI. The `keeper_state`
-/ `keeper_actions` tables and `keeper.status` SSE event are read-only and idle
-until a keeper writes state; `topups_total` has no increment site in the deployed
-API today. The full future Cron100/keeper cutover procedure is in
+/ `keeper_actions` tables are read-only and idle until a keeper writes state;
+`topups_total` has no increment site in the deployed API today. **FUTURE (plan
+only):** `keeper.status` also comes from the read-only RC telemetry poll
+(`readRcTelemetry`) rather than from those idle rows — see SSE `/stream` above.
+The full future Cron100/keeper cutover procedure is in
 `personal/CRON100-RUNBOOK.md` (gitignored) and `personal/PLATFORM-PLAN.md` §9 —
 **do not implement it as part of this runbook**.
 
@@ -228,7 +241,7 @@ registered in `api/src/lib/metrics.ts` (labels in braces):
 | `notification_events_total{kind}` | counter | Wallet-scoped outbox rows created |
 | `wallet_cache_reads_total{result}` | counter | Wallet balance reads by `hit`/`miss` |
 | `api_request_duration_seconds{method,route,status}` | histogram | HTTP request duration |
-| `alert_email_total{status}` | counter | Operator alert delivery attempts |
+| `alert_email_total{status,kind}` | counter | Operator alert delivery attempts by status and alert kind |
 | `rc_debt_wei` | gauge | Reactive contract debt |
 | `rc_reserves_wei` | gauge | Reactive contract reserves |
 | `escrow_debt_wei{chain}` | gauge | Escrow callback-proxy debt |
@@ -241,6 +254,12 @@ The helper `walletCacheHitRatio()` derives a hit ratio from
 populated from `keeper_state` rows by the 60-second alert monitor. With the
 keeper deferred those rows are not written, so these series read zero/empty
 today — check debt and reserves directly with `cast call` until a keeper exists.
+**FUTURE (plan only):** `rc_debt_wei`/`rc_reserves_wei` are also refreshed from
+the read-only on-chain RC telemetry poll. **Pre-existing metric-only caveat:**
+if that on-chain read fails, the gauges fall back to empty `keeper_state` rows
+and can reset to `0`, even though the last successful `keeper.status` SSE frame
+still carries the last known values. A zero gauge after an RPC failure is not
+proof of zero debt — confirm with `cast call`.
 
 Suggested alert rules (thresholds are starting points, tune after a week of data;
 the debt/reserve rules become effective once a keeper writes `keeper_state`):
@@ -250,7 +269,7 @@ the debt/reserve rules become effective once a keeper writes `keeper_state`):
 | RC debt | `rc_debt_wei > 0` for > 5 min | Reactive pauses delivery — top up the RC via the system contract `depositTo(RC)` |
 | Escrow reserve low | `escrow_debt_wei{chain} > 0`; there is no escrow-reserve gauge, so check reserves via `cast call` / `/health` | Fund the chain's callback proxy `depositTo(escrow)` |
 | Indexer stale | `indexer_last_event_age_seconds{chain} > 300` or rising `indexer_block_lag_seconds` | Check WSS state in `/health`, reconnect count and HTTP gap-fill |
-| Outbox backlog | `outbox_depth > 1000` (matches `OUTBOX_BACKLOG_ALERT`) sustained | Investigate DB/bus/SSE consumers before rows age out (7 d) |
+| Outbox depth (observability only) | `outbox_depth` rising in `/metrics` / `/health`; no alert threshold | It is an append-only SSE cursor log, not a delivery backlog (`delivered_at` is not written). Correlate with `sse_replays_total`, `sse_buffer_overflow_total` and `db_failures_total` instead of paging on size. |
 | 5xx rate | `rate(api_request_duration_seconds_count{status=~"5.."}[5m])` above baseline | Check pino error logs; Resend operator alerts also fire |
 | SSE replays | spike in `sse_replays_total` or any `sse_buffer_overflow_total` | Clients are falling behind; check connection count and replay window |
 

@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { useAccount, useChainId, useConnect, useSwitchChain } from 'wagmi'
 import { ArrowLeftRight, Wallet } from 'lucide-react'
 import { CHAIN_IDS, CHAIN_LABELS } from '../lib/chains'
+import { txToast } from '../lib/toasts'
 import { Button, icon } from './ui'
 import type { ChainKey } from '../lib/chains'
 import type { Hex } from 'viem'
@@ -53,7 +54,11 @@ export default function WriteButton({
       <Button
         size="sm"
         icon={<ArrowLeftRight {...icon} />}
-        onClick={() => void switchChainAsync({ chainId: CHAIN_IDS[targetChain] })}
+        onClick={() => {
+          void switchChainAsync({ chainId: CHAIN_IDS[targetChain] }).catch((error: unknown) => {
+            txToast('Switch network', '0x', targetChain, 'error', error)
+          })
+        }}
       >
         Switch to {CHAIN_LABELS[targetChain]}
       </Button>

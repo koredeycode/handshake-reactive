@@ -33,6 +33,11 @@ interface RealtimeState {
   status: RealtimeStatus
   lastEventId: number | null
   lastEventAt: number | null
+  /** True while reconnecting or when no frame has arrived for ~60s. */
+  isStale: boolean
+  staleReason: 'reconnecting' | 'idle' | null
+  /** Set briefly after a `resync` frame so the shell can show "Resynced". */
+  resyncedAt: number | null
   /** Chain ids whose RC/escrow reported debt > 0 — orders are `delayed`, not failed. */
   delayedChains: number[]
   /** Latest keeper telemetry frame per chain (debt/reserves, read-only). */
@@ -47,6 +52,9 @@ const EMPTY_STATE: RealtimeState = {
   status: 'connecting',
   lastEventId: null,
   lastEventAt: null,
+  isStale: true,
+  staleReason: 'reconnecting',
+  resyncedAt: null,
   delayedChains: [],
   keeperStatuses: {},
   notifications: [],
@@ -103,6 +111,8 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<RealtimeStatus>('connecting')
   const [lastEventId, setLastEventId] = useState<number | null>(null)
   const [lastEventAt, setLastEventAt] = useState<number | null>(null)
+  const [clock, setClock] = useState(() => Date.now())
+  const [resyncedAt, setResyncedAt] = useState<number | null>(null)
   const [delayedChains, setDelayedChains] = useState<number[]>([])
   const [keeperStatuses, setKeeperStatuses] = useState<Record<number, SseKeeperStatus>>({})
   const [notifications, setNotifications] = useState<RealtimeNotification[]>([])
@@ -128,6 +138,19 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
     for (const timer of timers.current.values()) clearTimeout(timer)
     timers.current.clear()
   }, [])
+
+  // Drive the staleness check without adding a timer per consumer.
+  useEffect(() => {
+    const timer = window.setInterval(() => setClock(Date.now()), 5_000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  // "Resynced" is a transient confirmation, not a permanent status.
+  useEffect(() => {
+    if (!resyncedAt) return
+    const timer = window.setTimeout(() => setResyncedAt(null), 3_000)
+    return () => window.clearTimeout(timer)
+  }, [resyncedAt])
 
   useEffect(() => {
     const source = new EventSource(streamUrl(address, baseUrl))
@@ -168,6 +191,7 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
       }
       if (name === 'resync') {
         void queryClient.invalidateQueries()
+        setResyncedAt(Date.now())
         return
       }
       if (name === 'keeper.status') {
@@ -258,17 +282,25 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
     queryClient.setQueryData(queryKeys.notifications(), notifications)
   }, [notifications, queryClient])
 
+  const reconnecting = status !== 'open'
+  const idle = lastEventAt !== null && clock - lastEventAt > 60_000
+  const isStale = reconnecting || idle
+  const staleReason = reconnecting ? 'reconnecting' : idle ? 'idle' : null
+
   const value = useMemo<RealtimeState>(() => ({
     status,
     lastEventId,
     lastEventAt,
+    isStale,
+    staleReason,
+    resyncedAt,
     delayedChains,
     keeperStatuses,
     notifications,
     unreadCount: notifications.filter((item) => !item.read).length,
     acknowledge,
     clearNotifications,
-  }), [status, lastEventId, lastEventAt, delayedChains, keeperStatuses, notifications, acknowledge, clearNotifications])
+  }), [status, lastEventId, lastEventAt, isStale, staleReason, resyncedAt, delayedChains, keeperStatuses, notifications, acknowledge, clearNotifications])
 
   return <RealtimeContext.Provider value={value}>{children}</RealtimeContext.Provider>
 }

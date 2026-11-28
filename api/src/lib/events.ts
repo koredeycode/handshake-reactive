@@ -28,6 +28,11 @@ const hex32 = z.string().regex(/^0x[0-9a-fA-F]{64}$/);
 const address = z.string().regex(/^0x[0-9a-fA-F]{40}$/);
 const decimal = z.string().regex(/^\d+$/);
 
+/** Refund causes carried by OrderStateChanged and persisted on the order row. */
+export const REFUND_REASONS = ['expired', 'invalid', 'cancelled', 'late', 'race_loser'] as const;
+export const refundReasonSchema = z.enum(REFUND_REASONS);
+export type RefundReason = (typeof REFUND_REASONS)[number];
+
 /**
  * Payload schemas for the `data:` line of each SSE frame. `eventId` is the
  * global outbox cursor and `at` the ISO creation time; `serializeSseRow` adds
@@ -70,6 +75,9 @@ export const ssePayloadSchemas = {
     orderId: hex32,
     stage: z.string(),
     nonce: z.number(),
+    // Present when the stage establishes a refund cause; mirrors the persisted
+    // orders.refund_reason so SSE consumers do not have to guess from stage.
+    refundReason: refundReasonSchema.optional(),
     txHash: hex32.optional(),
     blockNumber: z.number().optional(),
   }),
@@ -139,7 +147,7 @@ export const ssePayloadSchemas = {
   'order.refunded': z.object({
     ...meta,
     orderId: hex32,
-    reason: z.enum(['expired', 'invalid', 'cancelled', 'late', 'race_loser']),
+    reason: refundReasonSchema,
     refundedAt: z.string(),
     refundTxHashes: z.array(hex32),
   }),

@@ -64,6 +64,12 @@ function urls(override: string | undefined, defaults: readonly string[]): string
   return override ? [override, ...defaults] : [...defaults]
 }
 
+/** Read-only probe used by the shell to explain "no wallets detected" on mobile. */
+export function hasInjectedWallet(): boolean {
+  if (typeof window === 'undefined') return false
+  return Boolean((window as Window & { ethereum?: unknown }).ethereum)
+}
+
 export const wagmiConfig = createConfig({
   chains: [lasna, baseSepolia, unichainSepolia, ethereumSepolia],
   // Multicall3 is deployed on all three EVM settlement chains at the

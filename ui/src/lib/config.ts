@@ -70,9 +70,29 @@ export function withOverrides(config: AppConfig): AppConfig {
   }
 }
 
+/**
+ * The live RC (pre-Cron100 cutover). It has no `expire` selector, so the
+ * permissionless refund action must never be offered or submitted here.
+ */
+export const LIVE_RC_ADDRESS = '0x037cef4c80c7424b2c7fb45770990b5763f67474'
+
+/**
+ * Two-factor cutover gate for the future-only `expire` action.
+ *
+ * BOTH conditions must hold: the build explicitly opts in with
+ * `VITE_EXPIRE_ENABLED=1` after the Cron100 RC redeploy, AND the configured RC
+ * is not the known live address. An address override alone is not sufficient —
+ * a stale override pointing at the live address would still revert.
+ */
+export function expireEnabled(config: AppConfig): boolean {
+  if (env.VITE_EXPIRE_ENABLED !== '1') return false
+  const rc = configuredAddress(config.reactive.reactiveContract)
+  return !!rc && rc !== normalizeAddress(LIVE_RC_ADDRESS)
+}
+
 const FALLBACK: AppConfig = {
   reactive: {
-    reactiveContract: '0x037cef4c80c7424b2c7fb45770990b5763f67474',
+    reactiveContract: LIVE_RC_ADDRESS,
     systemContract: '0x8888888888888888888888888888888888888888',
     legacySystemContract: '0x0000000000000000000000000000000000ffffff',
   },

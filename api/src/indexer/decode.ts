@@ -176,7 +176,7 @@ export function decodeRawLog(raw: RawLog, chainId: number): DecodedEvent | null 
       };
       break;
     }
-    case 'cron10': {
+    case 'cron100': {
       fields = { number: asDecimal(arg(args, 'number', 0)) };
       break;
     }
@@ -225,7 +225,7 @@ function eventNameFor(key: string): string {
     case 'assetReleased': return 'AssetReleased';
     case 'assetRefunded': return 'AssetRefunded';
     case 'callbackRequest': return 'CallbackRequest';
-    case 'cron10': return 'Cron10';
+    case 'cron100': return 'Cron100';
     case 'venueRegistered': return 'VenueRegistered';
     case 'venueUnregistered': return 'VenueUnregistered';
     default: return key;
@@ -243,7 +243,7 @@ export function sseNameFor(event: DecodedEvent): string {
     case 'assetReleased': return 'terminal.release';
     case 'paymentRefunded':
     case 'assetRefunded': return 'terminal.refund';
-    case 'cron10': return 'heartbeat';
+    case 'cron100': return 'heartbeat';
     default: return event.name;
   }
 }

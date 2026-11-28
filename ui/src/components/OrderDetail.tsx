@@ -1,21 +1,35 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAccount, usePublicClient, useWriteContract } from 'wagmi'
 import type { Address, Hex } from 'viem'
 import { ArrowUpRight, RefreshCw } from 'lucide-react'
 import { CHAIN_IDS, EXPLORER_NAMES, addressUrl } from '../lib/chains'
-import { configuredAddress, useConfig } from '../lib/config'
+import { configuredAddress, expireEnabled, useConfig } from '../lib/config'
 import { reactiveAbi } from '../lib/contracts'
-import { countdown, dashIfMissing, formatAmount, formatDeadline, isZeroAddress, truncate } from '../lib/format'
+import { countdown, dashIfMissing, formatAge, formatAmount, formatDeadline, formatTimestamp, isZeroAddress, truncate } from '../lib/format'
 import { logClient } from '../lib/logs'
-import { orderChainKeys, useProof } from '../lib/proofs'
+import { buildCaseDetailsText, buildProofMarkdown, orderChainKeys, useProof } from '../lib/proofs'
+import { useRealtime } from '../lib/RealtimeProvider'
 import { useLeg, useOrder } from '../lib/queries'
-import { canCancelOpenOrder, deriveStatus, isOpenOrder, isOrderTerminal } from '../lib/status'
+import {
+  canCancelOpenOrder,
+  canExpireOrder,
+  canRetrySettlement,
+  deriveStatus,
+  displayRefundReason,
+  hasDecision,
+  hasUnclosedSeenLeg,
+  isOpenOrder,
+  isOrderTerminal,
+  refundEvidence,
+  useOrderStatus,
+} from '../lib/status'
 import { useOrderTokenDisplay } from '../lib/tokenDisplay'
 import { venueOfOrder } from '../lib/venue'
 import { useNow } from '../lib/useNow'
 import { txToast } from '../lib/toasts'
 import ConfirmModal from './ConfirmModal'
+import ExpireAction from './ExpireAction'
 import FlowExplainer from './FlowExplainer'
 import HopTimeline from './HopTimeline'
 import LegCard from './LegCard'
@@ -27,6 +41,7 @@ import {
   EmptyState,
   ExternalLink,
   Metric,
+  Notice,
   Panel,
   Spinner,
   StatusPill,
@@ -35,10 +50,14 @@ import {
 
 export default function OrderDetail({ orderId }: { orderId: Hex }) {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const sharedTx = searchParams.get('tx')
   const config = useConfig()
   const { address } = useAccount()
   const { data: order, isLoading, isError, refetch: refetchOrder } = useOrder(orderId)
   const proof = useProof(orderId)
+  const liveStatus = useOrderStatus(order)
+  const { lastEventAt } = useRealtime()
   const open = isOpenOrder(order)
   const winnerKnown = !!order?.winner && !isZeroAddress(order.winner)
   // Race legs are keyed by seller: show the winner's leg, or this wallet's own.
@@ -69,8 +88,9 @@ export default function OrderDetail({ orderId }: { orderId: Hex }) {
   async function send(label: string, functionName: 'cancelOrder' | 'retry') {
     const rc = configuredAddress(config.reactive.reactiveContract)
     if (!rc) return
+    let hash: Hex | undefined
     try {
-      const hash = await writeContractAsync({
+      hash = await writeContractAsync({
         address: rc as Address,
         abi: reactiveAbi,
         functionName,
@@ -80,8 +100,8 @@ export default function OrderDetail({ orderId }: { orderId: Hex }) {
       await lasnaClient?.waitForTransactionReceipt({ hash })
       txToast(label, hash, 'lasna', 'confirmed')
       refresh()
-    } catch {
-      txToast(label, '0x', 'lasna', 'error')
+    } catch (error) {
+      txToast(label, hash ?? '0x', 'lasna', 'error', error)
     }
   }
 
@@ -97,18 +117,45 @@ export default function OrderDetail({ orderId }: { orderId: Hex }) {
   }
   if (isError || !order) {
     return (
-      <EmptyState title="Order not found" message="Check the order ID and try again." action={<Button onClick={() => navigate('/orders')}>Back to orders</Button>} />
+      <EmptyState
+        title="Order not found"
+        message={sharedTx
+          ? `This order may not be indexed yet. The shared transaction ${truncate(sharedTx, 8, 6)} was kept in the link — refresh in a moment, or check it on the public tracker.`
+          : 'Check the order ID and try again. A just-created order can take a short while to appear in the public index.'}
+        action={
+          <div className="flex flex-wrap justify-center gap-2">
+            <Button onClick={() => void refetchOrder()}>Try again</Button>
+            <Button onClick={() => navigate('/orders')}>Back to orders</Button>
+          </div>
+        }
+      />
     )
   }
 
-  const status = deriveStatus(order, now)
-  const canRetry = (order.paymentSeen || order.assetSeen) && !(order.paymentClosed && order.assetClosed)
+  const status = liveStatus ?? deriveStatus(order, now)
+  const reason = order.refundReason
+  const shownReason = displayRefundReason(reason, refundEvidence(order, proof.data, {
+    payment: paymentLeg.data,
+    asset: assetLeg.data,
+  }))
+  const canRetry = canRetrySettlement(order)
+  // Future-only: on-chain eligibility is necessary but NOT sufficient. The
+  // VITE_EXPIRE_ENABLED flag plus a non-live RC address must both hold before a
+  // stranded order is allowed to show the request-refund button.
+  const canExpire = canExpireOrder(order, now) && expireEnabled(config)
+  const decisionText = hasDecision(order)
+    ? order.refundRequested
+      ? 'A refund decision was recorded on Lasna.'
+      : 'A settlement decision was recorded on Lasna.'
+    : 'No on-chain decision has been observed.'
   const isBuyer = !!address && address.toLowerCase() === order.buyer.toLowerCase()
   const canCancel = canCancelOpenOrder(order, now, address)
   const paymentSymbol = paymentToken.symbol
   const assetSymbol = assetToken.symbol
   const paymentDecimals = paymentToken.decimals
   const assetDecimals = assetToken.decimals
+  const caseDetails = buildCaseDetailsText(String(orderId), order, proof.data, chainKeys)
+  const proofMarkdown = buildProofMarkdown(orderId, order, proof.data, chainKeys)
 
   return (
     <div className="space-y-6">
@@ -122,8 +169,15 @@ export default function OrderDetail({ orderId }: { orderId: Hex }) {
                 Open order
               </span>
             )}
-            <StatusPill status={status} />
+            <StatusPill
+              status={status}
+              reason={reason}
+              order={order}
+              proof={proof.data}
+              legs={{ payment: paymentLeg.data, asset: assetLeg.data }}
+            />
             <Button size="sm" icon={<RefreshCw {...icon} />} onClick={refresh}>Refresh</Button>
+            <CopyButton text={proofMarkdown} label="Copy proof bundle" />
             <CopyButton text={`${window.location.origin}/verify/${orderId}`} label="Copy link" />
             <Button size="sm" icon={<ArrowUpRight {...icon} />} onClick={() => navigate(`/verify/${orderId}`)}>
               Track order
@@ -195,12 +249,55 @@ export default function OrderDetail({ orderId }: { orderId: Hex }) {
           />
         </div>
 
+        {shownReason === 'cancelled' && (
+          <Notice className="mt-6" title="Cancelled before the order matched">
+            <p>
+              The buyer cancelled this open order before any seller matched it. Any payment that had been locked is
+              returned through the refund path, so this reads as “Refunded · Cancelled” rather than a red “Invalid” pill.
+              Check the settlement trail for the actual refund hash.
+            </p>
+          </Notice>
+        )}
+
+        {(status === 'STALLED' || status === 'REFUND_STALLED' || status === 'WAITING_FOR_EXPIRY') && (
+          <Notice
+            className="mt-6"
+            tone={status === 'WAITING_FOR_EXPIRY' ? 'warn' : 'bad'}
+            title={status === 'STALLED' ? 'Needs attention — no decision on record' : status === 'REFUND_STALLED' ? 'Refund decision is taking longer than expected' : 'Past deadline — waiting for the expiry sweep'}
+          >
+            <p>
+              {status === 'STALLED'
+                ? 'The deadline has passed with no settlement or refund decision, and no open leg is recorded in the public index. An automatic sweep cannot act on a leg it cannot see.'
+                : status === 'REFUND_STALLED'
+                  ? 'A refund decision was recorded on-chain, but no terminal transaction has been indexed yet. This advisory timer uses the public index timestamp rather than the contract clock, so it cannot prove the refund is stuck. Retry is optional and only useful while the escrow callbacks remain unconfirmed; it re-requests the recorded decision and costs Lasna gas.'
+                  : 'The deadline has passed and no decision has been emitted. An origin-chain leg is still open, so the automated deadline sweep can still release it.'}
+            </p>
+            <p className="mt-1">On-chain decision: {decisionText} {hasUnclosedSeenLeg(order) ? 'An unclosed leg is observed.' : 'No unclosed leg is observed.'}</p>
+            <div className="mt-2">
+              <CopyButton text={caseDetails} label="Copy case details" />
+            </div>
+          </Notice>
+        )}
+
+        {canExpire && (
+          <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-line pt-4">
+            <ExpireAction order={order} orderId={orderId} />
+          </div>
+        )}
+
         {canRetry && (
           <div className="mt-6 flex flex-wrap items-center gap-3 border-t border-line pt-5">
-            <WriteButton targetChain="lasna" onClick={() => setConfirmAction('retry')} disabled={isPending}>
+            <WriteButton
+              targetChain="lasna"
+              onClick={() => setConfirmAction('retry')}
+              disabled={isPending}
+              title="Retry re-requests the decision already recorded on Lasna. It cannot create a new refund and costs Lasna gas."
+            >
               {isPending ? 'Submitting' : 'Retry settlement'}
             </WriteButton>
-            <span className="text-[11px] text-ink-500">A leg is locked and settlement has not finished.</span>
+            <span className="max-w-md text-[11px] leading-relaxed text-ink-500">
+              {order.refundRequested ? 'A refund decision exists and a leg is still open.' : 'A settlement decision exists and a leg is still open.'} Retry re-requests that decision; it costs gas and cannot create a new one.
+            </span>
           </div>
         )}
 
@@ -219,13 +316,59 @@ export default function OrderDetail({ orderId }: { orderId: Hex }) {
             </span>
           </div>
         )}
+
+        <details className="mt-6 rounded-xl border border-line bg-paper-50 px-4 py-3">
+          <summary className="cursor-pointer text-xs font-medium text-ink-700">Advanced</summary>
+          <dl className="mt-3 grid gap-3 sm:grid-cols-2">
+            <div>
+              <dt className="text-[11px] text-ink-400">Order nonce</dt>
+              <dd className="tnum mt-1 font-mono text-xs text-ink-700">{order.nonce.toString()}</dd>
+            </div>
+            <div>
+              <dt className="text-[11px] text-ink-400">Payment request nonce</dt>
+              <dd className="tnum mt-1 font-mono text-xs text-ink-700">{order.paymentRequestNonce.toString()}</dd>
+            </div>
+            <div>
+              <dt className="text-[11px] text-ink-400">Asset request nonce</dt>
+              <dd className="tnum mt-1 font-mono text-xs text-ink-700">{order.assetRequestNonce.toString()}</dd>
+            </div>
+            <div>
+              <dt className="text-[11px] text-ink-400">Terms hash</dt>
+              <dd className="tnum mt-1 break-all font-mono text-[11px] text-ink-700">{order.termsHash ?? '—'}</dd>
+            </div>
+            <div>
+              <dt className="text-[11px] text-ink-400">Last action</dt>
+              <dd className="tnum mt-1 font-mono text-xs text-ink-700">{formatTimestamp(order.lastActionTimestamp)}</dd>
+            </div>
+            <div>
+              <dt className="text-[11px] text-ink-400">Last event age</dt>
+              <dd className="tnum mt-1 font-mono text-xs text-ink-700">{formatAge(lastEventAt, now * 1000)}</dd>
+            </div>
+          </dl>
+        </details>
       </Panel>
 
-      <HopTimeline order={order} proof={proof.data} />
+      <HopTimeline order={order} proof={proof.data} reason={reason} />
 
       <div className="grid gap-6 xl:grid-cols-2">
-        <LegCard kind="payment" order={order} leg={paymentLeg.data} orderId={orderId} refresh={refresh} />
-        <LegCard kind="asset" order={order} leg={assetLeg.data} orderId={orderId} refresh={refresh} />
+        <LegCard
+          kind="payment"
+          order={order}
+          leg={paymentLeg.data}
+          orderId={orderId}
+          refresh={refresh}
+          reason={reason}
+          refundTxHash={proof.data?.paymentRefunded?.txHash}
+        />
+        <LegCard
+          kind="asset"
+          order={order}
+          leg={assetLeg.data}
+          orderId={orderId}
+          refresh={refresh}
+          reason={reason}
+          refundTxHash={proof.data?.assetRefunded?.txHash}
+        />
       </div>
 
       {confirmAction && (
@@ -233,7 +376,7 @@ export default function OrderDetail({ orderId }: { orderId: Hex }) {
           title={confirmAction === 'cancel' ? 'Cancel this open order?' : 'Retry settlement?'}
           description={confirmAction === 'cancel'
             ? 'Cancellation is irreversible and releases the payment lock path.'
-            : 'Requests settlement again from the reactive contract. This submits a transaction.'}
+            : 'Re-requests the settlement or refund decision already recorded on Lasna. It cannot create a new decision and costs gas.'}
           details={[
             { label: 'Order', value: truncate(orderId, 12, 10) },
             { label: 'Action', value: confirmAction === 'cancel' ? 'Cancel order' : 'Retry settlement' },

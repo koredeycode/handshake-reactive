@@ -2,6 +2,8 @@
 pragma solidity ^0.8.29;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Address} from "@openzeppelin/contracts/utils/Address.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {AbstractReactive} from "@reactive/src/base/AbstractReactive.sol";
 import {IReactive} from "@reactive/src/interfaces/IReactive.sol";
 import {ISystemContract} from "@reactive/src/interfaces/ISystemContract.sol";
@@ -12,7 +14,9 @@ import {ISystemContract} from "@reactive/src/interfaces/ISystemContract.sol";
 ///         venue and token choice are stored per order and validated against the actual
 ///         log source. Both legs are released from a single react() transaction, and
 ///         once settlement has been requested the refund path is permanently closed.
-contract HandshakeReactive is AbstractReactive, Ownable {
+contract HandshakeReactive is AbstractReactive, Ownable, ReentrancyGuard {
+    using Address for address payable;
+
     // ------------------------------------------------------------------ constants
 
     uint256 private constant BASE_SEPOLIA = 84532;
@@ -25,6 +29,14 @@ contract HandshakeReactive is AbstractReactive, Ownable {
     uint256 private constant RETRY_COOLDOWN = 30;
     uint8 private constant SWEEP_LIMIT = 8;
     uint64 private constant CALLBACK_GAS_LIMIT = 500_000;
+
+    /// @notice Bounds the permissionless order registry so `_requireVenueIdle()` and
+    ///         `_sweep()` stay bounded; closed ids can be removed with pruneClosedOrders().
+    uint256 public constant MAX_ORDERS = 10_000;
+    /// @notice Bounds the asset `Locked` logs counted for one order so the counter can
+    ///         never overflow and halt react(). Over-cap logs are NOT silently ignored:
+    ///         their depositor is REFUNDED via `_refundRaceLoser`, so no seller is stranded.
+    uint256 public constant MAX_ASSET_LOCKS = 32;
 
     address private constant LEGACY_SYSTEM_ADDR = 0x0000000000000000000000000000000000fffFfF;
 
@@ -45,8 +57,13 @@ contract HandshakeReactive is AbstractReactive, Ownable {
         uint256(keccak256("PaymentRefunded(bytes32,address,uint256,uint64)"));
     uint256 private constant ASSET_REFUNDED_TOPIC_0 =
         uint256(keccak256("AssetRefunded(bytes32,address,uint256,uint64)"));
-    // Legacy system contract Cron10(uint256) — topic0 0x04463f7c…3307b687.
-    uint256 private constant CRON10_TOPIC_0 = uint256(keccak256("Cron10(uint256)"));
+    // Legacy system contract Cron100(uint256) — topic0
+    // 0xb49937fb8970e19fd46d48f7e3fb00d659deac0347f79cd7cb542f0fc1503c70.
+    uint256 private constant CRON100_TOPIC_0 =
+        0xb49937fb8970e19fd46d48f7e3fb00d659deac0347f79cd7cb542f0fc1503c70;
+
+    // 18-decimal lREACT: rescue must leave a fee floor so subscriptions keep running.
+    uint256 private constant NATIVE_RESCUE_FLOOR = 1 ether;
 
     // -------------------------------------------------------------------- structs
 
@@ -79,10 +96,11 @@ contract HandshakeReactive is AbstractReactive, Ownable {
         uint64 nonce; // monotonic across ALL callback requests for this order
         uint256 lastActionTimestamp; // uint256: compare directly against block.timestamp
         address winner; // race mode only; address(0) until first asset lock
-        // Race mode bookkeeping and the nonce of the last callback requested per leg.
-        // Per-leg nonces let a race-loser refund bump `nonce` without invalidating
-        // confirmation of the winner's in-flight settlement callbacks.
-        uint8 assetLockCount;
+        // Race mode bookkeeping and the FIRST (floor) callback nonce requested per leg.
+        // Retries may bump `nonce`, but the floor is never overwritten, so a delayed
+        // terminal event from the original callback still closes its leg. A race-loser
+        // refund bumps `nonce` without invalidating the winner's callbacks either.
+        uint256 assetLockCount;
         uint64 paymentRequestNonce;
         uint64 assetRequestNonce;
         Venue venue;
@@ -105,6 +123,10 @@ contract HandshakeReactive is AbstractReactive, Ownable {
     event OrderStateChanged(bytes32 indexed orderId, string stage, uint64 nonce);
     event VenueRegistered(uint256 indexed chainId, address paymentEscrow, address assetEscrow);
     event VenueUnregistered(uint256 indexed chainId, address paymentEscrow, address assetEscrow);
+    /// @notice Emitted by rescueNative(); FUTURE-ONLY, post-Cron100-redeploy only.
+    event NativeRescued(address indexed to, uint256 amount, uint256 debtAtCall);
+    /// @notice Emitted when closed ids are removed from the sweep/prune index by pruneClosedOrders().
+    event OrdersPruned(uint256 count, uint256 remaining);
 
     // --------------------------------------------------------------------- errors
 
@@ -123,6 +145,10 @@ contract HandshakeReactive is AbstractReactive, Ownable {
     error DeadlineReached();
     error NoWinner();
     error VenueInUse();
+    error ZeroAddress();
+    error OutstandingDebt(uint256 debt);
+    error RescueWouldStarveSubscriptions(uint256 remaining, uint256 floor);
+    error TooManyOrders();
 
     // --------------------------------------------------------------------- state
 
@@ -145,7 +171,7 @@ contract HandshakeReactive is AbstractReactive, Ownable {
     // -------------------------------------------------------------- venue registry
 
     /// @notice Register (or replace) the payment + asset escrows for one testnet chain.
-    ///         Installing the first venue also installs the single Cron10 subscription.
+    ///         Installing the first venue also installs the single Cron100 subscription.
     function setVenue(uint256 chainId_, address paymentEscrow_, address assetEscrow_) external onlyOwner {
         if (!_isTestnet(chainId_)) revert InvalidVenue();
         if (paymentEscrow_ == address(0) || assetEscrow_ == address(0)) revert InvalidVenue();
@@ -184,7 +210,7 @@ contract HandshakeReactive is AbstractReactive, Ownable {
 
         if (!cronSubscribed) {
             cronSubscribed = true;
-            _subscribe(block.chainid, LEGACY_SYSTEM_ADDR, CRON10_TOPIC_0);
+            _subscribe(block.chainid, LEGACY_SYSTEM_ADDR, CRON100_TOPIC_0);
         }
 
         emit VenueRegistered(chainId_, paymentEscrow_, assetEscrow_);
@@ -239,7 +265,7 @@ contract HandshakeReactive is AbstractReactive, Ownable {
 
         if (cronSubscribed) {
             SYSTEM.unsubscribe(
-                block.chainid, LEGACY_SYSTEM_ADDR, CRON10_TOPIC_0, REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE
+                block.chainid, LEGACY_SYSTEM_ADDR, CRON100_TOPIC_0, REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE
             );
             cronSubscribed = false;
         }
@@ -247,6 +273,24 @@ contract HandshakeReactive is AbstractReactive, Ownable {
 
     function coverDebt() external {
         _coverDebt();
+    }
+
+    /// @notice Rescue lREACT sent directly to this RC address. Only the RC's own
+    ///         balance is touched; system `reserves` are prepaid credit and are not
+    ///         withdrawable through the pinned system-contract ABI.
+    /// @dev FUTURE-ONLY: post-Cron100-redeploy only — not part of the live deployment.
+    ///      A positive system debt or a balance that would fall below the fee floor
+    ///      blocks the rescue so subscriptions keep running.
+    function rescueNative(address payable to, uint256 amount) external onlyOwner nonReentrant {
+        if (to == address(0)) revert ZeroAddress();
+        if (amount == 0) revert ZeroAmount();
+        uint256 debt = SYSTEM.debt(address(this));
+        if (debt != 0) revert OutstandingDebt(debt);
+        uint256 remaining = address(this).balance - amount; // checked: amount > balance reverts
+        if (remaining < NATIVE_RESCUE_FLOOR) revert RescueWouldStarveSubscriptions(remaining, NATIVE_RESCUE_FLOOR);
+
+        emit NativeRescued(to, amount, debt);
+        to.sendValue(amount);
     }
 
     // --------------------------------------------------------------- order lifecycle
@@ -265,6 +309,9 @@ contract HandshakeReactive is AbstractReactive, Ownable {
         uint256 durationSeconds_
     ) external {
         if (orders[orderId_].buyer != address(0)) revert DuplicateOrder();
+        // Bounded registry: an attacker cannot grow _orderIds past MAX_ORDERS and make
+        // _requireVenueIdle()/unsubscribeAll() gas-DoS-able or starve _sweep().
+        if (_orderIds.length >= MAX_ORDERS) revert TooManyOrders();
         // address(0) publishes an open order any seller can match; self-dealing stays banned.
         if (seller_ == msg.sender) revert InvalidSeller();
         if (paymentToken_ == address(0) || assetToken_ == address(0)) revert InvalidToken();
@@ -295,8 +342,10 @@ contract HandshakeReactive is AbstractReactive, Ownable {
     }
 
     /// @notice Buyer-only cancellation of an open order before any seller matches it.
-    ///         Reuses `invalid` (so cron never settles) and `refundRequested` (so a late
-    ///         PaymentLocked log goes through _refundLateLeg) without touching the Order tuple.
+    ///         `invalid` keeps cron from settling and `refundRequested` routes a late
+    ///         PaymentLocked log through _refundLateLeg. The shared refund helper also
+    ///         requests the refund callback immediately for an already-seen payment leg,
+    ///         so cancellation does not depend on a later retry() or cron tick.
     function cancelOrder(bytes32 orderId_) external {
         Order storage o = orders[orderId_];
         if (o.buyer == address(0)) revert UnknownOrder();
@@ -308,10 +357,79 @@ contract HandshakeReactive is AbstractReactive, Ownable {
         if (o.settleRequested) return; // hard invariant: settlement already requested
 
         o.invalid = true;
-        o.refundRequested = true;
-        o.nonce += 1;
-        o.lastActionTimestamp = block.timestamp;
+        // Bumps the nonce, sets refundRequested/lastActionTimestamp and requests a
+        // refund callback for every seen, unclosed leg. It returns early if settlement
+        // has been requested, preserving the terminal invariant.
+        _requestRefundForLegs(orderId_, o, true, true);
         emit OrderStateChanged(orderId_, "CANCELLED", o.nonce);
+    }
+
+    /// @notice Permissionless expiry for a stranded order: retry() only re-requests an
+    ///         existing refund decision and _sweep() requires an open leg, so an expired
+    ///         order with no decision and no seen legs would otherwise stay stuck.
+    /// @dev FUTURE-ONLY: post-Cron100-redeploy only — not part of the live deployment.
+    ///      A settlement decision is final; cooldown and idempotence bound spam.
+    function expire(bytes32 orderId_) external {
+        Order storage o = orders[orderId_];
+        if (o.buyer == address(0)) revert UnknownOrder();
+        // No-op cases first: a settlement decision is final at ANY time, and repeated
+        // calls are silent no-ops regardless of deadline or cooldown.
+        if (o.settleRequested) return; // hard invariant: never refund after settlement
+        if (o.refundRequested || (o.paymentClosed && o.assetClosed)) return;
+        if (block.timestamp < o.deadline) revert DeadlineReached();
+        if (o.lastActionTimestamp != 0 && block.timestamp < o.lastActionTimestamp + RETRY_COOLDOWN) {
+            revert CooldownActive();
+        }
+
+        _requestRefundForLegs(orderId_, o, true, true);
+        // _requestRefundForLegs bumps the nonce; emit the new value so the indexer
+        // can tell this from a buyer CANCELLED at the same nonce.
+        emit OrderStateChanged(orderId_, "EXPIRED", o.nonce);
+    }
+
+    /// @notice An order id may be removed from the sweep index once it is provably
+    ///         fund-free: both legs have terminal events, OR no leg was ever seen and the
+    ///         order has a refund/invalid decision with its deadline behind it. The second
+    ///         case is what lets permissionless `expire()` + pruning clear empty orders
+    ///         that would otherwise permanently fill MAX_ORDERS.
+    /// @dev `orders[id]` is never deleted, so a delayed Locked log for a pruned id is still
+    ///      processed and refunded by react(). Only the bounded sweep/index is compacted.
+    function _prunable(Order storage o_) internal view returns (bool) {
+        if (o_.buyer == address(0)) return false;
+        if (o_.paymentClosed && o_.assetClosed) return true;
+        return !o_.paymentSeen && !o_.assetSeen && (o_.refundRequested || o_.invalid)
+            && block.timestamp >= o_.deadline;
+    }
+
+    /// @notice Permissionless, bounded removal of terminal/fund-free orders from the
+    ///         sweep index. Only `_orderIds` is compacted — `orders[id]` (including its
+    ///         terms and closed flags) stays readable forever — so `_requireVenueIdle()`
+    ///         and `_sweep()` remain bounded even though createOrder() is permissionless.
+    /// @dev Single forward pass with swap-and-pop; at most `limit_` removals. `sweepCursor`
+    ///      points at the NEXT id to process, so when the tail element is moved into
+    ///      slot i the cursor follows it to i. A cursor equal to the new length simply
+    ///      wraps at the start of _sweep().
+    function pruneClosedOrders(uint256 limit_) external {
+        uint256 len = _orderIds.length;
+        uint256 removed;
+        for (uint256 i = 0; i < len && removed < limit_;) {
+            if (!_prunable(orders[_orderIds[i]])) {
+                i += 1;
+                continue;
+            }
+
+            uint256 last = len - 1;
+            if (i != last) {
+                _orderIds[i] = _orderIds[last];
+                // The cursor had already consumed the tail element; it now lives at i.
+                if (sweepCursor == last) sweepCursor = i;
+            }
+            _orderIds.pop();
+            len -= 1;
+            removed += 1;
+            // Do not advance i: the id swapped into slot i still needs inspection.
+        }
+        if (removed != 0) emit OrdersPruned(removed, len);
     }
 
     /// @notice Canonical terms hash both escrow legs must carry. The UI computes this
@@ -352,7 +470,7 @@ contract HandshakeReactive is AbstractReactive, Ownable {
             _handleTerminal(log_, true, topic == PAYMENT_RELEASED_TOPIC_0);
         } else if (topic == ASSET_RELEASED_TOPIC_0 || topic == ASSET_REFUNDED_TOPIC_0) {
             _handleTerminal(log_, false, topic == ASSET_RELEASED_TOPIC_0);
-        } else if (topic == CRON10_TOPIC_0 && log_.contractAddress == LEGACY_SYSTEM_ADDR) {
+        } else if (topic == CRON100_TOPIC_0 && log_.contractAddress == LEGACY_SYSTEM_ADDR) {
             _sweep();
         }
         // Unrecognized topic0 / source: deliberate no-op.
@@ -366,6 +484,9 @@ contract HandshakeReactive is AbstractReactive, Ownable {
         EscrowMeta memory meta = escrows[log_.contractAddress];
         if (!meta.registered) return;
         if (isPayment_ ? meta.role != ROLE_PAYMENT : meta.role != ROLE_ASSET) return;
+        // The venue chain comes from the escrow registry, never from the log. A log
+        // that claims a different chain is ignored before any state is touched.
+        if (log_.chainId != meta.chainId) return;
         if (log_.data.length < 128) return;
 
         bytes32 id = bytes32(log_.topic1);
@@ -380,7 +501,20 @@ contract HandshakeReactive is AbstractReactive, Ownable {
             if (o.venue.paymentChainId != meta.chainId || o.venue.paymentEscrow != log_.contractAddress) return;
         } else {
             if (o.venue.assetChainId != meta.chainId || o.venue.assetEscrow != log_.contractAddress) return;
-            o.assetLockCount += 1; // every observed asset lock, winner or loser
+            // Minimal party sanity check before counting: the escrow's depositor is
+            // always msg.sender, so a zero depositor is malformed and never processed.
+            // Deeper terms/party validation follows below and is deliberately left
+            // after the counter so race-loser refunds keep their existing semantics.
+            if (depositor == address(0)) return;
+            // Stop counting at the cap so react() can never overflow. Over-cap locks
+            // are NOT ignored: refund that depositor as a race loser so no seller is
+            // stranded, without touching the winner's settlement state. A redelivered
+            // log for the winner stays a no-op — its own leg must never be refunded.
+            if (o.assetLockCount >= MAX_ASSET_LOCKS) {
+                if (depositor != o.winner) _refundRaceLoser(id, o, depositor);
+                return;
+            }
+            o.assetLockCount += 1; // every accepted asset lock, winner or loser
         }
 
         // Hard safety invariant: after settlement has been requested the order can
@@ -395,7 +529,7 @@ contract HandshakeReactive is AbstractReactive, Ownable {
         // settle: refund that leg right away so its depositor is never stranded.
         if (o.refundRequested || (o.paymentClosed && o.assetClosed)) {
             if (isPayment_) {
-                _refundLateLeg(id, o, true, depositor);
+                _refundLateLeg(id, o);
             } else {
                 _refundRaceLoser(id, o, depositor);
             }
@@ -475,6 +609,8 @@ contract HandshakeReactive is AbstractReactive, Ownable {
         EscrowMeta memory meta = escrows[log_.contractAddress];
         if (!meta.registered) return;
         if (isPayment_ ? meta.role != ROLE_PAYMENT : meta.role != ROLE_ASSET) return;
+        // Defence in depth: the terminal log must claim the venue's registered chain.
+        if (log_.chainId != meta.chainId) return;
         if (log_.data.length < 64) return;
 
         bytes32 id = bytes32(log_.topic1);
@@ -489,10 +625,12 @@ contract HandshakeReactive is AbstractReactive, Ownable {
             if (o.venue.assetChainId != meta.chainId || o.venue.assetEscrow != log_.contractAddress) return;
         }
 
-        // Accept the global nonce or the last nonce requested for this specific leg;
-        // older nonces are stale and never close a leg.
-        uint64 legNonce = isPayment_ ? o.paymentRequestNonce : o.assetRequestNonce;
-        if (nonce != o.nonce && nonce != legNonce) return;
+        // The per-leg value is the FIRST nonce requested for that leg; retry()/sweep()
+        // bump only the global nonce. Accept any terminal event from that first request
+        // through the latest global nonce so a delayed event still closes its leg.
+        // Older-than-floor and future nonces remain stale and are rejected.
+        uint64 legFloor = isPayment_ ? o.paymentRequestNonce : o.assetRequestNonce;
+        if (legFloor == 0 || nonce < legFloor || nonce > o.nonce) return;
 
         if (isPayment_) {
             if (!o.paymentClosed) {
@@ -512,6 +650,17 @@ contract HandshakeReactive is AbstractReactive, Ownable {
 
     // --------------------------------------------------------- callback request helpers
 
+    /// @notice Records the FIRST callback nonce requested for a leg. Retries and cron
+    ///         repair requests bump the global nonce but must never overwrite this floor,
+    ///         otherwise a terminal event from the original request becomes unconfirmable.
+    function _setLegRequestFloor(Order storage o_, bool isPayment_, uint64 nonce_) internal {
+        if (isPayment_) {
+            if (o_.paymentRequestNonce == 0) o_.paymentRequestNonce = nonce_;
+        } else {
+            if (o_.assetRequestNonce == 0) o_.assetRequestNonce = nonce_;
+        }
+    }
+
     function _requestSettle(bytes32 id_, Order storage o_, bool payment_, bool asset_) internal {
         if (o_.refundRequested) return; // never mix a settlement with a refund decision
         o_.nonce += 1;
@@ -525,7 +674,7 @@ contract HandshakeReactive is AbstractReactive, Ownable {
             // zero, so pay the winning seller instead — never address(0).
             address paymentRecipient = o_.seller != address(0) ? o_.seller : o_.winner;
             if (paymentRecipient == address(0)) revert NoWinner();
-            o_.paymentRequestNonce = nonce;
+            _setLegRequestFloor(o_, true, nonce);
             SYSTEM.requestCallbackV_1_0(
                 ISystemContract.CallbackConfiguration_V_1_0({
                     chainId: v.paymentChainId,
@@ -543,7 +692,7 @@ contract HandshakeReactive is AbstractReactive, Ownable {
             );
         }
         if (asset_ && !o_.assetClosed) {
-            o_.assetRequestNonce = nonce;
+            _setLegRequestFloor(o_, false, nonce);
             address seller = o_.winner == address(0) ? o_.seller : o_.winner;
             SYSTEM.requestCallbackV_1_0(
                 ISystemContract.CallbackConfiguration_V_1_0({
@@ -574,20 +723,22 @@ contract HandshakeReactive is AbstractReactive, Ownable {
         Venue storage v = o_.venue;
 
         if (payment_ && o_.paymentSeen && !o_.paymentClosed) {
-            o_.paymentRequestNonce = nonce;
+            _setLegRequestFloor(o_, true, nonce);
             o_.paymentRefundRequested = true;
             _requestPaymentRefund(v, id_, nonce);
         }
         if (asset_ && o_.assetSeen && !o_.assetClosed) {
-            o_.assetRequestNonce = nonce;
+            _setLegRequestFloor(o_, false, nonce);
             o_.assetRefundRequested = true;
             _requestAssetRefund(v, id_, o_.winner, nonce);
         }
         emit OrderStateChanged(id_, "REFUND_REQUESTED", nonce);
     }
 
-    /// @notice Refund a leg whose Locked log arrived after the order entered refund mode.
-    function _refundLateLeg(bytes32 id_, Order storage o_, bool isPayment_, address depositor_) internal {
+    /// @notice Refund a payment leg whose Locked log arrived after the order entered
+    ///         refund mode. Payment-only: a late asset lock always goes through the
+    ///         race-loser path instead, which preserves the winner and its callbacks.
+    function _refundLateLeg(bytes32 id_, Order storage o_) internal {
         if (o_.settleRequested) return; // hard invariant
         o_.nonce += 1;
         o_.lastActionTimestamp = block.timestamp;
@@ -595,20 +746,16 @@ contract HandshakeReactive is AbstractReactive, Ownable {
         uint64 nonce = o_.nonce;
         Venue storage v = o_.venue;
 
-        if (isPayment_) {
-            o_.paymentSeen = true;
-            o_.paymentRequestNonce = nonce;
-            o_.paymentRefundRequested = true;
-            _requestPaymentRefund(v, id_, nonce);
-        } else {
-            o_.assetRequestNonce = nonce;
-            o_.assetRefundRequested = true;
-            _requestAssetRefund(v, id_, depositor_, nonce);
-        }
+        o_.paymentSeen = true;
+        _setLegRequestFloor(o_, true, nonce);
+        o_.paymentRefundRequested = true;
+        _requestPaymentRefund(v, id_, nonce);
         emit OrderStateChanged(id_, "LATE_REFUND", nonce);
     }
 
     /// @notice Refund a later seller in race mode; does not alter winner settlement state.
+    ///         Also used for asset logs beyond MAX_ASSET_LOCKS so over-cap depositors are
+    ///         refunded instead of stranded, while the counter itself stays capped.
     function _refundRaceLoser(bytes32 id_, Order storage o_, address seller_) internal {
         o_.nonce += 1;
         o_.lastActionTimestamp = block.timestamp;
@@ -664,7 +811,7 @@ contract HandshakeReactive is AbstractReactive, Ownable {
         }
     }
 
-    /// @notice Cursor-bounded cron work: at most 8 orders per Cron10 tick.
+    /// @notice Cursor-bounded cron work: at most 8 orders per Cron100 tick.
     function _sweep() internal {
         uint256 len = _orderIds.length;
         if (len == 0) return;

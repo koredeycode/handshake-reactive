@@ -47,11 +47,22 @@ export interface Order {
   assetLockCount: bigint
   paymentRequestNonce: bigint
   assetRequestNonce: bigint
+  /** Venue-bound terms commitment from the API row (null means not indexed). */
+  termsHash?: string | null
   venue: Venue
   /** Null API fields keep their zero-like view-model placeholder, but are
    *  flagged here so displays can show "—" instead of a misleading zero. */
   missing?: Partial<Record<MissingOrderField, true>>
+  /** On-chain refund cause, persisted by the indexer and mirrored in the API.
+   *  Absent/null on older orders — every consumer must degrade gracefully. */
+  refundReason?: string | null
+  /** An on-chain EXPIRED event was observed (distinct from "past deadline"). */
+  expired?: boolean
 }
+
+/** The refund causes the indexer/SSE can report. Kept as a string on Order so
+ *  an unknown future cause never crashes the UI; `refundReasonLabel` maps these. */
+export type RefundReason = 'expired' | 'invalid' | 'cancelled' | 'late' | 'race_loser'
 
 export interface Leg {
   depositor: Hex
@@ -62,6 +73,8 @@ export interface Leg {
   deadline: bigint
   state: bigint
   nonce: bigint
+  /** Origin-chain lock/refund tx, surfaced in refund explanations. */
+  txHash?: string
 }
 
 /** `venue(chainId)` from the reactive registry. */
@@ -86,10 +99,15 @@ export type OrderStatus =
   | 'READY'
   | 'SETTLING'
   | 'SETTLED'
-  | 'REFUNDING'
   | 'REFUNDED'
   | 'DELAYED'
   | 'INVALID'
+  // Non-happy-path states. Wall-clock guesses are never reported as a decision.
+  | 'WAITING_FOR_EXPIRY'
+  | 'REFUND_PENDING'
+  | 'REFUND_STALLED'
+  | 'STALLED'
+  | 'EXPIRED'
 
 export type ProofEventKind =
   | 'paymentLocked'
@@ -100,7 +118,9 @@ export type ProofEventKind =
   | 'paymentRefunded'
   | 'assetRefunded'
   | 'callbackRequest'
+  /** Legacy live-system tick, kept distinct from the post-cutover Cron100. */
   | 'cron10'
+  | 'cron100'
 
 export interface ProofEvent {
   id: string

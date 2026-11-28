@@ -45,7 +45,11 @@ contract HandshakeReactiveTest is Test {
     uint256 constant ASSET_RELEASED_TOPIC = uint256(keccak256("AssetReleased(bytes32,address,uint256,uint64)"));
     uint256 constant PAYMENT_REFUNDED_TOPIC = uint256(keccak256("PaymentRefunded(bytes32,address,uint256,uint64)"));
     uint256 constant ASSET_REFUNDED_TOPIC = uint256(keccak256("AssetRefunded(bytes32,address,uint256,uint64)"));
-    uint256 constant CRON10_TOPIC = uint256(keccak256("Cron10(uint256)"));
+    // Cron100 topic0 emitted by the legacy system contract 0x000...fffFfF. react()
+    // sweeps on this topic only. The old Cron10 topic is retained as a negative case.
+    uint256 constant CRON100_TOPIC =
+        0xb49937fb8970e19fd46d48f7e3fb00d659deac0347f79cd7cb542f0fc1503c70;
+    uint256 constant CRON10_TOPIC_LEGACY = uint256(keccak256("Cron10(uint256)")); // 0x04463f7c...3307b687
 
     bytes4 constant RELEASE_PAYMENT_SELECTOR = bytes4(keccak256("release(address,bytes32,address,uint256,uint64)"));
     bytes4 constant RELEASE_ASSET_SELECTOR =
@@ -252,7 +256,7 @@ contract HandshakeReactiveTest is Test {
     }
 
     function _cronLog() internal pure returns (IReactive.LogRecord memory) {
-        return _cronLog(LEGACY_SYSTEM, CRON10_TOPIC);
+        return _cronLog(LEGACY_SYSTEM, CRON100_TOPIC);
     }
 
     function _cronLog(address contract_, uint256 topic_) internal pure returns (IReactive.LogRecord memory) {
@@ -280,6 +284,16 @@ contract HandshakeReactiveTest is Test {
     function _assetLock() internal {
         _useOrder(id);
         _react(_lockedLog(false, SELLER, BUYER));
+    }
+
+    /// @dev Drive a named-seller order to both legs closed for the pruning tests.
+    function _closeOrder(bytes32 orderId_) internal {
+        _useOrder(orderId_);
+        _paymentLock();
+        _assetLock();
+        _react(_terminalLog(true, true, SELLER, PAYMENT_AMOUNT, 1));
+        _react(_terminalLog(false, true, BUYER, ASSET_AMOUNT, 1));
+        assertTrue(rc.isClosed(orderId_));
     }
 
     /// @dev The six subscriptions a venue contributes, in the order setVenue() installs them.
@@ -370,6 +384,150 @@ contract HandshakeReactiveTest is Test {
         assertEq(rc.orderCount(), 1);
     }
 
+    /// @dev F-02: the permissionless registry cannot be grown past MAX_ORDERS. The array
+    ///      length is set directly in local storage (slot 2) so the test does not need to
+    ///      write 10,000 orders; the assertion confirms the slot was targeted correctly.
+    function testCreateOrderEnforcesMaxOrders() public {
+        uint256 maxOrders = rc.MAX_ORDERS();
+        vm.store(address(rc), bytes32(uint256(2)), bytes32(maxOrders));
+        assertEq(rc.orderCount(), maxOrders);
+
+        vm.expectRevert(abi.encodeWithSignature("TooManyOrders()"));
+        _createOrder(keccak256("over-cap"), 120);
+        assertEq(rc.orderCount(), maxOrders);
+    }
+
+    /// @dev F-02: pruning removes only closed ids, keeps open ones and their `orders`
+    ///      mapping entries, and leaves _sweep() working afterwards.
+    function testPruneClosedOrdersKeepsOpenOrdersAndSweepStillWorks() public {
+        bytes32 liveId = keccak256("order-1");
+        bytes32 closedA = keccak256("prune-a");
+        bytes32 closedB = keccak256("prune-b");
+        _createOrder(closedA, 120);
+        _createOrder(closedB, 120);
+        assertEq(rc.orderCount(), 3);
+        _closeOrder(closedA);
+        _closeOrder(closedB);
+
+        vm.expectEmit(false, false, false, true);
+        emit HandshakeReactive.OrdersPruned(2, 1);
+        vm.prank(STRANGER); // permissionless
+        rc.pruneClosedOrders(2);
+
+        assertEq(rc.orderCount(), 1);
+        assertEq(rc.orderIds(0), liveId);
+        // Closed orders remain fully readable via orders[id].
+        assertTrue(rc.getOrder(closedA).paymentClosed);
+        assertTrue(rc.getOrder(closedA).assetClosed);
+        assertEq(rc.getOrder(closedA).buyer, BUYER);
+        assertEq(rc.getOrder(closedB).seller, SELLER);
+
+        // _sweep() still reaches the remaining open order.
+        _useOrder(liveId);
+        _paymentLock();
+        vm.warp(deadline + 1);
+        sys.resetCallbacks();
+        _react(_cronLog());
+        assertEq(sys.callbackCount(), 1);
+        assertTrue(rc.getOrder(liveId).refundRequested);
+        assertEq(bytes4(_callback(0).payload), REFUND_PAYMENT_SELECTOR);
+    }
+
+    /// @dev F-02: when swap-and-pop moves the tail element, a cursor that had already
+    ///      passed the tail follows it to the new slot so no open order is skipped.
+    function testPruneClosedOrdersAdjustsSweepCursorAfterSwap() public {
+        bytes32 closedA = keccak256("prune-cursor-swap");
+        bytes32 openTail = keccak256("prune-open-tail");
+        _createOrder(closedA, 120);
+        _createOrder(openTail, 120);
+        _closeOrder(closedA);
+        // [order-1 (open, 0), closedA (1), openTail (2)]
+        vm.store(address(rc), bytes32(uint256(3)), bytes32(uint256(2))); // sweepCursor = 2
+        assertEq(rc.sweepCursor(), 2);
+
+        rc.pruneClosedOrders(1);
+        assertEq(rc.orderCount(), 2);
+        assertEq(rc.orderIds(1), openTail);
+        assertEq(rc.sweepCursor(), 1); // cursor followed the moved tail element
+    }
+
+    /// @dev P1 regression: MAX_ORDERS must not be a permanent createOrder lockout. An
+    ///      empty expired order is fund-free and becomes prunable once permissionless
+    ///      expire() sets refundRequested. The legitimate open order has no decision flags,
+    ///      so it is never pruned. The 10,000-id registry is replicated with vm.store:
+    ///      10,000 real createOrder calls exceed Foundry's per-test block gas limit. All
+    ///      pruning logic runs on the contract itself. Local state only — no fork/tx.
+    function testPruneExpiredEmptyOrdersUnblocksCreateOrderAtCap() public {
+        uint256 cap = rc.MAX_ORDERS();
+        bytes32 legitimate = keccak256("order-1"); // setUp order: no legs, no decision
+        HandshakeReactive.Order memory legitBefore = rc.getOrder(legitimate);
+        assertFalse(legitBefore.paymentSeen);
+        assertFalse(legitBefore.assetSeen);
+        assertFalse(legitBefore.refundRequested);
+        assertFalse(legitBefore.invalid);
+
+        // A real empty order that is expired by the permissionless expire() path.
+        bytes32 emptyId = keccak256("cap-filler-expired-empty");
+        _createOrder(emptyId, 30); // MIN_DURATION
+        _useOrder(emptyId);
+        vm.warp(deadline + 1);
+        vm.prank(STRANGER);
+        rc.expire(id);
+        HandshakeReactive.Order memory filler = rc.getOrder(emptyId);
+        assertTrue(filler.refundRequested);
+        assertFalse(filler.paymentSeen);
+        assertFalse(filler.assetSeen);
+
+        // Fill the registry to the cap: index 0 stays the legitimate order, every
+        // other slot points at the expired empty order. Slot 2 holds _orderIds.length;
+        // dynamic-array elements start at keccak256(abi.encode(uint256(2))).
+        bytes32 arrayBase = keccak256(abi.encode(uint256(2)));
+        for (uint256 i = 1; i < cap; i++) {
+            vm.store(address(rc), bytes32(uint256(arrayBase) + i), bytes32(uint256(emptyId)));
+        }
+        vm.store(address(rc), bytes32(uint256(2)), bytes32(cap));
+        assertEq(rc.orderCount(), cap);
+        assertEq(rc.orderIds(0), legitimate);
+        assertEq(rc.orderIds(cap - 1), emptyId);
+
+        // The cap still blocks new orders until pruning.
+        vm.expectRevert(abi.encodeWithSignature("TooManyOrders()"));
+        _createOrder(keccak256("blocked-at-cap"), 120);
+
+        vm.prank(STRANGER); // permissionless
+        rc.pruneClosedOrders(cap);
+        assertEq(rc.orderCount(), 1);
+        assertEq(rc.orderIds(0), legitimate);
+        assertEq(rc.getOrder(legitimate).buyer, BUYER);
+        assertFalse(rc.getOrder(legitimate).refundRequested);
+
+        // Registry has capacity again; the pruned order is still readable.
+        assertEq(rc.getOrder(emptyId).buyer, BUYER);
+        _createOrder(keccak256("after-prune"), 120);
+        assertEq(rc.orderCount(), 2);
+    }
+
+    /// @dev Pruning only removes the sweep index entry: orders[id] survives, so a late
+    ///      lock on a pruned empty order is still refunded rather than stranding funds.
+    function testPrunedExpiredEmptyOrderStillRefundsLateLock() public {
+        bytes32 emptyId = keccak256("pruned-late-lock");
+        _createOrder(emptyId, 30);
+        _useOrder(emptyId);
+        vm.warp(deadline + 1);
+        rc.expire(id);
+        assertTrue(rc.getOrder(emptyId).refundRequested);
+
+        rc.pruneClosedOrders(10);
+        assertEq(rc.orderCount(), 1); // only the setUp order remains in the index
+        assertEq(rc.getOrder(emptyId).buyer, BUYER); // mapping entry intact
+
+        sys.resetCallbacks();
+        _react(_lockedLog(true, BUYER, SELLER)); // late payment lock
+        assertEq(sys.callbackCount(), 1);
+        assertEq(bytes4(_callback(0).payload), REFUND_PAYMENT_SELECTOR);
+        assertTrue(rc.getOrder(emptyId).paymentRefundRequested);
+    }
+
     // --------------------------------------------------------------- subscriptions
 
     function testSetVenueOwnerOnlyAndInstallsNineteenSubscriptions() public view {
@@ -401,7 +559,7 @@ contract HandshakeReactiveTest is Test {
 
         _fillVenueExpectations(expectedTopics, expectedChains, expectedContracts, 0, BASE_CHAIN, BASE_ESCROW, BASE_ASSET_ESCROW);
         // Cron is installed once, immediately after the first venue.
-        expectedTopics[6] = CRON10_TOPIC;
+        expectedTopics[6] = CRON100_TOPIC;
         expectedChains[6] = block.chainid;
         expectedContracts[6] = LEGACY_SYSTEM;
         _fillVenueExpectations(
@@ -657,6 +815,67 @@ contract HandshakeReactiveTest is Test {
         assertTrue(rc.getOrder(id).paymentClosed);
     }
 
+    /// @dev F-01 regression. A permissionless retry after the cooldown bumps the global
+    ///      nonce, but the per-leg floor must stay at the first requested nonce so the
+    ///      escrow's terminal event from that first request can still close the leg.
+    function testTerminalEventFromFirstRequestStillClosesLegAfterRetry() public {
+        _paymentLock();
+        _assetLock(); // settle at nonce 1; both floors = 1
+        HandshakeReactive.Order memory before = rc.getOrder(id);
+        assertEq(before.nonce, 1);
+        assertEq(before.paymentRequestNonce, 1);
+        assertEq(before.assetRequestNonce, 1);
+
+        sys.resetCallbacks();
+        vm.warp(block.timestamp + 31);
+        vm.prank(STRANGER); // retry is permissionless
+        rc.retry(id);
+        HandshakeReactive.Order memory afterRetry = rc.getOrder(id);
+        assertEq(afterRetry.nonce, 2);
+        assertEq(afterRetry.paymentRequestNonce, 1); // floor not superseded
+        assertEq(afterRetry.assetRequestNonce, 1);
+        assertEq(sys.callbackCount(), 2);
+
+        // Future nonce is still rejected.
+        _react(_terminalLog(true, true, SELLER, PAYMENT_AMOUNT, 3));
+        assertFalse(rc.getOrder(id).paymentClosed);
+        // Older-than-floor nonce is still rejected.
+        _react(_terminalLog(true, true, SELLER, PAYMENT_AMOUNT, 0));
+        assertFalse(rc.getOrder(id).paymentClosed);
+
+        // The delayed event emitted at the original nonce now closes the payment leg.
+        _react(_terminalLog(true, true, SELLER, PAYMENT_AMOUNT, 1));
+        assertTrue(rc.getOrder(id).paymentClosed);
+        assertFalse(rc.getOrder(id).assetClosed);
+        // The asset leg can still confirm via the retry's nonce-2 callback.
+        _react(_terminalLog(false, true, BUYER, ASSET_AMOUNT, 2));
+        assertTrue(rc.isClosed(id));
+    }
+
+    /// @dev F-01: a nonce below the leg's floor stays stale even when it is below the
+    ///      latest global nonce. The expire -> late-lock path sets the payment floor to 2.
+    function testTerminalNonceBelowLegFloorIsRejected() public {
+        _createStrandedOrder(); // already past deadline, no legs seen
+        vm.prank(STRANGER);
+        rc.expire(id); // nonce 1, but no leg floors yet
+        assertEq(rc.getOrder(id).nonce, 1);
+        assertEq(rc.getOrder(id).paymentRequestNonce, 0);
+
+        sys.resetCallbacks();
+        _react(_lockedLog(true, BUYER, SELLER)); // late lock -> _refundLateLeg, nonce 2
+        HandshakeReactive.Order memory o = rc.getOrder(id);
+        assertEq(o.nonce, 2);
+        assertEq(o.paymentRequestNonce, 2);
+
+        // 1 < floor(2): must not close the leg.
+        _react(_terminalLog(true, false, BUYER, PAYMENT_AMOUNT, 1));
+        assertFalse(rc.getOrder(id).paymentClosed);
+
+        // The floor nonce itself does close it.
+        _react(_terminalLog(true, false, BUYER, PAYMENT_AMOUNT, 2));
+        assertTrue(rc.getOrder(id).paymentClosed);
+    }
+
     function testReactFromEoaReverts() public {
         _useOrder(id);
         IReactive.LogRecord memory log_ = _lockedLog(true, BUYER, SELLER);
@@ -722,6 +941,26 @@ contract HandshakeReactiveTest is Test {
         _react(_lockedLog(false, SELLER, BUYER));
         assertTrue(rc.getOrder(id).settleRequested);
         assertEq(sys.callbackCount(), 2);
+    }
+
+    /// @dev Q-1 hardening: the venue chain is read from the escrow registry, not the
+    ///      log. A log from the right escrow with a forged/wrong chainId is ignored by
+    ///      both _handleLocked and _handleTerminal (venue checks alone would pass here).
+    function testReactIgnoresLogsWhoseChainIdDoesNotMatchVenue() public {
+        _useOrder(id);
+
+        // Correct escrow and role, wrong chainId in the log: no lock seen.
+        IReactive.LogRecord memory lockLog = _lockedLogFrom(true, BUYER, SELLER, UNICHAIN_CHAIN, BASE_ESCROW);
+        _react(lockLog);
+        assertFalse(rc.getOrder(id).paymentSeen);
+        assertEq(sys.callbackCount(), 0);
+
+        // Genuine lock, then a terminal log with a wrong chainId: leg stays open.
+        _paymentLock();
+        IReactive.LogRecord memory terminal =
+            _terminalLogFrom(true, true, SELLER, PAYMENT_AMOUNT, 1, UNICHAIN_CHAIN, BASE_ESCROW);
+        _react(terminal);
+        assertFalse(rc.getOrder(id).paymentClosed);
     }
 
     function testNonDefaultVenuesAreUsedInCallbackChainIdAndRecipient() public {
@@ -919,13 +1158,38 @@ contract HandshakeReactiveTest is Test {
         _paymentLock();
         vm.warp(deadline + 1);
 
-        _react(_cronLog(BASE_ESCROW, CRON10_TOPIC)); // right topic, wrong contract
+        _react(_cronLog(BASE_ESCROW, CRON100_TOPIC)); // right topic, wrong contract
         assertEq(sys.callbackCount(), 0);
 
         _react(_cronLog(LEGACY_SYSTEM, uint256(keccak256("Cron1(uint256)")))); // wrong topic
         assertEq(sys.callbackCount(), 0);
 
         assertFalse(rc.getOrder(id).refundRequested);
+    }
+
+    /// @dev A legacy Cron10 log must never drive _sweep(); only Cron100 from the legacy
+    ///      system address may. All logs are delivered in-memory via the mock system
+    ///      contract — this is a local Foundry test, never a broadcast or a fork.
+    function testLegacyCron10LogIgnoredCron100DrivesSweep() public {
+        _useOrder(id);
+        _paymentLock();
+        vm.warp(deadline + 1);
+
+        // Legacy Cron10 topic from the legacy system address: ignored.
+        _react(_cronLog(LEGACY_SYSTEM, CRON10_TOPIC_LEGACY));
+        assertEq(sys.callbackCount(), 0);
+        assertFalse(rc.getOrder(id).refundRequested);
+
+        // Legacy Cron10 topic from a lookalike contract: also ignored.
+        _react(_cronLog(BASE_ESCROW, CRON10_TOPIC_LEGACY));
+        assertEq(sys.callbackCount(), 0);
+
+        // Cron100 from the legacy system address drives the sweep and refunds the
+        // already-seen payment leg.
+        _react(_cronLog(LEGACY_SYSTEM, CRON100_TOPIC));
+        assertEq(sys.callbackCount(), 1);
+        assertTrue(rc.getOrder(id).refundRequested);
+        assertEq(bytes4(_callback(0).payload), REFUND_PAYMENT_SELECTOR);
     }
 
     function testLateLockedAfterRefundRequestedIsRefundedImmediately() public {
@@ -1120,8 +1384,10 @@ contract HandshakeReactiveTest is Test {
         assertFalse(rc.getOrder(id).refundRequested);
         assertTrue(rc.getOrder(id).settleRequested);
         assertEq(rc.getOrder(id).winner, SELLER);
-        assertEq(rc.getOrder(id).paymentRequestNonce, 3);
-        assertEq(rc.getOrder(id).assetRequestNonce, 3);
+        // Per-leg values are the FIRST requested nonce (floor). Cron/retry/race-loser
+        // requests bump the global nonce to 4 but must not overwrite these floors.
+        assertEq(rc.getOrder(id).paymentRequestNonce, 1);
+        assertEq(rc.getOrder(id).assetRequestNonce, 1);
 
         // A duplicate payment lock after settlement is ignored, not refunded.
         sys.resetCallbacks();
@@ -1185,6 +1451,67 @@ contract HandshakeReactiveTest is Test {
         // Winner settlement callbacks were requested with nonce 1 and still confirm.
         _react(_terminalLog(false, true, BUYER, ASSET_AMOUNT, 1));
         _react(_terminalLog(true, true, SELLER, PAYMENT_AMOUNT, 1));
+        assertTrue(rc.isClosed(id));
+    }
+
+    /// @dev F-03: 32 asset locks are accepted (winner + 31 race losers). The 33rd does
+    ///      not revert react(): the counter stays capped and that depositor is refunded
+    ///      as a race loser with exactly one callback, so no seller is stranded while
+    ///      the winner's settlement remains intact and confirmable.
+    function testAssetLockCountCapsGracefullyWithoutBreakingRaceRefunds() public {
+        _paymentLock();
+        _assetLock(); // winner = SELLER, settlement requested at nonce 1
+        uint256 max = rc.MAX_ASSET_LOCKS();
+
+        for (uint256 i = 1; i < max; i++) {
+            address loser = address(uint160(0x3000 + i));
+            _react(_lockedLog(false, loser, BUYER)); // each is a race-loser refund
+        }
+        HandshakeReactive.Order memory o = rc.getOrder(id);
+        assertEq(o.assetLockCount, max);
+        assertEq(o.nonce, max); // nonce 1 + (max - 1) loser refunds
+        assertEq(o.winner, SELLER);
+        uint256 callbacks = sys.callbackCount();
+
+        // The 33rd asset log does not revert react(). The counter stays capped and
+        // exactly one asset refund is requested for that specific depositor.
+        address overCapSeller = address(uint160(0x4000));
+        _react(_lockedLog(false, overCapSeller, BUYER));
+        o = rc.getOrder(id);
+        assertEq(o.assetLockCount, max); // counter capped
+        assertEq(o.nonce, max + 1); // refund request bumps the global nonce
+        assertEq(o.winner, SELLER);
+        assertTrue(o.settleRequested);
+        assertFalse(o.refundRequested);
+        assertEq(sys.callbackCount(), callbacks + 1);
+
+        CallbackRecord memory overCapRefund = _callback(callbacks);
+        assertEq(overCapRefund.chainId, UNICHAIN_CHAIN);
+        assertEq(overCapRefund.recipient, UNICHAIN_ESCROW);
+        assertEq(overCapRefund.gasLimit, 500_000);
+        assertEq(bytes4(overCapRefund.payload), REFUND_ASSET_SELECTOR);
+        (address injected, bytes32 cbOrder, address refundedSeller, uint64 refundNonce) =
+            abi.decode(_args(overCapRefund.payload), (address, bytes32, address, uint64));
+        assertEq(injected, address(0));
+        assertEq(cbOrder, id);
+        assertEq(refundedSeller, overCapSeller);
+        assertEq(refundNonce, max + 1);
+
+        // A redelivered over-cap log for the WINNER stays a no-op: the winning leg
+        // must never be refunded back to the seller.
+        _react(_lockedLog(false, SELLER, BUYER));
+        assertEq(rc.getOrder(id).assetLockCount, max);
+        assertEq(rc.getOrder(id).nonce, max + 1);
+        assertEq(sys.callbackCount(), callbacks + 1);
+
+        // A race loser's refund event cannot close the winner's asset leg.
+        address firstLoser = address(uint160(0x3001));
+        _react(_terminalLog(false, false, firstLoser, ASSET_AMOUNT, 2));
+        assertFalse(rc.getOrder(id).assetClosed);
+
+        // The winner's original nonce-1 callbacks still close both legs.
+        _react(_terminalLog(true, true, SELLER, PAYMENT_AMOUNT, 1));
+        _react(_terminalLog(false, true, BUYER, ASSET_AMOUNT, 1));
         assertTrue(rc.isClosed(id));
     }
 
@@ -1471,6 +1798,41 @@ contract HandshakeReactiveTest is Test {
         rc.cancelOrder(id);
     }
 
+    /// @dev F-04: cancelling an open order whose payment leg was already seen requests
+    ///      the refund callback in the same transaction — no cron/retry needed.
+    function testCancelOrderRequestsRefundCallbackImmediately() public {
+        bytes32 openId = keccak256("open-cancel-immediate-refund");
+        _createOpenOrder(openId, 120);
+        _useOrder(openId);
+        _openPaymentLock();
+        assertEq(sys.callbackCount(), 0);
+
+        vm.expectEmit(true, false, false, true);
+        emit HandshakeReactive.OrderStateChanged(id, "REFUND_REQUESTED", 1);
+        vm.expectEmit(true, false, false, true);
+        emit HandshakeReactive.OrderStateChanged(id, "CANCELLED", 1);
+
+        vm.prank(BUYER);
+        rc.cancelOrder(id);
+
+        HandshakeReactive.Order memory o = rc.getOrder(id);
+        assertTrue(o.invalid);
+        assertTrue(o.refundRequested);
+        assertTrue(o.paymentRefundRequested);
+        assertFalse(o.settleRequested);
+        assertEq(o.nonce, 1);
+        assertEq(o.paymentRequestNonce, 1);
+        assertEq(o.lastActionTimestamp, block.timestamp);
+
+        assertEq(sys.callbackCount(), 1);
+        assertEq(bytes4(_callback(0).payload), REFUND_PAYMENT_SELECTOR);
+        (address injected, bytes32 cbOrder, uint64 refundNonce) =
+            abi.decode(_args(_callback(0).payload), (address, bytes32, uint64));
+        assertEq(injected, address(0));
+        assertEq(cbOrder, id);
+        assertEq(refundNonce, 1);
+    }
+
     function testCancelOrderRejectsNamedOrder() public {
         vm.expectRevert(abi.encodeWithSignature("NotOpenOrder()"));
         vm.prank(BUYER);
@@ -1555,18 +1917,21 @@ contract HandshakeReactiveTest is Test {
         _openPaymentLock(); // buyer locked before cancelling
         vm.prank(BUYER);
         rc.cancelOrder(id);
+        // F-04: the refund callback is requested by cancelOrder itself now.
         assertEq(rc.getOrder(id).nonce, 1);
+        assertEq(sys.callbackCount(), 1);
+        assertEq(bytes4(_callback(0).payload), REFUND_PAYMENT_SELECTOR);
 
         vm.warp(deadline + 1);
         _react(_cronLog());
-        assertEq(sys.callbackCount(), 1);
-        assertEq(bytes4(_callback(0).payload), REFUND_PAYMENT_SELECTOR);
+        assertEq(sys.callbackCount(), 2);
+        assertEq(bytes4(_callback(1).payload), REFUND_PAYMENT_SELECTOR);
 
         vm.warp(block.timestamp + 31);
         vm.prank(STRANGER);
         rc.retry(id);
-        assertEq(sys.callbackCount(), 2);
-        assertEq(bytes4(_callback(1).payload), REFUND_PAYMENT_SELECTOR);
+        assertEq(sys.callbackCount(), 3);
+        assertEq(bytes4(_callback(2).payload), REFUND_PAYMENT_SELECTOR);
         assertTrue(rc.getOrder(id).invalid);
         assertFalse(rc.getOrder(id).settleRequested);
     }
@@ -1602,5 +1967,270 @@ contract HandshakeReactiveTest is Test {
         assertTrue(rc.getOrder(id).invalid);
         assertEq(sys.callbackCount(), 4);
         assertEq(bytes4(_callback(3).payload), REFUND_PAYMENT_SELECTOR);
+    }
+
+    // --------------------------------------------------- RC native rescue (owner only)
+    // All balances here are created with vm.deal in the local Foundry VM. No fork,
+    // no broadcast, and no system reserves are touched.
+
+    function testRescueNativeRevertsForNonOwner() public {
+        vm.deal(address(rc), 3 ether);
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", STRANGER));
+        vm.prank(STRANGER);
+        rc.rescueNative(payable(STRANGER), 1 ether);
+        assertEq(address(rc).balance, 3 ether);
+    }
+
+    function testRescueNativeRejectsZeroAddress() public {
+        vm.deal(address(rc), 3 ether);
+        vm.expectRevert(abi.encodeWithSignature("ZeroAddress()"));
+        rc.rescueNative(payable(address(0)), 1 ether);
+        assertEq(address(rc).balance, 3 ether);
+    }
+
+    function testRescueNativeRejectsZeroAmount() public {
+        vm.deal(address(rc), 3 ether);
+        vm.expectRevert(abi.encodeWithSignature("ZeroAmount()"));
+        rc.rescueNative(payable(STRANGER), 0);
+        assertEq(address(rc).balance, 3 ether);
+    }
+
+    function testRescueNativeRejectsOutstandingDebt() public {
+        vm.deal(address(rc), 3 ether);
+        sys.setDebt(address(rc), 0.1 ether);
+        vm.expectRevert(abi.encodeWithSignature("OutstandingDebt(uint256)", 0.1 ether));
+        rc.rescueNative(payable(STRANGER), 1 ether);
+        assertEq(address(rc).balance, 3 ether);
+        assertEq(sys.received(), 0);
+    }
+
+    function testRescueNativeRejectsDroppingBelowFloor() public {
+        uint256 balance = 2 ether;
+        uint256 amount = 1.5 ether;
+        uint256 remaining = balance - amount; // 0.5 ether < 1 ether floor
+        vm.deal(address(rc), balance);
+
+        vm.expectRevert(
+            abi.encodeWithSignature("RescueWouldStarveSubscriptions(uint256,uint256)", remaining, 1 ether)
+        );
+        rc.rescueNative(payable(STRANGER), amount);
+        assertEq(address(rc).balance, balance);
+    }
+
+    function testRescueNativeMovesExactAmountLeavesFloorAndEmits() public {
+        uint256 startingBalance = 3 ether;
+        uint256 amount = 1 ether;
+        vm.deal(address(rc), startingBalance);
+        uint256 recipientBefore = STRANGER.balance;
+
+        vm.expectEmit(true, true, true, true);
+        emit HandshakeReactive.NativeRescued(STRANGER, amount, 0);
+
+        rc.rescueNative(payable(STRANGER), amount);
+
+        assertEq(STRANGER.balance, recipientBefore + amount);
+        assertEq(address(rc).balance, startingBalance - amount);
+        assertGe(address(rc).balance, 1 ether); // fee floor left for subscriptions
+        assertEq(sys.received(), 0); // only the RC's own balance was touched
+    }
+
+    // ------------------------------------------------------- permissionless expire()
+
+    /// @dev Local, in-memory fixture for the stranded order from the runbook
+    ///      (0x17d3f463…6458b25): no legs, deadline already passed.
+    ///      Foundry-only — no fork, no broadcast. On a real redeploy, test transactions
+    ///      must wait until the indexer/backend is pointed at the new RC + escrows and
+    ///      /health is verified; do not send a real order before that.
+    function _createStrandedOrder() internal {
+        bytes32 strandedId = bytes32((uint256(0x17d3f463) << 224) | 0x6458b25);
+        _createOrderWith(
+            strandedId,
+            SELLER,
+            PAYMENT_TOKEN,
+            PAYMENT_AMOUNT,
+            BASE_CHAIN,
+            BASE_ESCROW,
+            ASSET_TOKEN,
+            ASSET_AMOUNT,
+            UNICHAIN_CHAIN,
+            UNICHAIN_ESCROW,
+            120
+        );
+        _useOrder(strandedId);
+        vm.warp(deadline + 1);
+    }
+
+    function testExpireRevertsBeforeDeadline() public {
+        _useOrder(id);
+        vm.expectRevert(abi.encodeWithSignature("DeadlineReached()"));
+        vm.prank(STRANGER);
+        rc.expire(id);
+    }
+
+    function testExpireRevertsForUnknownOrder() public {
+        vm.expectRevert(abi.encodeWithSignature("UnknownOrder()"));
+        vm.prank(STRANGER);
+        rc.expire(keccak256("never-created"));
+    }
+
+    function testExpireSettleRequestedOrderIsSilentNoOp() public {
+        _useOrder(id);
+        _paymentLock();
+        _assetLock(); // settlement requested, two callbacks issued
+        assertTrue(rc.getOrder(id).settleRequested);
+        uint64 nonceBefore = rc.getOrder(id).nonce;
+        vm.warp(deadline + 1);
+        sys.resetCallbacks();
+
+        vm.recordLogs();
+        vm.prank(STRANGER);
+        rc.expire(id);
+        assertEq(vm.getRecordedLogs().length, 0);
+
+        HandshakeReactive.Order memory o = rc.getOrder(id);
+        assertEq(o.nonce, nonceBefore);
+        assertFalse(o.refundRequested);
+        assertEq(sys.callbackCount(), 0);
+    }
+
+    /// @dev The cooldown must still bound actions that do NOT produce a refund decision.
+    ///      A race-loser refund bumps lastActionTimestamp without setting refundRequested,
+    ///      so the new no-op-first guard order in expire() cannot mask the cooldown.
+    function testExpireCooldownReverts() public {
+        _useOrder(id);
+        _assetLock(); // winner = SELLER, but no settlement and no refund decision
+        HandshakeReactive.Order memory before = rc.getOrder(id);
+        assertFalse(before.settleRequested);
+        assertFalse(before.refundRequested);
+        assertEq(before.nonce, 0);
+
+        vm.warp(deadline + 1);
+        // Race loser: refund request to SELLER_TWO, no refundRequested flag on the order.
+        _react(_lockedLog(false, SELLER_TWO, BUYER));
+        HandshakeReactive.Order memory afterLoser = rc.getOrder(id);
+        assertFalse(afterLoser.settleRequested);
+        assertFalse(afterLoser.refundRequested);
+        assertEq(afterLoser.nonce, 1);
+        assertEq(afterLoser.lastActionTimestamp, block.timestamp);
+
+        vm.expectRevert(abi.encodeWithSignature("CooldownActive()"));
+        vm.prank(STRANGER);
+        rc.expire(id); // deadline passed, but still inside RETRY_COOLDOWN
+        assertEq(rc.getOrder(id).nonce, 1);
+    }
+
+    /// @dev With no-op checks ahead of DeadlineReached, a settled order is a silent no-op
+    ///      at ANY time, including before its deadline.
+    function testExpireSettledOrderBeforeDeadlineIsSilentNoOp() public {
+        _useOrder(id);
+        _paymentLock();
+        _assetLock(); // settlement requested at nonce 1, still before deadline
+        assertLt(block.timestamp, deadline);
+        assertTrue(rc.getOrder(id).settleRequested);
+        uint64 nonceBefore = rc.getOrder(id).nonce;
+
+        vm.recordLogs();
+        vm.prank(STRANGER);
+        rc.expire(id);
+        assertEq(vm.getRecordedLogs().length, 0);
+
+        HandshakeReactive.Order memory o = rc.getOrder(id);
+        assertEq(o.nonce, nonceBefore);
+        assertFalse(o.refundRequested);
+        assertEq(sys.callbackCount(), 2); // the two original release callbacks remain
+    }
+
+    function testExpireRefundRequestedOrderIsIdempotentNoOp() public {
+        _useOrder(id);
+        _paymentLock();
+        vm.warp(deadline + 1);
+        _react(_cronLog()); // refund decision with nonce 1
+        assertTrue(rc.getOrder(id).refundRequested);
+        uint64 nonceBefore = rc.getOrder(id).nonce;
+        vm.warp(block.timestamp + 31); // clear RETRY_COOLDOWN
+
+        vm.recordLogs();
+        vm.prank(STRANGER);
+        rc.expire(id);
+        assertEq(vm.getRecordedLogs().length, 0);
+
+        HandshakeReactive.Order memory o = rc.getOrder(id);
+        assertEq(o.nonce, nonceBefore);
+        assertTrue(o.refundRequested);
+        assertFalse(o.settleRequested);
+    }
+
+    function testExpireBothLegsClosedIsSilentNoOp() public {
+        _useOrder(id);
+        _paymentLock();
+        _assetLock();
+        _react(_terminalLog(true, true, SELLER, PAYMENT_AMOUNT, 1));
+        _react(_terminalLog(false, true, BUYER, ASSET_AMOUNT, 1));
+        assertTrue(rc.isClosed(id));
+        uint64 nonceBefore = rc.getOrder(id).nonce;
+        vm.warp(deadline + 1);
+        sys.resetCallbacks();
+
+        vm.recordLogs();
+        vm.prank(STRANGER);
+        rc.expire(id);
+        assertEq(vm.getRecordedLogs().length, 0);
+        assertEq(rc.getOrder(id).nonce, nonceBefore);
+        assertEq(sys.callbackCount(), 0);
+    }
+
+    function testExpireStrandedNoLegOrderRequestsRefundAndEmitsExpired() public {
+        _createStrandedOrder();
+        HandshakeReactive.Order memory before = rc.getOrder(id);
+        assertFalse(before.paymentSeen);
+        assertFalse(before.assetSeen);
+        assertEq(before.nonce, 0);
+
+        vm.expectEmit(true, false, false, true);
+        emit HandshakeReactive.OrderStateChanged(id, "REFUND_REQUESTED", 1);
+        vm.expectEmit(true, false, false, true);
+        emit HandshakeReactive.OrderStateChanged(id, "EXPIRED", 1);
+
+        vm.prank(STRANGER); // permissionless
+        rc.expire(id);
+
+        HandshakeReactive.Order memory o = rc.getOrder(id);
+        assertTrue(o.refundRequested);
+        assertFalse(o.settleRequested);
+        assertEq(o.nonce, 1);
+        assertEq(o.lastActionTimestamp, block.timestamp);
+        // No legs were seen, so no refund callbacks are issued.
+        assertEq(sys.callbackCount(), 0);
+    }
+
+    function testExpireLatePaymentLockedAfterExpiryRoutesThroughLateRefund() public {
+        _createStrandedOrder();
+        vm.prank(STRANGER);
+        rc.expire(id);
+        assertEq(sys.callbackCount(), 0);
+
+        // The payment Locked log arrives only after the refund decision.
+        _react(_lockedLog(true, BUYER, SELLER));
+
+        HandshakeReactive.Order memory o = rc.getOrder(id);
+        assertEq(o.nonce, 2);
+        assertTrue(o.refundRequested);
+        assertTrue(o.paymentRefundRequested);
+        assertFalse(o.settleRequested);
+        assertEq(sys.callbackCount(), 1);
+        assertEq(bytes4(_callback(0).payload), REFUND_PAYMENT_SELECTOR);
+        (address injected, bytes32 cbOrder, uint64 refundNonce) =
+            abi.decode(_args(_callback(0).payload), (address, bytes32, uint64));
+        assertEq(injected, address(0));
+        assertEq(cbOrder, id);
+        assertEq(refundNonce, 2);
+    }
+
+    function testExpireIsPermissionless() public {
+        _createStrandedOrder();
+        vm.prank(STRANGER); // any caller, not just the owner or the buyer
+        rc.expire(id);
+        assertTrue(rc.getOrder(id).refundRequested);
+        assertEq(rc.getOrder(id).nonce, 1);
     }
 }

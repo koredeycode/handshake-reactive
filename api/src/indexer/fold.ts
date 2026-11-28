@@ -1,7 +1,11 @@
 import { ZERO_ADDRESS } from '../contracts.js';
-import type { OutboxDraft, NotificationKind } from '../lib/events.js';
+import { refundReasonSchema, type OutboxDraft, type NotificationKind, type RefundReason } from '../lib/events.js';
 import type { DecodedEvent } from './decode.js';
 import { sseNameFor } from './decode.js';
+
+// Kept as a re-export so existing indexer consumers keep importing it here;
+// the enum itself now has a single definition shared with the SSE schemas.
+export type { RefundReason } from '../lib/events.js';
 
 export type FoldLeg = {
   role: 'payment' | 'asset';
@@ -14,8 +18,6 @@ export type FoldLeg = {
   state: 'locked' | 'released' | 'refunded';
   nonce: number;
 };
-
-export type RefundReason = 'expired' | 'invalid' | 'cancelled' | 'late' | 'race_loser';
 
 export type FoldOrderState = {
   orderId: string;
@@ -142,18 +144,33 @@ function notify(
 
 function deriveStatus(state: FoldOrderState): string {
   if (state.status === 'settled' || state.status === 'refunded' || state.status === 'cancelled') return state.status;
-  const allClosed = state.legs.length >= 2 && state.legs.every((leg) => leg.state !== 'locked');
+  const allClosed = allLegsClosed(state);
   if (allClosed && state.settleRequested) return 'settled';
-  if (allClosed && state.refundReason) return 'refunded';
+  // Only an order-level refund decision makes the order refunding/refunded.
+  // A leg-level reason such as race_loser must never do that: a winner may
+  // still settle the order. This matches the UI's refundRequested derivation.
+  if (allClosed && state.refundRequested) return 'refunded';
   if (state.settleRequested) return 'settling';
-  if (state.refundReason) return 'refunding';
+  if (state.refundRequested) return 'refunding';
   if (state.paymentSeen && state.assetSeen) return 'bothLocked';
   if (state.paymentSeen || state.assetSeen) return 'awaitingLock';
   return 'open';
 }
 
+/**
+ * The two origin-chain closure flags are authoritative, exactly as in the
+ * client's status derivation. Counting leg rows here made the API report
+ * `settling` forever when a lock was indexed before its order row and only one
+ * leg was ever persisted, while the UI already showed `Settled`. Do not require
+ * `legs.length >= 2`: a real settlement with a missing leg row is still closed.
+ */
 function allLegsClosed(state: FoldOrderState): boolean {
-  return state.legs.length >= 2 && state.legs.every((leg) => leg.state !== 'locked');
+  return state.paymentClosed && state.assetClosed;
+}
+
+function parseRefundReason(value: string | null | undefined): RefundReason | undefined {
+  const parsed = refundReasonSchema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
 }
 
 /**
@@ -183,6 +200,80 @@ export function foldEvent(previous: FoldOrderState, event: DecodedEvent, at = ne
     case 'order.state': {
       const stage = text(fields.stage) ?? 'UNKNOWN';
       const nonce = num(fields.nonce);
+      // A replayed older stage is an audit record, never a state regression.
+      if (nonce >= state.nonce) {
+        state.nonce = nonce;
+        state.stage = stage;
+        switch (stage) {
+          case 'CREATED':
+            state.status = 'open';
+            break;
+          case 'CANCELLED':
+            state.status = 'cancelled';
+            // Cancellation is a real order-level refund decision.
+            if (!state.settleRequested) state.refundRequested = true;
+            state.refundReason = 'cancelled';
+            break;
+          case 'PAYMENT_SEEN':
+            state.paymentSeen = true;
+            break;
+          case 'ASSET_SEEN':
+            state.assetSeen = true;
+            break;
+          case 'WINNER':
+            // The winning seller address is learned from the asset terminal
+            // event. WINNER is the normal winning path, not a race loser: only
+            // RACE_LOSER_REFUND establishes that reason.
+            break;
+          case 'SETTLE_REQUESTED':
+            // Terminal refund/cancel must never flip to settleRequested: the DB
+            // CHECK constraint forbids that combination. When the settle
+            // decision does apply it supersedes any earlier refund reason,
+            // otherwise a stale reason keeps the order labelled as refunding.
+            if (state.status !== 'refunded' && state.status !== 'cancelled') {
+              state.settleRequested = true;
+              state.refundReason = undefined;
+            }
+            break;
+          case 'REFUND_REQUESTED':
+            if (!state.settleRequested) state.refundRequested = true;
+            break;
+          case 'LATE_REFUND':
+            if (!state.settleRequested) {
+              state.refundRequested = true;
+              state.refundReason = 'late';
+            }
+            break;
+          case 'RACE_LOSER_REFUND':
+            // Leg-level: the losing seller's asset is returned, but the order
+            // itself may still settle with the winner. No refund decision flag.
+            if (!state.settleRequested) state.refundReason = 'race_loser';
+            break;
+          case 'EXPIRED':
+            if (!state.settleRequested) {
+              state.refundRequested = true;
+              state.refundReason = 'expired';
+            }
+            break;
+          case 'INVALID':
+            if (!state.settleRequested) {
+              state.refundRequested = true;
+              state.refundReason = 'invalid';
+            }
+            break;
+          case 'PAYMENT_CLOSED':
+            state.paymentClosed = true;
+            break;
+          case 'ASSET_CLOSED':
+            state.assetClosed = true;
+            break;
+          default:
+            break;
+        }
+        state.status = deriveStatus(state);
+      }
+      // Build the SSE draft AFTER the stage switch: a decision stage publishes
+      // the reason it just established, not the previous state's reason.
       drafts.push({
         type: 'order.state',
         orderId,
@@ -191,62 +282,11 @@ export function foldEvent(previous: FoldOrderState, event: DecodedEvent, at = ne
           orderId,
           stage,
           nonce,
+          refundReason: state.refundReason,
           txHash: event.txHash,
           blockNumber: event.blockNumber,
         },
       });
-      // A replayed older stage is an audit record, never a state regression.
-      if (nonce < state.nonce) break;
-      state.nonce = nonce;
-      state.stage = stage;
-      switch (stage) {
-        case 'CREATED':
-          state.status = 'open';
-          break;
-        case 'CANCELLED':
-          state.status = 'cancelled';
-          state.refundReason = 'cancelled';
-          break;
-        case 'PAYMENT_SEEN':
-          state.paymentSeen = true;
-          break;
-        case 'ASSET_SEEN':
-          state.assetSeen = true;
-          break;
-        case 'WINNER':
-          // The winning seller address is learned from the asset terminal event.
-          state.refundReason = state.refundReason ?? 'race_loser';
-          break;
-        case 'SETTLE_REQUESTED':
-          // Terminal refund/cancel must never flip to settleRequested: the DB
-          // CHECK constraint forbids that combination.
-          if (state.status !== 'refunded' && state.status !== 'cancelled') state.settleRequested = true;
-          break;
-        case 'REFUND_REQUESTED':
-          if (!state.settleRequested) state.refundRequested = true;
-          break;
-        case 'LATE_REFUND':
-          if (!state.settleRequested) state.refundReason = 'late';
-          break;
-        case 'RACE_LOSER_REFUND':
-          if (!state.settleRequested) state.refundReason = 'race_loser';
-          break;
-        case 'EXPIRED':
-          if (!state.settleRequested) state.refundReason = 'expired';
-          break;
-        case 'INVALID':
-          if (!state.settleRequested) state.refundReason = 'invalid';
-          break;
-        case 'PAYMENT_CLOSED':
-          state.paymentClosed = true;
-          break;
-        case 'ASSET_CLOSED':
-          state.assetClosed = true;
-          break;
-        default:
-          break;
-      }
-      state.status = deriveStatus(state);
       break;
     }
 
@@ -413,6 +453,8 @@ export function foldEvent(previous: FoldOrderState, event: DecodedEvent, at = ne
         leg.nonce = num(fields.nonce);
       }
       state.refundTxHashes.push(event.txHash);
+      // Last-resort fallback only: ?? never replaces a real stage reason
+      // (late/race_loser/cancelled/...) with the generic 'expired'.
       state.refundReason = state.refundReason ?? 'expired';
       state.status = deriveStatus(state);
       if (state.status === 'refunded' && !state.refundedAt) state.refundedAt = iso;
@@ -439,7 +481,7 @@ export function foldEvent(previous: FoldOrderState, event: DecodedEvent, at = ne
     }
 
     default:
-      // Cron10, venue registry and unknown topics are handled outside the fold.
+      // Cron100, venue registry and unknown topics are handled outside the fold.
       return { state, drafts, notifications, changed: false };
   }
 
@@ -463,6 +505,7 @@ export function stateFromRow(row: {
   paymentClosed: boolean; assetClosed: boolean; winner: string | null; assetLockCount: number;
   nonce: number; paymentRequestNonce: number; assetRequestNonce: number;
   protocolViolation: string | null;
+  refundReason?: string | null;
 }, legs: Array<{
   role: string; seller: string; token: string; amount: string; counterparty: string | null;
   chainId: number; txHash: string; state: string; nonce: number;
@@ -492,7 +535,11 @@ export function stateFromRow(row: {
     paymentRequestNonce: row.paymentRequestNonce,
     assetRequestNonce: row.assetRequestNonce,
     protocolViolation: row.protocolViolation ?? undefined,
-    refundReason: row.status === 'refunded' ? 'expired' : undefined,
+    // Historical rows have a blank reason until replay. The persisted reason
+    // always wins: the fallback is only for legacy refunded rows with no
+    // stored reason and must never overwrite a true stage reason with 'expired'.
+    refundReason: parseRefundReason(row.refundReason)
+      ?? (row.status === 'refunded' ? 'expired' : undefined),
     // Timestamp columns are order-level; terminal timestamps are carried in the
     // corresponding outbox payloads, not duplicated on the orders row.
     settledAt: undefined,

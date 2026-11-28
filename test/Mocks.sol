@@ -119,6 +119,29 @@ contract FeeOnTransferToken is ERC20 {
     }
 }
 
+/// @dev ERC-20 with NO inbound fee (transferFrom is inherited unchanged) but a 1% fee
+///      on outgoing `transfer`. Used to prove the escrows also verify the recipient's
+///      balance delta on release/refund: a token that only fees on exit cannot consume
+///      a leg and leave `lockedByToken` desynced.
+contract OutboundFeeToken is ERC20 {
+    uint256 public constant FEE_BPS = 100; // 1%
+    address public constant FEE_RECEIVER = address(0xFEE1);
+
+    constructor() ERC20("Outbound Fee Token", "OFT") {}
+
+    function mint(address to_, uint256 amount_) external {
+        _mint(to_, amount_);
+    }
+
+    function transfer(address to_, uint256 amount_) public override returns (bool) {
+        uint256 fee = amount_ / 10_000 * FEE_BPS;
+        uint256 net = amount_ - fee;
+        _transfer(_msgSender(), to_, net);
+        if (fee != 0) _transfer(_msgSender(), FEE_RECEIVER, fee);
+        return true;
+    }
+}
+
 /// @dev ERC-20 that re-enters an escrow's `lock` from inside `transferFrom`. The
 ///      armed call is arbitrary calldata so the same mock can attack either escrow.
 contract ReentrantToken is ERC20 {

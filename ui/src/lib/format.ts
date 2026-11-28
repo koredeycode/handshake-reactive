@@ -120,6 +120,16 @@ export function countdown(deadline: bigint | undefined | null, now: number): str
   return `${h}h ${m}m`
 }
 
+/** Human-readable age of a timestamp in ms (e.g. the last SSE frame). */
+export function formatAge(at?: number | null, now = Date.now()): string {
+  if (!at) return '—'
+  const seconds = Math.max(0, Math.round((now - at) / 1000))
+  if (seconds < 60) return `${seconds}s ago`
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s ago`
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m ago`
+  return `${Math.floor(seconds / 86400)}d ago`
+}
+
 export function deltaMs(from?: number | null, to?: number | null): string {
   if (!from || !to) return '—'
   const delta = to - from

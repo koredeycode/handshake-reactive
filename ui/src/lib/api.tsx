@@ -34,6 +34,10 @@ export interface ApiOrderRow {
   paymentRequestNonce: number
   assetRequestNonce: number
   protocolViolation: string | null
+  /** Added by the indexer/API agent; optional so older payloads still fold. */
+  refundReason?: string | null
+  /** True when the API reports an on-chain EXPIRED stage (not just a past deadline). */
+  expired?: boolean
   createdAt: string
   updatedAt: string
 }

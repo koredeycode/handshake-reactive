@@ -13,6 +13,12 @@ import {HandshakeSupport, IHandshakeReactive, VenueConfig} from "script/Handshak
 ///   4. RC.setVenue(chainId, paymentEscrow, assetEscrow) x3 — 19 subscriptions total
 ///   5. Optional funding via AUTO_FUND=1 (normally run script/Fund.s.sol next)
 ///
+/// @dev FUTURE-ONLY contract changes are post-Cron100-redeploy only. This script must
+///      NEVER create an order, call expire()/rescueNative(), or otherwise emit subscribed
+///      events: no test transaction until the indexer/backend cutover is verified FIRST
+///      (see personal/CRON100-RUNBOOK.md). setVenue() is the sole exception — it installs
+///      the 19 subscriptions and is required at deploy time. Nothing here sends a test order.
+///
 /// Run with Foundry's keystore account; no private key is read by this script:
 ///   forge script script/Deploy.s.sol:DeployScript --rpc-url $REACTIVE_RPC \
 ///     --account main --slow
@@ -89,7 +95,9 @@ contract DeployScript is Script {
         venues[1] = unichain.venue;
         venues[2] = sepolia.venue;
 
-        // 4. Subscriptions — one set of six topics per chain plus a single Cron10.
+        // 4. Subscriptions — one set of six topics per chain plus a single Cron100.
+        //    Venue registration is deploy-time plumbing only: no orders, no test txs,
+        //    no subscribed order/rescue events until the indexer cutover is verified.
         HandshakeSupport.VM.selectFork(lazyFork);
         for (uint256 i = 0; i < venues.length; ++i) {
             VenueConfig memory v = venues[i];

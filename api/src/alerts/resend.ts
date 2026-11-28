@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray } from 'drizzle-orm';
 import { Resend } from 'resend';
 import { createPublicClient, http } from 'viem';
 import { env, httpUrlFor } from '../config.js';
@@ -53,22 +53,50 @@ export function formatError(error: unknown): string {
 /** DB-free cooldown so an alert storm during a Supabase stall cannot refill the inbox. */
 const recentMemory = new Map<string, number>();
 
+function dedupeWindowMs(kind: string): number {
+  // WebSocket closes are expected with public RPCs; keep their alert cooldown
+  // longer than the generic window to avoid inbox spam.
+  return kind === 'indexer_ws' ? Math.max(env.ALERT_DEDUPE_MS, 30 * 60_000) : env.ALERT_DEDUPE_MS;
+}
+
+/**
+ * Seed the in-memory guard with alerts sent before this process started. A
+ * restart (or Fly redeploy) must not reopen a cooldown that is still active in
+ * `alert_deliveries`; the DB lookup remains the authoritative dedupe check.
+ */
+async function hydrateAlertCooldowns(): Promise<void> {
+  const since = new Date(Date.now() - dedupeWindowMs('indexer_ws'));
+  const rows = await db.select({
+    kind: alertDeliveries.kind,
+    dedupeKey: alertDeliveries.dedupeKey,
+    createdAt: alertDeliveries.createdAt,
+  }).from(alertDeliveries).where(and(
+    gt(alertDeliveries.createdAt, since),
+    inArray(alertDeliveries.status, ['sent', 'pending']),
+  )).orderBy(desc(alertDeliveries.createdAt)).limit(1000);
+  for (const row of rows) {
+    const at = new Date(row.createdAt).getTime();
+    if (!Number.isFinite(at)) continue;
+    const key = `${row.kind}:${row.dedupeKey}`;
+    if (at > (recentMemory.get(key) ?? 0)) recentMemory.set(key, at);
+  }
+  log.info({ hydrated: rows.length }, 'hydrated operator alert cooldowns from alert deliveries');
+}
+
 export async function sendOperatorAlert(input: AlertInput): Promise<void> {
   const mailer = client();
   if (!mailer || !env.OPERATOR_ALERT_EMAIL) {
     // No credentials (or no recipient): logs are the only alert channel.
     log.warn({ kind: input.kind, subject: input.subject }, 'operator alert (Resend not configured)');
-    metrics.alertEmail.inc({ status: 'skipped' });
+    metrics.alertEmail.inc({ status: 'skipped', kind: input.kind });
     return;
   }
   const dedupeKey = input.dedupeKey ?? input.subject;
-  // WebSocket closes are expected with public RPCs; keep their alert cooldown
-  // longer than the generic 10-minute window to avoid inbox spam.
-  const windowMs = input.kind === 'indexer_ws' ? Math.max(env.ALERT_DEDUPE_MS, 30 * 60_000) : env.ALERT_DEDUPE_MS;
+  const windowMs = dedupeWindowMs(input.kind);
   const memoryKey = `${input.kind}:${dedupeKey}`;
   const lastMemory = recentMemory.get(memoryKey) ?? 0;
   if (Date.now() - lastMemory < windowMs) {
-    log.debug({ kind: input.kind, dedupeKey }, 'operator alert deduped (memory)');
+    log.info({ kind: input.kind, dedupeKey }, 'operator alert deduped (memory)');
     return;
   }
 
@@ -86,7 +114,7 @@ export async function sendOperatorAlert(input: AlertInput): Promise<void> {
       ))
       .limit(1);
     if (recent.length > 0) {
-      log.debug({ kind: input.kind, dedupeKey }, 'operator alert deduped (database)');
+      log.info({ kind: input.kind, dedupeKey }, 'operator alert deduped (database)');
       return;
     }
     const [row] = await db.insert(alertDeliveries).values({
@@ -110,7 +138,7 @@ export async function sendOperatorAlert(input: AlertInput): Promise<void> {
       // The Resend SDK resolves with { error } instead of throwing on API
       // failures; without this check failed sends were recorded as sent.
       if (error) throw new Error(error.message);
-      log.debug({ kind: input.kind, providerMessageId: data?.id }, 'operator alert accepted by Resend');
+      log.info({ kind: input.kind, providerMessageId: data?.id }, 'operator alert accepted by Resend');
       recentMemory.set(memoryKey, Date.now());
       if (recentMemory.size > 500) {
         for (const [key, at] of recentMemory) if (Date.now() - at > windowMs) recentMemory.delete(key);
@@ -123,7 +151,7 @@ export async function sendOperatorAlert(input: AlertInput): Promise<void> {
           log.warn({ err: dbError, kind: input.kind }, 'alert delivery status update failed');
         });
       }
-      metrics.alertEmail.inc({ status: 'sent' });
+      metrics.alertEmail.inc({ status: 'sent', kind: input.kind });
       return;
     } catch (error) {
       lastError = error;
@@ -135,7 +163,7 @@ export async function sendOperatorAlert(input: AlertInput): Promise<void> {
       status: 'failed', attempts: 3, error: String(lastError instanceof Error ? lastError.message : lastError),
     }).where(eq(alertDeliveries.id, rowId)).catch(() => undefined);
   }
-  metrics.alertEmail.inc({ status: 'failed' });
+  metrics.alertEmail.inc({ status: 'failed', kind: input.kind });
   log.error({ err: lastError, kind: input.kind }, 'operator alert delivery failed');
 }
 
@@ -168,17 +196,10 @@ export async function alertDbFailure(error: unknown): Promise<void> {
   });
 }
 
-export async function alertOutboxBacklog(depth: number): Promise<void> {
-  await sendOperatorAlert({
-    kind: 'outbox_backlog', subject: `[handshake] Outbox backlog ${depth}`,
-    body: `${depth} undelivered outbox rows (threshold ${env.OUTBOX_BACKLOG_ALERT}).`,
-    dedupeKey: 'outbox-backlog',
-  });
-}
-
 /** The keeper phase is deferred, so keeper_state rows are empty/stale. Read the
  *  RC debt/reserves from chain instead of reporting misleading zero gauges. */
-const lasnaClient = createPublicClient({ transport: http(httpUrlFor(5318007)) });
+const LASNA_CHAIN_ID = 5318007;
+const lasnaClient = createPublicClient({ transport: http(httpUrlFor(LASNA_CHAIN_ID)) });
 
 async function readRcTelemetry(): Promise<{ debt: bigint; reserves: bigint } | undefined> {
   try {
@@ -195,6 +216,48 @@ async function readRcTelemetry(): Promise<{ debt: bigint; reserves: bigint } | u
     log.warn({ err: error }, 'RC telemetry read failed; keeping last gauge values');
     return undefined;
   }
+}
+
+/** Last successful on-chain RC reading, reused if a poll's RPC read is stale. */
+let lastRcTelemetry: { debt: bigint; reserves: bigint; at: number } | undefined;
+
+/**
+ * Publish a read-only `keeper.status` frame from on-chain RC telemetry. The UI
+ * marks a chain delayed when `debtWei > 0`; the Lasna chain id is always in an
+ * order's delayed-chain set, so one RC frame surfaces "Delayed · network" for
+ * every chain whose callback delivery the RC has paused. This is deliberately
+ * independent of the signing keeper: no `keeper_state` row is written here and
+ * no email is sent — it only appends to the outbox the SSE stream already uses.
+ */
+async function publishRcTelemetryStatus(
+  telemetry: { debt: bigint; reserves: bigint },
+  stale: boolean,
+): Promise<void> {
+  const [inserted] = await db.insert(outbox).values({
+    type: 'keeper.status' as SseEventType,
+    orderId: null,
+    wallets: [],
+    // This is an ephemeral status frame, not an undelivered business event:
+    // mark it delivered at insert so the once-per-minute telemetry rows cannot
+    // inflate the undelivered-outbox backlog. SSE replay uses outbox.id, not
+    // delivered_at, so replay and live frames are unaffected.
+    deliveredAt: new Date(),
+    payload: {
+      chainId: LASNA_CHAIN_ID,
+      target: REACTIVE_CONTRACT,
+      debtWei: telemetry.debt.toString(),
+      reservesWei: telemetry.reserves.toString(),
+      // Status only: `alert` flags a reading we could not refresh on this poll,
+      // not an action taken or an email sent.
+      action: stale ? 'alert' : 'none',
+    },
+  }).returning();
+  if (!inserted) return;
+  const event: PublishedEvent = {
+    id: inserted.id, type: 'keeper.status', orderId: null, wallets: [],
+    payload: inserted.payload, createdAt: inserted.createdAt,
+  };
+  bus.publish([event]);
 }
 
 /** Emits read-only keeper telemetry to the public stream and alerts on issues. */
@@ -234,29 +297,38 @@ export async function pollKeeperState(): Promise<void> {
   }
   const onchain = await readRcTelemetry();
   if (onchain) {
+    lastRcTelemetry = { ...onchain, at: Date.now() };
     metrics.rcDebtWei.set(Number(onchain.debt));
     metrics.rcReservesWei.set(Number(onchain.reserves));
   } else {
-    metrics.rcDebtWei.set(Number(rows.find((row) => row.chainId === 5318007)?.debtWei ?? 0));
-    metrics.rcReservesWei.set(Number(rows.find((row) => row.chainId === 5318007)?.reservesWei ?? 0));
+    metrics.rcDebtWei.set(Number(rows.find((row) => row.chainId === LASNA_CHAIN_ID)?.debtWei ?? 0));
+    metrics.rcReservesWei.set(Number(rows.find((row) => row.chainId === LASNA_CHAIN_ID)?.reservesWei ?? 0));
   }
   for (const row of rows) {
-    if (row.chainId !== 5318007) metrics.escrowDebtWei.set({ chain: String(row.chainId) }, Number(row.debtWei));
+    if (row.chainId !== LASNA_CHAIN_ID) metrics.escrowDebtWei.set({ chain: String(row.chainId) }, Number(row.debtWei));
+  }
+  // Publish even when the read is stale: keep the last known debt/reserves so a
+  // transient RPC failure does not clear the user-facing delay signal. Skip
+  // only when we have never had a successful reading (no fabricated zeros).
+  const telemetry = onchain ?? lastRcTelemetry;
+  if (telemetry) {
+    const stale = !onchain && lastRcTelemetry !== undefined;
+    if (stale && lastRcTelemetry) {
+      log.debug({ ageMs: Date.now() - lastRcTelemetry.at }, 'publishing stale RC telemetry status');
+    }
+    await publishRcTelemetryStatus(telemetry, stale);
   }
 }
 
 let monitorTimer: ReturnType<typeof setInterval> | undefined;
 
-/** Periodic operator checks: backlog, stale index, keeper state. */
+/** Periodic operator checks: stale index and keeper state. Outbox depth is an
+ *  append-only SSE cursor log with no delivery worker, so its size is not an
+ *  alertable backlog signal; it remains observable via /metrics and /health. */
 export function startAlertMonitor(): void {
   if (monitorTimer) return;
   const tick = async () => {
     try {
-      const depth = await db.select({ count: sql<number>`count(*)::int` }).from(outbox)
-        .where(sql`${outbox.deliveredAt} is null`);
-      const count = depth[0]?.count ?? 0;
-      metrics.outboxDepth.set(count);
-      if (count > env.OUTBOX_BACKLOG_ALERT) await alertOutboxBacklog(count);
       const age = indexerStats.maxLastEventAgeMs();
       if (age > env.STALE_EVENT_MS) await alertStaleEvents(age);
       await pollKeeperState();
@@ -266,7 +338,13 @@ export function startAlertMonitor(): void {
   };
   monitorTimer = setInterval(() => void tick(), 60_000);
   monitorTimer.unref();
-  void tick();
+  void (async () => {
+    await hydrateAlertCooldowns().catch((error) => {
+      metrics.dbFailures.inc();
+      log.warn({ err: error }, 'alert cooldown hydration failed; continuing with DB dedupe');
+    });
+    await tick();
+  })();
 }
 
 export function stopAlertMonitor(): void {

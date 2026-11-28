@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { usePublicClient } from 'wagmi'
 import { CHAIN_IDS, CHAIN_LABELS } from '../../lib/chains'
 import { configuredAddress } from '../../lib/config'
-import { cron10Event } from '../../lib/contracts'
+import { cron100Event } from '../../lib/contracts'
 import { formatAmount, formatDeadline, formatNative, truncate } from '../../lib/format'
 import {
   createTimestampResolver,
@@ -90,7 +90,7 @@ export default function HealthPanel() {
       const from = latest > 60n ? latest - 60n : 0n
       const logs = await fetchLogs(lasnaClient, {
         address: legacy,
-        event: cron10Event,
+        event: cron100Event,
         fromBlock: from,
         toBlock: latest,
         maxChunks: 1,
@@ -150,13 +150,17 @@ export default function HealthPanel() {
               hint="subscriptionCount() on the RC"
             />
             <Metric
-              label="Cron10 last seen"
+              label="Cron100 last seen (after cutover)"
               value={cron.data?.block ? `#${cron.data.block.toString()}` : '—'}
               hint={cron.data?.timestamp ? formatDeadline(BigInt(cron.data.timestamp)) : 'Not observed yet'}
             />
           </div>
-          <p className="mt-3 text-[10px] leading-relaxed text-ink-400">
-            Six subscriptions per registered venue plus Cron10. The count is read from the RC registry,
+          <p className="mt-3 text-[10px] leading-relaxed text-warn">
+            Prepared Cron100 label — this describes the post-cutover topic, not the live system, which still runs Cron10.
+            Do not read a tick here as current liveness.
+          </p>
+          <p className="mt-2 text-[10px] leading-relaxed text-ink-400">
+            Six subscriptions per registered venue plus Cron100 after cutover. The count is read from the RC registry,
             not guessed; log-based confirmation lives in the preflight script.
           </p>
           <div className="mt-3 space-y-1 font-mono text-[10px] text-ink-400">

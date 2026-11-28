@@ -19,7 +19,7 @@ const EVENT_TYPES = [
   'AssetReleased',
   'PaymentRefunded',
   'AssetRefunded',
-  'Cron10',
+  'Cron100',
 ]
 
 export default function EventLog() {
@@ -81,6 +81,10 @@ export default function EventLog() {
         </div>
       }
     >
+      <p className="mb-4 rounded-xl border border-warn/25 bg-warn-soft/60 px-3 py-2 text-[10px] leading-relaxed text-warn">
+        The <span className="font-medium">Cron100</span> event label is from the prepared post-cutover decoder. The live
+        deployment still emits Cron10 — do not read that filter as current on-chain behaviour.
+      </p>
       <div className="mb-4 flex flex-wrap gap-2">
         <input
           className={`${inputClass} min-w-[260px] flex-1`}

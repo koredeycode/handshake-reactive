@@ -1,8 +1,10 @@
-import { CHAIN_LABELS, type ChainKey } from '../lib/chains'
+import type { Hex } from 'viem'
+import { CHAIN_LABELS, addressUrl, type ChainKey } from '../lib/chains'
 import { isZeroAddress, truncate } from '../lib/format'
-import { buildHops, orderChainKeys } from '../lib/proofs'
+import { buildHops, buildProofMarkdown, orderChainKeys } from '../lib/proofs'
 import type { ProofChainKeys } from '../lib/logs'
-import { ChainMark, ChainPill, ConvergenceMark, Panel, TxLink } from './ui'
+import { displayRefundReason, refundEvidence, refundReasonKey, refundReasonLabel, refundReasonSentence } from '../lib/status'
+import { ChainMark, ChainPill, ConvergenceMark, CopyButton, ExternalLink, Notice, Panel, TxLink } from './ui'
 import type { Order, ProofData } from '../lib/types'
 
 function pendingText(key: string): string {
@@ -108,25 +110,87 @@ function ConvergenceDiagram({
 export default function HopTimeline({
   order,
   proof,
+  reason,
 }: {
   order?: Order | null
   proof?: ProofData | null
+  reason?: string | null
 }) {
   const chainKeys: ProofChainKeys = orderChainKeys(order)
   const hops = buildHops(order, proof, chainKeys)
   const done = hops.filter((hop) => hop.event).length
+  // A persisted reason alone is not proof of a refund — historical rows carry
+  // `race_loser` on healthy matched orders. Filter through the shared helper.
+  const shownReason = displayRefundReason(reason, refundEvidence(order, proof))
+  const reasonKey = refundReasonKey(shownReason)
+  const reasonLabel = refundReasonLabel(shownReason)
+  const winnerKnown = !!order?.winner && !isZeroAddress(order.winner)
+  const bothLegsSeen = !!order?.paymentSeen && !!order?.assetSeen
+  const refundHash = proof?.assetRefunded?.txHash ?? proof?.paymentRefunded?.txHash
+  const proofMarkdown = buildProofMarkdown(proof?.orderId ?? ('0x' as Hex), order, proof, chainKeys)
 
   return (
     <Panel
       title="Settlement trail"
-      subtitle="Two legs, one decision, two releases"
+      subtitle={`Two legs, one decision, two releases${reasonLabel ? ` · ${reasonLabel}` : ''}`}
       action={
-        <span className="tnum font-mono text-[11px] text-ink-400">
-          {done} of {hops.length} observed
-        </span>
+        <div className="flex flex-wrap items-center gap-2">
+          {reasonLabel && (
+            <span
+              title={refundReasonSentence(shownReason) ?? undefined}
+              className="rounded-full border border-warn/25 bg-warn-soft px-2 py-0.5 text-[10px] text-warn"
+            >
+              {reasonLabel}
+            </span>
+          )}
+          <span aria-live="polite" className="tnum font-mono text-[11px] text-ink-400">
+            {done} of {hops.length} observed
+          </span>
+          <CopyButton text={proofMarkdown} label="Copy proof bundle" />
+        </div>
       }
     >
       <ConvergenceDiagram proof={proof} order={order} chainKeys={chainKeys} />
+
+      <p className="mb-4 text-[11px] leading-relaxed text-ink-400">
+        Both callbacks are requested in one Lasna transaction. The two origin chains can show their release rows a second or two apart — wait for both before treating the trade as final.
+      </p>
+
+      {reasonKey === 'race_loser' && (
+        <Notice className="mb-5" title="You lost this race — your asset was returned">
+          <span>
+            Another seller locked the asset first and won the order. Your tASSET was refunded automatically on {CHAIN_LABELS[chainKeys.asset]}.
+          </span>
+          {winnerKnown && (
+            <span>
+              {' '}Winner:{' '}
+              <ExternalLink href={addressUrl(chainKeys.asset, order!.winner)} className="text-[11px]">
+                {truncate(order!.winner, 8, 6)}
+              </ExternalLink>
+              .
+            </span>
+          )}
+          {refundHash && (
+            <span>
+              {' '}Refund: <TxLink chain={chainKeys.asset} hash={refundHash} />.
+            </span>
+          )}
+        </Notice>
+      )}
+
+      {reasonKey === 'late' && (
+        <Notice className="mb-5" title="Your lock arrived too late — it was refunded">
+          <span>
+            The order was already settled or refunded when your lock reached the escrow, so the reactive contract returned it automatically on {CHAIN_LABELS[chainKeys.asset]}.
+          </span>
+          {refundHash && (
+            <span>
+              {' '}Refund: <TxLink chain={chainKeys.asset} hash={refundHash} />.
+            </span>
+          )}
+        </Notice>
+      )}
+
       <ol className="relative">
         {hops.map((hop, i) => {
           const event = hop.event
@@ -165,7 +229,9 @@ export default function HopTimeline({
                       className="max-w-[9rem] truncate"
                     />
                   ) : (
-                    <span className="font-sans text-[12px] text-ink-400">{pendingText(hop.key)}</span>
+                    <span className="font-sans text-[12px] text-ink-400">
+                      {decision && bothLegsSeen ? 'Decision in flight — waiting for callback' : pendingText(hop.key)}
+                    </span>
                   )}
                 </div>
               </div>

@@ -30,7 +30,6 @@ const envSchema = z.object({
   WALLET_CACHE_TTL_MS: z.coerce.number().int().positive().default(15_000),
   NOTIFICATION_COOLDOWN_MS: z.coerce.number().int().positive().default(300_000),
   ALERT_DEDUPE_MS: z.coerce.number().int().positive().default(600_000),
-  OUTBOX_BACKLOG_ALERT: z.coerce.number().int().positive().default(1000),
 
   /** Optional per-chain starting block for a fresh indexer_state row. */
   START_BLOCK_5318007: z.coerce.number().int().nonnegative().optional(),

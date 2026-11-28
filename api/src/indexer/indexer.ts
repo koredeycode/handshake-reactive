@@ -100,10 +100,10 @@ async function handleLog(chain: ChainConfig, raw: RawLog): Promise<void> {
   const event = decodeRawLog(raw, chain.chainId);
   if (!event || isForeignCallback(event)) return;
   try {
-    // Cron10 is a liveness heartbeat, not event history: never persist an
+    // Cron100 is a liveness heartbeat, not event history: never persist an
     // order_events row, publish to the bus or fold it into an order. Ignore
     // removed cron logs entirely so a reorg cannot corrupt indexer state.
-    if (event.name === 'cron10') {
+    if (event.name === 'cron100') {
       if (event.removed) return;
       await updateIndexerStatus(chain.chainId, 'live', event.blockNumber, event.blockHash);
     } else if (event.removed) {
