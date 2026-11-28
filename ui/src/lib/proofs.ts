@@ -44,6 +44,17 @@ export function orderChainKeys(order?: Order | null): ProofChainKeys {
 }
 
 const KIND_BY_STAGE: Record<string, ProofEventKind> = {
+  // Stages as emitted by the public API indexer (camelCase).
+  paymentLocked: 'paymentLocked',
+  assetLocked: 'assetLocked',
+  orderStateChanged: 'reactive',
+  callbackRequest: 'callbackRequest',
+  paymentReleased: 'paymentReleased',
+  assetReleased: 'assetReleased',
+  paymentRefunded: 'paymentRefunded',
+  assetRefunded: 'assetRefunded',
+  cron10: 'cron10',
+  // Legacy on-chain log names, kept for older cached payloads.
   PaymentLocked: 'paymentLocked',
   'lock.payment': 'paymentLocked',
   AssetLocked: 'assetLocked',
@@ -72,8 +83,10 @@ function kindForStage(stage: string, payload: Record<string, unknown>): ProofEve
 
 /** API-derived timeline replaces the old 8s `eth_getLogs` proof scans. */
 export function proofFromTimeline(orderId: string, timeline: ApiTimelineEvent[]): ProofData {
-  const events: ProofEvent[] = timeline.map((entry, index) => {
-    const kind = kindForStage(entry.stage, entry.payload ?? {}) ?? 'reactive'
+  // Unknown stages are dropped rather than mislabelled as the settlement decision.
+  const events: ProofEvent[] = timeline.flatMap((entry, index) => {
+    const kind = kindForStage(entry.stage, entry.payload ?? {})
+    if (!kind) return []
     const fields: Record<string, string> = {}
     for (const [key, value] of Object.entries(entry.payload ?? {})) {
       if (value === null || value === undefined) continue
@@ -93,13 +106,17 @@ export function proofFromTimeline(orderId: string, timeline: ApiTimelineEvent[])
     }
   })
   const first = (kind: ProofEventKind) => events.find((event) => event.kind === kind)
+  // The CREATED state change is also an `orderStateChanged`; prefer the actual
+  // SETTLE_REQUESTED event when showing the "Settlement decision" hash.
+  const decision = events.find((event) =>
+    event.kind === 'reactive' && event.fields?.stage === 'SETTLE_REQUESTED');
   const zero = 0n
   return {
     orderId: orderId as Hex,
     events,
     paymentLocked: first('paymentLocked'),
     assetLocked: first('assetLocked'),
-    reactive: first('reactive'),
+    reactive: decision ?? first('reactive'),
     paymentReleased: first('paymentReleased'),
     assetReleased: first('assetReleased'),
     paymentRefunded: first('paymentRefunded'),
