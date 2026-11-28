@@ -9,7 +9,7 @@ import {
 } from 'viem';
 import { env, httpUrlFor, wsUrlFor } from '../config.js';
 import { CHAIN_CONFIGS, REACTIVE_CONTRACT, type ChainConfig } from '../contracts.js';
-import { db } from '../db/client.js';
+import { backgroundDb as db } from '../db/client.js';
 import { indexerState } from '../db/schema.js';
 import { alertWsFailure, formatError } from '../alerts/resend.js';
 import { log } from '../lib/log.js';
@@ -61,6 +61,14 @@ function runBackfill(chain: ChainConfig): void {
   }).catch((error) => {
     log.error({ err: error, chainId: chain.chainId }, 'backfill task rejected');
   });
+}
+
+/** HTTP gap-fill progress is not a live subscription. Never report it as one:
+ *  otherwise /health says a chain is healthy while nothing is delivering events. */
+function markGapFillProgress(chainId: number): void {
+  if (indexerStats.get(chainId)?.status !== 'live') {
+    indexerStats.set(chainId, { status: 'gapFillOnly' });
+  }
 }
 
 function isRangeError(error: unknown): boolean {
@@ -184,10 +192,14 @@ export async function backfill(chain: ChainConfig): Promise<void> {
         }
         if (stopping) break;
         if (failed) {
-          if (lastGoodBlock >= from) await updateIndexerStatus(chain.chainId, 'live', lastGoodBlock);
+          if (lastGoodBlock >= from) {
+            await updateIndexerStatus(chain.chainId, 'live', lastGoodBlock);
+            markGapFillProgress(chain.chainId);
+          }
           break;
         }
         await updateIndexerStatus(chain.chainId, 'live', to);
+        markGapFillProgress(chain.chainId);
         scanned += logs.length;
         from = to + 1;
         // The provider may accept larger ranges once a few calls succeed.
@@ -285,7 +297,11 @@ export async function startIndexer(): Promise<void> {
     }
   }
   const socketOpened = (chain: ChainConfig) => {
-    indexerStats.set(chain.chainId, { status: 'live' });
+    // A socket opening does not mean we are subscribed. Lasna in particular
+    // opens a socket and then fails the logs subscription when the RC is idle.
+    const subscribed = subscriptions.has(chain.chainId)
+      && (indexerStats.get(chain.chainId)?.subscriptions ?? 0) > 0;
+    indexerStats.set(chain.chainId, { status: subscribed ? 'live' : 'gapFillOnly' });
   };
   for (const chain of CHAIN_CONFIGS) {
     const client = wsClients.get(chain.chainId);

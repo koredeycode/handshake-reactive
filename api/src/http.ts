@@ -42,7 +42,9 @@ export function createApp(): Hono {
       : 500;
     log.error({ err: error, errorId, path: c.req.path }, 'request failed');
     if (status >= 500) {
-      await alertApiError(c.req.path, errorId, error instanceof Error ? error.message : String(error)).catch(() => undefined);
+      // Fire-and-forget: a 5xx must return immediately even if the alert
+      // backend is also stalling. The alert path has its own short-timeout pool.
+      void alertApiError(c.req.path, errorId, error instanceof Error ? error.message : String(error)).catch(() => undefined);
     }
     return c.json({ error: status >= 500 ? 'internal_error' : error.message, errorId }, status as 500);
   });

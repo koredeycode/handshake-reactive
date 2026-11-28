@@ -1,7 +1,7 @@
 import { and, desc, eq, gt, inArray, sql } from 'drizzle-orm';
 import { Resend } from 'resend';
 import { env } from '../config.js';
-import { db } from '../db/client.js';
+import { alertDb as db } from '../db/client.js';
 import { alertDeliveries, keeperState, outbox } from '../db/schema.js';
 import { bus, type PublishedEvent } from '../lib/bus.js';
 import type { SseEventType } from '../lib/events.js';
@@ -40,6 +40,9 @@ export function formatError(error: unknown): string {
   return String(error);
 }
 
+/** DB-free cooldown so an alert storm during a Supabase stall cannot refill the inbox. */
+const recentMemory = new Map<string, number>();
+
 export async function sendOperatorAlert(input: AlertInput): Promise<void> {
   const mailer = client();
   if (!mailer || !env.OPERATOR_ALERT_EMAIL) {
@@ -52,24 +55,38 @@ export async function sendOperatorAlert(input: AlertInput): Promise<void> {
   // WebSocket closes are expected with public RPCs; keep their alert cooldown
   // longer than the generic 10-minute window to avoid inbox spam.
   const windowMs = input.kind === 'indexer_ws' ? Math.max(env.ALERT_DEDUPE_MS, 30 * 60_000) : env.ALERT_DEDUPE_MS;
-  const since = new Date(Date.now() - windowMs);
-  const recent = await db.select({ id: alertDeliveries.id }).from(alertDeliveries)
-    .where(and(
-      eq(alertDeliveries.kind, input.kind),
-      eq(alertDeliveries.dedupeKey, dedupeKey),
-      gt(alertDeliveries.createdAt, since),
-      inArray(alertDeliveries.status, ['sent', 'pending']),
-    ))
-    .limit(1);
-  if (recent.length > 0) {
-    log.debug({ kind: input.kind, dedupeKey }, 'operator alert deduped');
+  const memoryKey = `${input.kind}:${dedupeKey}`;
+  const lastMemory = recentMemory.get(memoryKey) ?? 0;
+  if (Date.now() - lastMemory < windowMs) {
+    log.debug({ kind: input.kind, dedupeKey }, 'operator alert deduped (memory)');
     return;
   }
 
-  const [row] = await db.insert(alertDeliveries).values({
-    kind: input.kind, dedupeKey, subject: input.subject, status: 'pending', attempts: 0,
-  }).returning({ id: alertDeliveries.id });
-  if (!row) return;
+  // Dedupe and bookkeeping are on the dedicated alert pool and are strictly
+  // best-effort: a DB outage must never suppress the email itself.
+  let rowId: number | undefined;
+  try {
+    const since = new Date(Date.now() - windowMs);
+    const recent = await db.select({ id: alertDeliveries.id }).from(alertDeliveries)
+      .where(and(
+        eq(alertDeliveries.kind, input.kind),
+        eq(alertDeliveries.dedupeKey, dedupeKey),
+        gt(alertDeliveries.createdAt, since),
+        inArray(alertDeliveries.status, ['sent', 'pending']),
+      ))
+      .limit(1);
+    if (recent.length > 0) {
+      log.debug({ kind: input.kind, dedupeKey }, 'operator alert deduped (database)');
+      return;
+    }
+    const [row] = await db.insert(alertDeliveries).values({
+      kind: input.kind, dedupeKey, subject: input.subject, status: 'pending', attempts: 0,
+    }).returning({ id: alertDeliveries.id });
+    rowId = row?.id;
+  } catch (error) {
+    metrics.dbFailures.inc();
+    log.warn({ err: error, kind: input.kind }, 'alert dedupe unavailable; sending without DB record');
+  }
 
   let lastError: unknown;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
@@ -84,9 +101,18 @@ export async function sendOperatorAlert(input: AlertInput): Promise<void> {
       // failures; without this check failed sends were recorded as sent.
       if (error) throw new Error(error.message);
       log.debug({ kind: input.kind, providerMessageId: data?.id }, 'operator alert accepted by Resend');
-      await db.update(alertDeliveries).set({
-        status: 'sent', attempts: attempt, sentAt: new Date(), error: null,
-      }).where(eq(alertDeliveries.id, row.id));
+      recentMemory.set(memoryKey, Date.now());
+      if (recentMemory.size > 500) {
+        for (const [key, at] of recentMemory) if (Date.now() - at > windowMs) recentMemory.delete(key);
+      }
+      if (rowId !== undefined) {
+        await db.update(alertDeliveries).set({
+          status: 'sent', attempts: attempt, sentAt: new Date(), error: null,
+        }).where(eq(alertDeliveries.id, rowId)).catch((dbError) => {
+          metrics.dbFailures.inc();
+          log.warn({ err: dbError, kind: input.kind }, 'alert delivery status update failed');
+        });
+      }
       metrics.alertEmail.inc({ status: 'sent' });
       return;
     } catch (error) {
@@ -94,9 +120,11 @@ export async function sendOperatorAlert(input: AlertInput): Promise<void> {
       if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, backoffDelay(attempt, 1000, 10_000)));
     }
   }
-  await db.update(alertDeliveries).set({
-    status: 'failed', attempts: 3, error: String(lastError instanceof Error ? lastError.message : lastError),
-  }).where(eq(alertDeliveries.id, row.id));
+  if (rowId !== undefined) {
+    await db.update(alertDeliveries).set({
+      status: 'failed', attempts: 3, error: String(lastError instanceof Error ? lastError.message : lastError),
+    }).where(eq(alertDeliveries.id, rowId)).catch(() => undefined);
+  }
   metrics.alertEmail.inc({ status: 'failed' });
   log.error({ err: lastError, kind: input.kind }, 'operator alert delivery failed');
 }

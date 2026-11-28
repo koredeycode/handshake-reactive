@@ -4,7 +4,7 @@ import { bus, type PublishedEvent } from '../lib/bus.js';
 import type { OutboxDraft, OutboxPayload, SseEventType, StoredOrderEvent } from '../lib/events.js';
 import { log } from '../lib/log.js';
 import { metrics } from '../lib/metrics.js';
-import { db } from '../db/client.js';
+import { backgroundDb as db } from '../db/client.js';
 import {
   indexerState,
   orderEvents,

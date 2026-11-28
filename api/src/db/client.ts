@@ -6,21 +6,39 @@ import { log } from '../lib/log.js';
 import { metrics } from '../lib/metrics.js';
 import * as schema from './schema.js';
 
-/** `prepare: false` keeps the pooler (Supabase transaction mode) happy. */
-export const pg = postgres(env.DATABASE_URL, {
-  max: 5,
-  idle_timeout: 20,
-  connect_timeout: 10,
-  // A silent server/network must not pin a pool connection for hours. Postgres.js
-  // cancels after 30s and closes the connection if the cancel is unanswered,
-  // which keeps /health and /orders responsive instead of hanging indefinitely.
-  query_timeout: 30,
-  queue_timeout: 10,
-  prepare: false,
-  onnotice: () => undefined,
-});
+/**
+ * Three isolated pools. A silent Supabase query on one workload must never
+ * starve an unrelated one — that was the cause of the 7h hang and the 5xx
+ * bursts (request queries timing out behind indexer/alert work).
+ *
+ * `prepare: false` keeps the pooler (Supabase transaction mode) happy.
+ */
+function makePool(name: string, max: number, queryTimeout: number, queueTimeout: number) {
+  return postgres(env.DATABASE_URL, {
+    max,
+    idle_timeout: 20,
+    connect_timeout: 10,
+    query_timeout: queryTimeout,
+    queue_timeout: queueTimeout,
+    prepare: false,
+    onnotice: () => undefined,
+    connection: { application_name: `handshake-api-${name}` },
+  });
+}
 
-export const db = drizzle(pg, { schema });
+/** User-facing REST/SSE reads. Short timeouts: fail fast, never hang a client. */
+export const requestPg = makePool('request', 4, 15, 5);
+/** Indexer writes, gap backfill, retention, bootstrap. Longer timeouts. */
+export const backgroundPg = makePool('background', 2, 90, 15);
+/** Operator alert dedupe writes. Own pool so a 5xx cannot amplify itself. */
+export const alertPg = makePool('alerts', 2, 10, 5);
+
+export const db = drizzle(requestPg, { schema });
+export const backgroundDb = drizzle(backgroundPg, { schema });
+export const alertDb = drizzle(alertPg, { schema });
+
+/** Kept as an alias for callers that still reference the raw request pool. */
+export const pg = requestPg;
 
 export async function dbPing(): Promise<boolean> {
   try {
@@ -34,5 +52,9 @@ export async function dbPing(): Promise<boolean> {
 }
 
 export async function closeDb(): Promise<void> {
-  await pg.end({ timeout: 5 });
+  await Promise.allSettled([
+    requestPg.end({ timeout: 5 }),
+    backgroundPg.end({ timeout: 5 }),
+    alertPg.end({ timeout: 5 }),
+  ]);
 }

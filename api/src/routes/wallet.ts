@@ -13,6 +13,7 @@ import { env, httpUrlFor } from '../config.js';
 import { CHAIN_BY_ID, MULTICALL3, multicall3Abi, tokenMetadataAbi } from '../contracts.js';
 import { db } from '../db/client.js';
 import { tokens, walletCache } from '../db/schema.js';
+import { log } from '../lib/log.js';
 import { metrics } from '../lib/metrics.js';
 
 export const walletRoutes = new Hono();
@@ -49,26 +50,38 @@ type TokenBalance = {
 
 type ChainBalances = { native: string; tokens: TokenBalance[] };
 
+/** The cache is an optimization only: any DB failure falls through to RPC. */
 async function cachedBalance(wallet: string, chainId: number, token: string, force: boolean): Promise<string | undefined> {
   if (force) return undefined;
-  const [row] = await db.select().from(walletCache)
-    .where(and(
-      eq(walletCache.wallet, wallet),
-      eq(walletCache.chainId, chainId),
-      eq(walletCache.token, token),
-    )).limit(1);
-  if (!row) return undefined;
-  if (Date.now() - new Date(row.fetchedAt).getTime() > env.WALLET_CACHE_TTL_MS) return undefined;
-  metrics.walletCacheReads.inc({ result: 'hit' });
-  return row.balance;
+  try {
+    const [row] = await db.select().from(walletCache)
+      .where(and(
+        eq(walletCache.wallet, wallet),
+        eq(walletCache.chainId, chainId),
+        eq(walletCache.token, token),
+      )).limit(1);
+    if (!row) return undefined;
+    if (Date.now() - new Date(row.fetchedAt).getTime() > env.WALLET_CACHE_TTL_MS) return undefined;
+    metrics.walletCacheReads.inc({ result: 'hit' });
+    return row.balance;
+  } catch (error) {
+    metrics.dbFailures.inc();
+    log.warn({ err: error, wallet, chainId, token }, 'wallet cache read failed; using RPC');
+    return undefined;
+  }
 }
 
 async function saveCache(wallet: string, chainId: number, token: string, balance: string, blockNumber: number): Promise<void> {
-  await db.insert(walletCache).values({ wallet, chainId, token, balance, blockNumber })
-    .onConflictDoUpdate({
-      target: [walletCache.wallet, walletCache.chainId, walletCache.token],
-      set: { balance, blockNumber, fetchedAt: new Date() },
-    });
+  try {
+    await db.insert(walletCache).values({ wallet, chainId, token, balance, blockNumber })
+      .onConflictDoUpdate({
+        target: [walletCache.wallet, walletCache.chainId, walletCache.token],
+        set: { balance, blockNumber, fetchedAt: new Date() },
+      });
+  } catch (error) {
+    metrics.dbFailures.inc();
+    log.warn({ err: error, wallet, chainId, token }, 'wallet cache write failed; balance still returned');
+  }
 }
 
 async function balancesForChain(wallet: string, chainId: number, force: boolean): Promise<{ data: ChainBalances; blockNumber: number }> {

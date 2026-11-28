@@ -25,7 +25,10 @@ healthRoutes.get('/health', async (c) => {
   const lastEventAgeMs = indexerStats.maxLastEventAgeMs();
   const depth = await outboxDepth();
   const keeperFreshnessMs = keeper?.lastCheckedAt ? Date.now() - new Date(keeper.lastCheckedAt).getTime() : null;
-  const ok = database && indexer.every((chain) => chain.status === 'live' || chain.status === 'connecting');
+  // `live` requires an actual subscription; HTTP gap-fill alone is reported as
+  // `gapFillOnly` and must not make the service look healthy.
+  const ok = database && indexer.every((chain) =>
+    chain.status === 'connecting' || (chain.status === 'live' && chain.subscriptions > 0));
   return c.json({
     ok,
     database,

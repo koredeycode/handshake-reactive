@@ -1,6 +1,6 @@
 import { resolve } from 'node:path';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
-import { closeDb, db } from './client.js';
+import { backgroundDb as db, closeDb } from './client.js';
 import { log } from '../lib/log.js';
 
 async function main(): Promise<void> {

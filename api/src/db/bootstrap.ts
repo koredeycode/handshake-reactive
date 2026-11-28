@@ -1,7 +1,7 @@
 import { lt, sql } from 'drizzle-orm';
 import { env, httpUrlFor, wsUrlFor } from '../config.js';
 import { CHAIN_CONFIGS, CURATED_TOKENS, DEPLOYMENTS } from '../contracts.js';
-import { db } from './client.js';
+import { backgroundDb as db } from './client.js';
 import { alertDeliveries, chains, keeperActions, orderEvents, outbox, tokens, venues, walletCache } from './schema.js';
 import { log } from '../lib/log.js';
 
