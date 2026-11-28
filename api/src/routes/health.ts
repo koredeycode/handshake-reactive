@@ -1,9 +1,8 @@
 import { sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db, dbPing } from '../db/client.js';
-import { keeperState } from '../db/schema.js';
+import { keeperState, outbox } from '../db/schema.js';
 import { indexerStats } from '../indexer/stats.js';
-import { outboxDepth } from '../indexer/ingest.js';
 import { activeSseClientCount, eventLoopLagMs, walletCacheHitRatio } from '../lib/metrics.js';
 
 export const healthRoutes = new Hono();
@@ -30,7 +29,14 @@ healthRoutes.get('/health', async (c) => {
   const keeperRows = await withDeadline(db.select({
     lastCheckedAt: sql<Date>`max(${keeperState.lastCheckedAt})`,
   }).from(keeperState), 3_000);
-  const depth = await withDeadline(outboxDepth(), 5_000);
+  // Outbox depth must reflect the user-facing (request) pool, not the
+  // background pool that the indexer may be stalling.
+  const depth = await withDeadline(
+    db.select({ count: sql<number>`count(*)::int` }).from(outbox)
+      .where(sql`${outbox.deliveredAt} is null`)
+      .then((rows) => rows[0]?.count ?? 0),
+    3_000,
+  );
   const database = ping === true && keeperRows !== undefined && depth !== undefined;
   const keeper = keeperRows?.[0];
   const indexer = indexerStats.all();

@@ -28,8 +28,9 @@ function makePool(name: string, max: number, queryTimeout: number, queueTimeout:
 
 /** User-facing REST/SSE reads. Short timeouts: fail fast, never hang a client. */
 export const requestPg = makePool('request', 4, 15, 5);
-/** Indexer writes, gap backfill, retention, bootstrap. Longer timeouts. */
-export const backgroundPg = makePool('background', 2, 90, 15);
+/** Indexer writes, gap backfill, retention, bootstrap. Bounded so a Supabase
+ *  stall cannot pin these connections for minutes. */
+export const backgroundPg = makePool('background', 2, 30, 10);
 /** Operator alert dedupe writes. Own pool so a 5xx cannot amplify itself. */
 export const alertPg = makePool('alerts', 2, 10, 5);
 
