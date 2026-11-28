@@ -35,9 +35,17 @@ export type AlertInput = {
 export function formatError(error: unknown): string {
   if (error instanceof Error) return error.message || error.name;
   if (error && typeof error === 'object') {
-    const candidate = error as { message?: unknown; error?: { message?: unknown } };
-    const inner = candidate.error?.message ?? candidate.message;
-    if (typeof inner === 'string' && inner.length > 0) return inner;
+    const candidate = error as {
+      message?: unknown;
+      error?: { message?: unknown; name?: unknown };
+    };
+    const inner = candidate.error;
+    if (inner) {
+      if (inner instanceof Error) return inner.message || inner.name;
+      if (typeof inner.message === 'string' && inner.message.length > 0) return inner.message;
+      if (typeof inner.name === 'string' && inner.name.length > 0) return inner.name;
+    }
+    if (typeof candidate.message === 'string' && candidate.message.length > 0) return candidate.message;
   }
   return String(error);
 }
