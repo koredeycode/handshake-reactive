@@ -67,7 +67,13 @@ function runBackfill(chain: ChainConfig): void {
 /** HTTP gap-fill progress is not a live subscription. Never report it as one:
  *  otherwise /health says a chain is healthy while nothing is delivering events. */
 function markGapFillProgress(chainId: number): void {
-  if (indexerStats.get(chainId)?.status !== 'live') {
+  // A subscription object still exists during viem's internal reconnect; a
+  // successful gap-fill proves we are receiving data, so restore `live`.
+  // Only chains that truly have no subscription are gap-fill-only.
+  const subscribed = subscriptions.has(chainId) && (indexerStats.get(chainId)?.subscriptions ?? 0) > 0;
+  if (subscribed) {
+    if (indexerStats.get(chainId)?.status !== 'live') indexerStats.set(chainId, { status: 'live' });
+  } else {
     indexerStats.set(chainId, { status: 'gapFillOnly' });
   }
 }
@@ -314,7 +320,11 @@ export async function startIndexer(): Promise<void> {
     void client.transport.getRpcClient().then((rpc) => {
       rpc.socket.addEventListener?.('open', () => socketOpened(chain));
       rpc.socket.addEventListener?.('close', () => {
-        indexerStats.set(chain.chainId, { status: 'reconnecting' });
+        // viem reopens the socket internally. Only a lost subscription (not a
+        // routine public-RPC socket close) is genuinely gap-fill-only.
+        if (!subscriptions.has(chain.chainId)) {
+          indexerStats.set(chain.chainId, { status: 'gapFillOnly' });
+        }
       });
     }).catch(() => undefined);
   }
