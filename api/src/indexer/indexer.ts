@@ -18,6 +18,7 @@ import { backoffDelay, isRateLimitError, withRetry } from '../lib/retry.js';
 import { decodeRawLog, type DecodedEvent, type RawLog } from './decode.js';
 import {
   emitTransferBalances,
+  flushAllIndexerStatus,
   handleReorg,
   ingestLog,
   reconcilePartialOrderTerms,
@@ -47,7 +48,7 @@ const subscriptions = new Map<number, { unsubscribe: () => Promise<unknown> }>()
 const backfilling = new Set<number>();
 /** Tracked fire-and-forget gap fills so shutdown can wait for their DB work. */
 const backfillTasks = new Set<Promise<void>>();
-let reconcileTimer: ReturnType<typeof setInterval> | undefined;
+const reconcileTimers = new Map<number, ReturnType<typeof setTimeout>>();
 let started = false;
 let stopping = false;
 
@@ -317,18 +318,30 @@ export async function startIndexer(): Promise<void> {
       });
     }).catch(() => undefined);
   }
-  reconcileTimer = setInterval(() => {
-    for (const chain of CHAIN_CONFIGS) runBackfill(chain);
-  }, 5 * 60_000);
-  reconcileTimer.unref();
+  // Stagger chains and add jitter so four reconciles never hit the DB at once.
+  // Lasna has no working WSS subscription, so it reconciles every minute.
+  CHAIN_CONFIGS.forEach((chain, index) => scheduleReconcile(chain, index));
+}
+
+function scheduleReconcile(chain: ChainConfig, index: number): void {
+  const intervalMs = chain.chainId === 5318007 ? 60_000 : 5 * 60_000;
+  const delay = intervalMs + index * 15_000 + Math.floor(Math.random() * 15_000);
+  const timer = setTimeout(() => {
+    reconcileTimers.delete(chain.chainId);
+    if (stopping) return;
+    runBackfill(chain);
+    scheduleReconcile(chain, index);
+  }, delay);
+  reconcileTimers.set(chain.chainId, timer);
+  timer.unref();
 }
 
 export async function stopIndexer(): Promise<void> {
   // Signal first so no new gap fill or log can start while the pool is alive,
   // then drain the ones already in flight before index.ts closes the DB.
   stopping = true;
-  if (reconcileTimer) clearInterval(reconcileTimer);
-  reconcileTimer = undefined;
+  for (const timer of reconcileTimers.values()) clearTimeout(timer);
+  reconcileTimers.clear();
   for (const [chainId, subscription] of subscriptions) {
     await subscription.unsubscribe().catch(() => undefined);
     indexerStats.set(chainId, { subscriptions: 0, status: 'connecting' });
@@ -340,5 +353,6 @@ export async function stopIndexer(): Promise<void> {
   wsClients.clear();
   await Promise.allSettled([...backfillTasks]);
   backfillTasks.clear();
+  await Promise.allSettled(flushAllIndexerStatus());
   started = false;
 }
