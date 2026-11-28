@@ -15,7 +15,7 @@ import { venueOfOrder } from '../lib/venue'
 import type { Leg, Order } from '../lib/types'
 import ConfirmModal from './ConfirmModal'
 import WriteButton from './WriteButton'
-import { ChainPill, ExternalLink, TokenMark } from './ui'
+import { ChainPill, ExternalLink, Skeleton, TokenMark } from './ui'
 
 function stateLabel(state?: bigint | null): string {
   if (state === undefined || state === null) return 'Not locked'
@@ -45,6 +45,7 @@ export default function LegCard({
   const chainKey = venue.chainKey
   const escrow = venue.escrow
   const display = useOrderTokenDisplay(order, kind)
+  const metadataReady = display.metadataReady
   const client = logClient(usePublicClient({ chainId: CHAIN_IDS[chainKey] })) as unknown as {
     waitForTransactionReceipt: (args: { hash: Hex }) => Promise<unknown>
   } | null
@@ -65,7 +66,9 @@ export default function LegCard({
   const insufficient = balance.data !== undefined && balance.data !== null && balance.data < amount
   const needsApproval = allowance.data !== undefined && allowance.data !== null && allowance.data < amount
   const decimals = display.decimals
-  const symbol = display.symbol
+  // Until the catalog resolves, avoid putting a derived address-symbol in any
+  // button or toast label; the actions are disabled during that window.
+  const symbol = metadataReady ? display.symbol : 'token'
 
   // Canonical venue-aware terms hash from the one shared implementation.
   const termsHash = computeTermsHash(order)
@@ -140,6 +143,7 @@ export default function LegCard({
             kind={isPayment ? 'payment' : 'asset'}
             mark={display.mark}
             color={display.color}
+            loading={!metadataReady}
           />
           <div>
             <h3 className="text-sm font-medium text-ink-900">{isPayment ? 'Payment leg' : 'Asset leg'}</h3>
@@ -170,7 +174,7 @@ export default function LegCard({
                 ? `Sellers deliver ${symbol}`
                 : `Seller delivers ${symbol}`}
         </span>
-        {!display.verified && (
+        {metadataReady && !display.missing && !display.verified && (
           <span className="rounded-full border border-warn/25 bg-warn-soft px-2 py-0.5 text-[10px] text-warn">
             {UNVERIFIED_LABEL}
           </span>
@@ -179,7 +183,11 @@ export default function LegCard({
 
       <div className="mt-3 flex flex-wrap items-end justify-between gap-3">
         <div className="tnum font-mono text-[28px] font-medium leading-none text-ink-900">
-          {formatAmount(leg ? leg.amount : amount, decimals, symbol)}
+          {metadataReady ? (
+            formatAmount(leg ? leg.amount : amount, decimals, display.symbol)
+          ) : (
+            <Skeleton className="h-7 w-32" />
+          )}
         </div>
         <ChainPill chain={chainKey} />
       </div>
@@ -211,13 +219,19 @@ export default function LegCard({
         <div>
           <dt className="text-[11px] text-ink-400">Your balance</dt>
           <dd className="tnum mt-1 font-mono text-xs text-ink-700">
-            {balance.data !== undefined && balance.data !== null ? formatAmount(balance.data, decimals, symbol) : '—'}
+            {!metadataReady ? (
+              <Skeleton className="h-3 w-20" />
+            ) : balance.data !== undefined && balance.data !== null ? (
+              formatAmount(balance.data, decimals, display.symbol)
+            ) : (
+              '—'
+            )}
           </dd>
         </div>
         <div className="col-span-2">
           <dt className="text-[11px] text-ink-400">Token · {display.chainLabel}</dt>
-          <dd className="tnum mt-1 break-all font-mono text-[10px] text-ink-500" title={display.address ?? undefined}>
-            {display.address ?? '—'}
+          <dd className="tnum mt-1 break-all font-mono text-[10px] text-ink-500" title={metadataReady ? (display.address ?? undefined) : undefined}>
+            {metadataReady ? (display.address ?? '—') : <Skeleton className="h-3 w-full max-w-[240px]" />}
           </dd>
         </div>
         <div className="col-span-2">
@@ -240,7 +254,7 @@ export default function LegCard({
           <WriteButton
             targetChain={chainKey}
             onClick={() => setConfirm('approve')}
-            disabled={isPending || !escrow || !canLockByMe}
+            disabled={isPending || !escrow || !canLockByMe || !metadataReady}
             primary
           >
             {isPending ? 'Confirming' : `Approve ${symbol}`}
@@ -249,7 +263,7 @@ export default function LegCard({
           <WriteButton
             targetChain={chainKey}
             onClick={() => setConfirm('lock')}
-            disabled={lockDisabled || isPending}
+            disabled={lockDisabled || isPending || !metadataReady}
             title={lockTitle}
             primary
           >

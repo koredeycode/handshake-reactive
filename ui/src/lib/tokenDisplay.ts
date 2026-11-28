@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import type { Hex } from 'viem'
+import bundledTokenCatalog from '../../public/tokens.json'
 import { fetchTokens, useApiBaseUrl, type ApiTokenRow } from './api'
 import { CHAIN_LABELS, chainKeyFromId, type ChainKey, type TradingChainKey } from './chains'
 import { SEPOLIA_TOKEN_ADDRESSES } from './config'
@@ -28,41 +29,50 @@ export interface TokenSelection extends TokenDisplayEntry {
   address: Hex
 }
 
-const EMPTY: TokenRegistry = { base: {}, unichain: {}, sepolia: {} }
-
-async function loadTokens(): Promise<TokenRegistry> {
-  try {
-    const res = await fetch(`${import.meta.env.BASE_URL}tokens.json`, { cache: 'no-cache' })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    const json = (await res.json()) as Partial<TokenRegistry>
-    const registry: TokenRegistry = {
-      base: json.base ?? {},
-      unichain: json.unichain ?? {},
-      sepolia: json.sepolia ?? {},
-    }
-    for (const list of Object.values(registry)) {
-      for (const entry of Object.values(list)) entry.verified = true
-    }
-    // The Sepolia entries in tokens.json are placeholders. Once the deploy
-    // manifest addresses are configured, remap the same display metadata.
-    const sepolia = { ...registry.sepolia }
-    const overrides: Array<[string, string]> = [
-      ['tUSD', SEPOLIA_TOKEN_ADDRESSES.tUSD],
-      ['tASSET', SEPOLIA_TOKEN_ADDRESSES.tASSET],
-    ]
-    for (const [symbol, address] of overrides) {
-      if (!address) continue
-      const found = Object.entries(sepolia).find(([, entry]) => entry.symbol === symbol)
-      if (!found) continue
-      if (found[0].toLowerCase() !== address.toLowerCase()) delete sepolia[found[0]]
-      sepolia[address] = { ...found[1], placeholder: false }
-    }
-    registry.sepolia = sepolia
-    return registry
-  } catch {
-    return EMPTY
-  }
+/** Curated entries are bundled at build time, so no network read is needed. */
+type BundledTokenEntry = Omit<TokenDisplayEntry, 'verified'>
+interface BundledTokenCatalog {
+  base?: Record<string, BundledTokenEntry>
+  unichain?: Record<string, BundledTokenEntry>
+  sepolia?: Record<string, BundledTokenEntry>
 }
+const BUNDLED_CATALOG = bundledTokenCatalog as BundledTokenCatalog
+
+/**
+ * Build a fresh, fully curated registry from the bundled catalog. Used both as
+ * the query's initialData and inside queryFn, so the API merge always starts
+ * from the same complete baseline (and never mutates the imported JSON).
+ */
+function staticRegistry(): TokenRegistry {
+  const listOf = (entries?: Record<string, BundledTokenEntry>): Record<string, TokenDisplayEntry> =>
+    Object.fromEntries(
+      Object.entries(entries ?? {}).map(([address, entry]) => [address, { ...entry, verified: true }]),
+    )
+  const registry: TokenRegistry = {
+    base: listOf(BUNDLED_CATALOG.base),
+    unichain: listOf(BUNDLED_CATALOG.unichain),
+    sepolia: listOf(BUNDLED_CATALOG.sepolia),
+  }
+  // The Sepolia entries in tokens.json are placeholders. Once the deploy
+  // manifest addresses are configured, remap the same display metadata.
+  const sepolia = { ...registry.sepolia }
+  const overrides: Array<[string, string]> = [
+    ['tUSD', SEPOLIA_TOKEN_ADDRESSES.tUSD],
+    ['tASSET', SEPOLIA_TOKEN_ADDRESSES.tASSET],
+  ]
+  for (const [symbol, address] of overrides) {
+    if (!address) continue
+    const found = Object.entries(sepolia).find(([, entry]) => entry.symbol === symbol)
+    if (!found) continue
+    if (found[0].toLowerCase() !== address.toLowerCase()) delete sepolia[found[0]]
+    sepolia[address] = { ...found[1], placeholder: false }
+  }
+  registry.sepolia = sepolia
+  return registry
+}
+
+/** Shared immutable baseline: bundled metadata is correct from first paint. */
+const CURATED_REGISTRY = staticRegistry()
 
 /**
  * Curated metadata from tokens.json plus the persisted API catalog. Custom
@@ -78,14 +88,16 @@ function mergeApiCatalog(staticRegistry: TokenRegistry, rows: ApiTokenRow[]): To
   for (const row of rows) {
     const chain = chainKeyFromId(row.chainId)
     if (!chain || chain === 'lasna' || !/^0x[0-9a-fA-F]{40}$/.test(row.address)) continue
-    const previous = Object.entries(merged[chain]).find(([key]) => key.toLowerCase() === row.address.toLowerCase())?.[1]
-    const symbol = row.symbol ?? previous?.symbol ?? truncate(row.address, 6, 4)
+    // Bundled curated metadata is authoritative. Never let a later API row
+    // flip a symbol/decimals/verified state that was already correct at paint.
+    if (Object.keys(merged[chain]).some((key) => key.toLowerCase() === row.address.toLowerCase())) continue
+    const symbol = row.symbol ?? truncate(row.address, 6, 4)
     merged[chain][row.address] = {
-      name: previous?.name ?? symbol,
+      name: symbol,
       symbol,
-      decimals: row.decimals ?? previous?.decimals ?? 18,
-      mark: previous?.mark ?? deriveMark(row.symbol ?? row.address),
-      color: previous?.color ?? '',
+      decimals: row.decimals ?? 18,
+      mark: deriveMark(row.symbol ?? row.address),
+      color: '',
       verified: !!row.verified && row.source === 'curated',
       placeholder: false,
     }
@@ -98,13 +110,19 @@ export function useTokenRegistry() {
   const base = useApiBaseUrl()
   return useQuery({
     queryKey: ['token-registry', base],
+    // Curated metadata is available on the very first render: never fall back
+    // to a truncated address, 18 decimals or an "Unverified" badge at paint.
+    initialData: CURATED_REGISTRY,
+    // Mark the bundled data as stale so the /tokens merge still runs once in
+    // the background. The initialData prevents any visual flash while it does.
+    initialDataUpdatedAt: 0,
     queryFn: async () => {
-      const staticRegistry = await loadTokens()
+      const curated = staticRegistry()
       try {
-        return mergeApiCatalog(staticRegistry, (await fetchTokens({}, base)).tokens)
+        return mergeApiCatalog(curated, (await fetchTokens({}, base)).tokens)
       } catch {
         // A missing backend must not break the curated picker.
-        return staticRegistry
+        return curated
       }
     },
     staleTime: 60_000,
@@ -178,7 +196,16 @@ export function useOrderTokenDisplay(order?: Order | null, kind: 'payment' | 'as
   const entry: TokenDisplayEntry = missing
     ? { name: '—', symbol: '—', decimals: 18, mark: '—', color: '', verified: false }
     : deriveTokenDisplay(chain, address, registry.data)
-  return { ...entry, address: missing ? null : address, chain, chainLabel: CHAIN_LABELS[chain], missing }
+  return {
+    ...entry,
+    address: missing ? null : address,
+    chain,
+    chainLabel: CHAIN_LABELS[chain],
+    missing,
+    // Curated addresses are correct from the bundled catalog immediately;
+    // anything else waits for the API merge before amounts/status are shown.
+    metadataReady: missing || registry.dataUpdatedAt > 0 || !!findTokenEntry(CURATED_REGISTRY, chain, address),
+  }
 }
 
 /** Presentation for the token currently selected on a trade ticket side. */

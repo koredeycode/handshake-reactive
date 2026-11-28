@@ -96,6 +96,7 @@ function VerifyDetail({ orderId }: { orderId: Hex }) {
             amount: formatAmount(order?.paymentAmount, paymentToken.decimals),
             tokenAddress: paymentToken.address,
             verified: paymentToken.verified,
+            loading: !paymentToken.metadataReady || !assetToken.metadataReady,
             hint: `You pay · ${paymentToken.chainLabel}`,
           }}
           receive={{
@@ -107,6 +108,7 @@ function VerifyDetail({ orderId }: { orderId: Hex }) {
             amount: formatAmount(order?.assetAmount, assetToken.decimals),
             tokenAddress: assetToken.address,
             verified: assetToken.verified,
+            loading: !paymentToken.metadataReady || !assetToken.metadataReady,
             hint: `You receive · ${assetToken.chainLabel}`,
           }}
         />

@@ -209,13 +209,19 @@ export function TokenMark({
   size = 'md',
   mark,
   color,
+  loading = false,
 }: {
   symbol?: string | null
   kind?: 'payment' | 'asset' | 'neutral'
   size?: 'sm' | 'md' | 'lg'
   mark?: string | null
   color?: string | null
+  loading?: boolean
 }) {
+  const dimensions = size === 'lg' ? 'h-10 w-10' : size === 'sm' ? 'h-6 w-6' : 'h-8 w-8'
+  if (loading) {
+    return <span aria-hidden="true" className={`${dimensions} inline-block shrink-0 animate-pulse rounded-full bg-paper-200`} />
+  }
   const letters = (mark || tokenLetters(symbol)).slice(0, 2).toUpperCase()
   const fill =
     color ??
@@ -225,7 +231,6 @@ export function TokenMark({
         ? '#5c5c66'
         : '#e6e6ea')
   const foreground = color ? '#ffffff' : kind === 'neutral' ? '#35353b' : '#ffffff'
-  const dimensions = size === 'lg' ? 'h-10 w-10' : size === 'sm' ? 'h-6 w-6' : 'h-8 w-8'
   return (
     <svg
       viewBox="0 0 32 32"
@@ -562,6 +567,14 @@ export function EmptyState({ title, message, action }: { title: string; message?
       {action && <div className="mt-5">{action}</div>}
     </div>
   )
+}
+
+/**
+ * Neutral placeholder for a value that depends on pending metadata. Uses the
+ * paper ramp so it reads as loading, never as a real (or false) token value.
+ */
+export function Skeleton({ className = '' }: { className?: string }) {
+  return <span aria-hidden="true" className={`inline-block animate-pulse rounded-md bg-paper-200 align-middle ${className}`} />
 }
 
 export function Spinner({ className = '' }: { className?: string }) {

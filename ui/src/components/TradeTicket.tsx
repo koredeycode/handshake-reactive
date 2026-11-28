@@ -5,7 +5,7 @@ import type { ChainTokenOption, TokenSelection } from '../lib/tokenDisplay'
 import { UNVERIFIED_LABEL } from '../lib/tradeTicket'
 import type { TicketKind } from '../lib/tradeTicket'
 import AssetPicker from './AssetPicker'
-import { ChainPill, ChainSelect, TokenMark, icon } from './ui'
+import { ChainPill, ChainSelect, Skeleton, TokenMark, icon } from './ui'
 
 export interface TicketSide {
   symbol?: string | null
@@ -24,9 +24,12 @@ export interface TicketSide {
   /** Full address of a custom token, shown next to the pill when selected. */
   tokenAddress?: string | null
   verified?: boolean
+  /** Hide token-dependent values (and any status) until metadata resolves. */
+  loading?: boolean
 }
 
 function AmountTile({ side, direction }: { side: TicketSide; direction: 'pay' | 'receive' }) {
+  const loading = !!side.loading
   const amount = (
     <input
       inputMode="decimal"
@@ -57,8 +60,13 @@ function AmountTile({ side, direction }: { side: TicketSide; direction: 'pay' | 
         </div>
       </div>
       <div className="mt-3 flex items-center gap-4">
-        {amount}
-        {picker ? (
+        {loading ? <Skeleton className="h-8 w-28 sm:h-9" /> : amount}
+        {loading ? (
+          <span className="flex shrink-0 items-center gap-2 rounded-full border border-line bg-paper-0 py-1.5 pl-1.5 pr-3">
+            <TokenMark size="sm" loading />
+            <Skeleton className="h-3.5 w-12" />
+          </span>
+        ) : picker ? (
           <AssetPicker
             chain={side.chain}
             kind={side.kind ?? 'payment'}
@@ -74,14 +82,20 @@ function AmountTile({ side, direction }: { side: TicketSide; direction: 'pay' | 
         )}
       </div>
       <div className="mt-3 min-h-4 text-[11px] text-ink-400">
-        {side.hint}
-        {side.tokenAddress && !side.verified && (
-          <span className="ml-2 inline-flex items-center gap-1">
-            <span className="rounded-full border border-warn/25 bg-warn-soft px-1.5 py-0.5 text-[9px] text-warn">
-              {UNVERIFIED_LABEL}
-            </span>
-            <span className="tnum font-mono" title={side.tokenAddress}>{side.tokenAddress}</span>
-          </span>
+        {loading ? (
+          <Skeleton className="h-3 w-40" />
+        ) : (
+          <>
+            {side.hint}
+            {side.tokenAddress && !side.verified && (
+              <span className="ml-2 inline-flex items-center gap-1">
+                <span className="rounded-full border border-warn/25 bg-warn-soft px-1.5 py-0.5 text-[9px] text-warn">
+                  {UNVERIFIED_LABEL}
+                </span>
+                <span className="tnum font-mono" title={side.tokenAddress}>{side.tokenAddress}</span>
+              </span>
+            )}
+          </>
         )}
       </div>
       {picker && (

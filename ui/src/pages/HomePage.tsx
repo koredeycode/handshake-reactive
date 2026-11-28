@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { ArrowRight, Plus } from 'lucide-react'
-import { Button, ChainMark, EmptyState, Panel, RouteStrip, Spinner, StatusPill, TokenMark, icon } from '../components/ui'
+import { Button, ChainMark, EmptyState, Panel, RouteStrip, Skeleton, Spinner, StatusPill, TokenMark, icon } from '../components/ui'
 import { CHAIN_LABELS } from '../lib/chains'
 import { countdown, formatAmount, formatDeadline, truncate } from '../lib/format'
 import { useTradeTicket } from '../lib/tradeTicket'
@@ -14,6 +14,7 @@ function PreviewRow({ row, now }: { row: AggregatedOrderRow; now: number }) {
   const { id, order } = row
   const payment = useOrderTokenDisplay(order, 'payment')
   const asset = useOrderTokenDisplay(order, 'asset')
+  const metadataReady = payment.metadataReady && asset.metadataReady
   const status = useOrderStatus(order)
   const expired = countdown(order.deadline, now) === 'expired'
   return (
@@ -25,17 +26,17 @@ function PreviewRow({ row, now }: { row: AggregatedOrderRow; now: number }) {
         <span className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2">
           <span className="flex items-center gap-2" title={`From ${payment.chainLabel}`}>
             <ChainMark chain={payment.chain} className="h-4 w-4" />
-            <TokenMark symbol={payment.symbol} kind="payment" size="sm" mark={payment.mark} color={payment.color} />
+            <TokenMark symbol={payment.symbol} kind="payment" size="sm" mark={payment.mark} color={payment.color} loading={!metadataReady} />
             <span className="tnum font-mono text-[13px] font-medium text-ink-900">
-              {formatAmount(order.paymentAmount, payment.decimals, payment.symbol)}
+              {metadataReady ? formatAmount(order.paymentAmount, payment.decimals, payment.symbol) : <Skeleton className="h-4 w-20" />}
             </span>
           </span>
           <ArrowRight {...icon} className="text-ink-400" />
           <span className="flex items-center gap-2" title={`To ${asset.chainLabel}`}>
             <ChainMark chain={asset.chain} className="h-4 w-4" />
-            <TokenMark symbol={asset.symbol} kind="asset" size="sm" mark={asset.mark} color={asset.color} />
+            <TokenMark symbol={asset.symbol} kind="asset" size="sm" mark={asset.mark} color={asset.color} loading={!metadataReady} />
             <span className="tnum font-mono text-[13px] font-medium text-ink-900">
-              {formatAmount(order.assetAmount, asset.decimals, asset.symbol)}
+              {metadataReady ? formatAmount(order.assetAmount, asset.decimals, asset.symbol) : <Skeleton className="h-4 w-20" />}
             </span>
           </span>
         </span>
