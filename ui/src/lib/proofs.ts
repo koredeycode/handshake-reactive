@@ -106,17 +106,18 @@ export function proofFromTimeline(orderId: string, timeline: ApiTimelineEvent[])
     }
   })
   const first = (kind: ProofEventKind) => events.find((event) => event.kind === kind)
-  // The CREATED state change is also an `orderStateChanged`; prefer the actual
-  // SETTLE_REQUESTED event when showing the "Settlement decision" hash.
+  // Only an actual decision counts. CREATED / PAYMENT_SEEN etc. are also
+  // `orderStateChanged` events but must not be shown as the decision hash.
   const decision = events.find((event) =>
-    event.kind === 'reactive' && event.fields?.stage === 'SETTLE_REQUESTED');
+    event.kind === 'reactive'
+    && (event.fields?.stage === 'SETTLE_REQUESTED' || event.fields?.stage === 'REFUND_REQUESTED'));
   const zero = 0n
   return {
     orderId: orderId as Hex,
     events,
     paymentLocked: first('paymentLocked'),
     assetLocked: first('assetLocked'),
-    reactive: decision ?? first('reactive'),
+    reactive: decision,
     paymentReleased: first('paymentReleased'),
     assetReleased: first('assetReleased'),
     paymentRefunded: first('paymentRefunded'),
