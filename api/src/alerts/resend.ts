@@ -1,6 +1,8 @@
 import { and, desc, eq, gt, inArray, sql } from 'drizzle-orm';
 import { Resend } from 'resend';
-import { env } from '../config.js';
+import { createPublicClient, http } from 'viem';
+import { env, httpUrlFor } from '../config.js';
+import { REACTIVE_CONTRACT, SYSTEM_CONTRACT, systemReadAbi } from '../contracts.js';
 import { alertDb as db } from '../db/client.js';
 import { alertDeliveries, keeperState, outbox } from '../db/schema.js';
 import { bus, type PublishedEvent } from '../lib/bus.js';
@@ -166,6 +168,27 @@ export async function alertOutboxBacklog(depth: number): Promise<void> {
   });
 }
 
+/** The keeper phase is deferred, so keeper_state rows are empty/stale. Read the
+ *  RC debt/reserves from chain instead of reporting misleading zero gauges. */
+const lasnaClient = createPublicClient({ transport: http(httpUrlFor(5318007)) });
+
+async function readRcTelemetry(): Promise<{ debt: bigint; reserves: bigint } | undefined> {
+  try {
+    const [debt, reserves] = await Promise.all([
+      lasnaClient.readContract({
+        address: SYSTEM_CONTRACT, abi: systemReadAbi, functionName: 'debt', args: [REACTIVE_CONTRACT],
+      }),
+      lasnaClient.readContract({
+        address: SYSTEM_CONTRACT, abi: systemReadAbi, functionName: 'reserves', args: [REACTIVE_CONTRACT],
+      }),
+    ]);
+    return { debt, reserves };
+  } catch (error) {
+    log.warn({ err: error }, 'RC telemetry read failed; keeping last gauge values');
+    return undefined;
+  }
+}
+
 /** Emits read-only keeper telemetry to the public stream and alerts on issues. */
 export async function pollKeeperState(): Promise<void> {
   const rows = await db.select().from(keeperState).orderBy(desc(keeperState.lastCheckedAt)).limit(20);
@@ -201,8 +224,14 @@ export async function pollKeeperState(): Promise<void> {
       });
     }
   }
-  metrics.rcDebtWei.set(Number(rows.find((row) => row.chainId === 5318007)?.debtWei ?? 0));
-  metrics.rcReservesWei.set(Number(rows.find((row) => row.chainId === 5318007)?.reservesWei ?? 0));
+  const onchain = await readRcTelemetry();
+  if (onchain) {
+    metrics.rcDebtWei.set(Number(onchain.debt));
+    metrics.rcReservesWei.set(Number(onchain.reserves));
+  } else {
+    metrics.rcDebtWei.set(Number(rows.find((row) => row.chainId === 5318007)?.debtWei ?? 0));
+    metrics.rcReservesWei.set(Number(rows.find((row) => row.chainId === 5318007)?.reservesWei ?? 0));
+  }
   for (const row of rows) {
     if (row.chainId !== 5318007) metrics.escrowDebtWei.set({ chain: String(row.chainId) }, Number(row.debtWei));
   }
