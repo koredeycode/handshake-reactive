@@ -18,6 +18,7 @@ import { backoffDelay, isRateLimitError, withRetry } from '../lib/retry.js';
 import { decodeRawLog, type DecodedEvent, type RawLog } from './decode.js';
 import {
   emitTransferBalances,
+  flushAllIndexerStatus,
   handleReorg,
   ingestLog,
   reconcilePartialOrderTerms,
@@ -340,5 +341,6 @@ export async function stopIndexer(): Promise<void> {
   wsClients.clear();
   await Promise.allSettled([...backfillTasks]);
   backfillTasks.clear();
+  await Promise.allSettled(flushAllIndexerStatus());
   started = false;
 }

@@ -429,22 +429,65 @@ export async function handleReorg(event: DecodedEvent): Promise<PublishedEvent[]
   return published;
 }
 
+type IndexerStatus = 'connecting' | 'live' | 'reconnecting' | 'error';
+type PendingStatus = { status: IndexerStatus; blockNumber?: number; blockHash?: string };
+
+// Status is a cursor, not event history: one write per 10s per chain is plenty,
+// and avoids turning a busy block into a burst of DB writes.
+const STATUS_WRITE_INTERVAL_MS = 10_000;
+const pendingStatus = new Map<number, PendingStatus>();
+const lastStatusWriteAt = new Map<number, number>();
+const statusTimers = new Map<number, ReturnType<typeof setTimeout>>();
+
+async function flushIndexerStatus(chainId: number): Promise<void> {
+  const pending = pendingStatus.get(chainId);
+  if (!pending) return;
+  pendingStatus.delete(chainId);
+  lastStatusWriteAt.set(chainId, Date.now());
+  await db.insert(indexerState).values({
+    chainId,
+    lastBlock: pending.blockNumber ?? 0,
+    lastBlockHash: pending.blockHash ?? null,
+    status: pending.status,
+  }).onConflictDoUpdate({
+    target: indexerState.chainId,
+    set: {
+      status: pending.status,
+      ...(pending.blockNumber !== undefined ? { lastBlock: sql`GREATEST(${indexerState.lastBlock}, ${pending.blockNumber})` } : {}),
+      ...(pending.blockHash ? { lastBlockHash: pending.blockHash } : {}),
+      updatedAt: new Date(),
+    },
+  });
+}
+
+export function flushAllIndexerStatus(): Promise<unknown>[] {
+  for (const timer of statusTimers.values()) clearTimeout(timer);
+  statusTimers.clear();
+  return [...pendingStatus.keys()].map((chainId) => flushIndexerStatus(chainId));
+}
+
 export async function updateIndexerStatus(
   chainId: number,
-  status: 'connecting' | 'live' | 'reconnecting' | 'error',
+  status: IndexerStatus,
   blockNumber?: number,
   blockHash?: string,
+  force = false,
 ): Promise<void> {
-  await db.insert(indexerState).values({ chainId, lastBlock: blockNumber ?? 0, lastBlockHash: blockHash ?? null, status })
-    .onConflictDoUpdate({
-      target: indexerState.chainId,
-      set: {
-        status,
-        ...(blockNumber !== undefined ? { lastBlock: sql`GREATEST(${indexerState.lastBlock}, ${blockNumber})` } : {}),
-        ...(blockHash ? { lastBlockHash: blockHash } : {}),
-        updatedAt: new Date(),
-      },
-    });
+  pendingStatus.set(chainId, { status, blockNumber, blockHash });
+  const elapsed = Date.now() - (lastStatusWriteAt.get(chainId) ?? 0);
+  if (!force && elapsed < STATUS_WRITE_INTERVAL_MS) {
+    if (!statusTimers.has(chainId)) {
+      const timer = setTimeout(() => {
+        statusTimers.delete(chainId);
+        void flushIndexerStatus(chainId).catch((error) => {
+          log.warn({ err: error, chainId }, 'indexer status flush failed');
+        });
+      }, STATUS_WRITE_INTERVAL_MS - elapsed);
+      statusTimers.set(chainId, timer);
+    }
+    return;
+  }
+  await flushIndexerStatus(chainId);
 }
 
 export async function refreshOutboxDepth(): Promise<number> {

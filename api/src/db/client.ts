@@ -11,10 +11,10 @@ import * as schema from './schema.js';
  * starve an unrelated one — that was the cause of the 7h hang and the 5xx
  * bursts (request queries timing out behind indexer/alert work).
  *
- * `prepare: false` keeps the pooler (Supabase transaction mode) happy.
+ * `prepare: false` keeps the transaction pooler happy.
  */
-function makePool(name: string, max: number, queryTimeout: number, queueTimeout: number) {
-  return postgres(env.DATABASE_URL, {
+function makePool(name: string, max: number, queryTimeout: number, queueTimeout: number, url = env.DATABASE_URL) {
+  return postgres(url, {
     max,
     idle_timeout: 20,
     connect_timeout: 10,
@@ -26,17 +26,58 @@ function makePool(name: string, max: number, queryTimeout: number, queueTimeout:
   });
 }
 
+/** Supabase free-tier transaction pooler periodically stops answering. The
+ *  direct host is the same database without that proxy; derive it from the
+ *  pooler URL so no new credential is needed. */
+function directUrlFromPooler(urlString: string): string | undefined {
+  try {
+    const u = new URL(urlString);
+    if (!u.hostname.includes('pooler.supabase.com')) return undefined;
+    const projectRef = u.username.split('.')[1];
+    if (!projectRef) return undefined;
+    u.hostname = `db.${projectRef}.supabase.co`;
+    u.port = '5432';
+    u.username = 'postgres';
+    return u.toString();
+  } catch {
+    return undefined;
+  }
+}
+
+const directUrl = directUrlFromPooler(env.DATABASE_URL);
+
 /** User-facing REST/SSE reads. Short timeouts: fail fast, never hang a client. */
 export const requestPg = makePool('request', 4, 15, 5);
-/** Indexer writes, gap backfill, retention, bootstrap. Bounded so a Supabase
- *  stall cannot pin these connections for minutes. */
-export const backgroundPg = makePool('background', 2, 30, 10);
-/** Operator alert dedupe writes. Own pool so a 5xx cannot amplify itself. */
-export const alertPg = makePool('alerts', 2, 10, 5);
+
+/** Background + alert pools start on the pooler and are upgraded to the direct
+ *  host at boot if it answers. Live ESM bindings mean importers see the switch. */
+const backgroundFallbackPg = makePool('background', 2, 30, 10);
+const alertFallbackPg = makePool('alerts', 2, 10, 5);
+const directBackgroundPg = directUrl ? makePool('background-direct', 2, 30, 10, directUrl) : undefined;
+const directAlertPg = directUrl ? makePool('alerts-direct', 2, 10, 5, directUrl) : undefined;
+
+export let backgroundPg = backgroundFallbackPg;
+export let alertPg = alertFallbackPg;
+export let backgroundDb = drizzle(backgroundPg, { schema });
+export let alertDb = drizzle(alertPg, { schema });
 
 export const db = drizzle(requestPg, { schema });
-export const backgroundDb = drizzle(backgroundPg, { schema });
-export const alertDb = drizzle(alertPg, { schema });
+
+/** Probe once at boot. Direct connections avoid the Supavisor stall; if they
+ *  are unavailable (network policy, connection limit), stay on the pooler. */
+export async function selectNonRequestPools(): Promise<void> {
+  if (!directBackgroundPg || !directAlertPg) return;
+  try {
+    await directBackgroundPg`select 1`;
+    backgroundPg = directBackgroundPg;
+    alertPg = directAlertPg;
+    backgroundDb = drizzle(backgroundPg, { schema });
+    alertDb = drizzle(alertPg, { schema });
+    log.info({ mode: 'direct' }, 'background and alert pools using direct Supabase connection');
+  } catch (error) {
+    log.warn({ err: error, mode: 'pooler' }, 'direct Supabase unavailable; keeping transaction pooler');
+  }
+}
 
 /** Kept as an alias for callers that still reference the raw request pool. */
 export const pg = requestPg;
@@ -55,7 +96,9 @@ export async function dbPing(): Promise<boolean> {
 export async function closeDb(): Promise<void> {
   await Promise.allSettled([
     requestPg.end({ timeout: 5 }),
-    backgroundPg.end({ timeout: 5 }),
-    alertPg.end({ timeout: 5 }),
+    backgroundFallbackPg.end({ timeout: 5 }),
+    alertFallbackPg.end({ timeout: 5 }),
+    directBackgroundPg?.end({ timeout: 5 }),
+    directAlertPg?.end({ timeout: 5 }),
   ]);
 }

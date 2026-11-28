@@ -2,13 +2,14 @@ import { serve } from '@hono/node-server';
 import { startAlertMonitor, stopAlertMonitor } from './alerts/resend.js';
 import { env } from './config.js';
 import { bootstrapDatabase, startRetention, stopRetention } from './db/bootstrap.js';
-import { closeDb, dbPing } from './db/client.js';
+import { closeDb, dbPing, selectNonRequestPools } from './db/client.js';
 import { createApp } from './http.js';
 import { startIndexer, stopIndexer } from './indexer/indexer.js';
 import { log } from './lib/log.js';
 import { startEventLoopMonitor, stopEventLoopMonitor } from './lib/metrics.js';
 
 async function main(): Promise<void> {
+  await selectNonRequestPools();
   const database = await dbPing();
   if (!database) log.error('database unreachable at boot; routes will fail until it recovers');
   await bootstrapDatabase();
