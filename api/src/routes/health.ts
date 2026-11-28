@@ -8,6 +8,15 @@ import { activeSseClientCount, eventLoopLagMs, walletCacheHitRatio } from '../li
 
 export const healthRoutes = new Hono();
 
+/** Health must answer quickly even when a (separate) pool is stalling. The
+ *  underlying query keeps its own pool timeout; we simply stop waiting. */
+function withDeadline<T>(promise: Promise<T>, ms: number): Promise<T | undefined> {
+  return Promise.race([
+    promise,
+    new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), ms)),
+  ]);
+}
+
 /** Liveness only: no DB or chain checks, so a hung loop is detectable without
  *  restarting the machine for a transient chain-subscription failure. */
 healthRoutes.get('/live', (c) => c.json({
@@ -17,13 +26,15 @@ healthRoutes.get('/live', (c) => c.json({
 }));
 
 healthRoutes.get('/health', async (c) => {
-  const database = await dbPing();
-  const [keeper] = await db.select({
+  const ping = await withDeadline(dbPing(), 3_000);
+  const keeperRows = await withDeadline(db.select({
     lastCheckedAt: sql<Date>`max(${keeperState.lastCheckedAt})`,
-  }).from(keeperState);
+  }).from(keeperState), 3_000);
+  const depth = await withDeadline(outboxDepth(), 5_000);
+  const database = ping === true && keeperRows !== undefined && depth !== undefined;
+  const keeper = keeperRows?.[0];
   const indexer = indexerStats.all();
   const lastEventAgeMs = indexerStats.maxLastEventAgeMs();
-  const depth = await outboxDepth();
   const keeperFreshnessMs = keeper?.lastCheckedAt ? Date.now() - new Date(keeper.lastCheckedAt).getTime() : null;
   // `live` requires an actual subscription; HTTP gap-fill alone is reported as
   // `gapFillOnly` and must not make the service look healthy.
@@ -36,7 +47,7 @@ healthRoutes.get('/health', async (c) => {
     lastEventAgeMs,
     keeperFreshnessMs,
     subscriptionCount: indexerStats.totalSubscriptions(),
-    outboxDepth: depth,
+    outboxDepth: depth ?? -1,
     walletCacheHitRatio: await walletCacheHitRatio(),
     uptimeSeconds: process.uptime(),
     metrics: {
